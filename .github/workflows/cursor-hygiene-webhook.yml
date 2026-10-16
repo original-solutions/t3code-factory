@@ -16,7 +16,7 @@ permissions:
 jobs:
   forward:
     name: POST to Cursor
-    runs-on: jog
+    runs-on: ubuntu-24.04
     steps:
       - name: POST to Cursor
         env:
