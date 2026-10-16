@@ -19,7 +19,7 @@ concurrency:
 jobs:
   check:
     name: Check
-    runs-on: jog
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -46,7 +46,7 @@ jobs:
   # Runs the command upstream's ci.yml Lint job runs. check.sh and the factory gate do not run it.
   lint:
     name: Lint
-    runs-on: jog
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout
