@@ -26,6 +26,10 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
           persist-credentials: false
 
       - name: Setup Vite+
@@ -64,6 +68,10 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
           # git push uses gh's credential helper instead.
           persist-credentials: false
 
