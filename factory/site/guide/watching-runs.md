@@ -9,7 +9,7 @@ The pages work in a phone's browser too, paired over your tailnet as described i
 <img class="screenshot light-only" src="/screenshots/factory-page-light.png" alt="The Factory page: two Needs attention items above the runs table, with one run each building, needs-info, pr-open and stuck, and a finished run, each with its step, age and pull request" />
 <img class="screenshot dark-only" src="/screenshots/factory-page-dark.png" alt="The Factory page: two Needs attention items above the runs table, with one run each building, needs-info, pr-open and stuck, and a finished run, each with its step, age and pull request" />
 
-Use it to see what the factory is doing now. It lists every unfinished run and the runs that finished in the last week, newest first, with each run's repo, issue, state, current step, age and pull request. Show all runs to read the full history. It refreshes every 30 seconds.
+Use it to see what the factory is doing now. It lists every unfinished run and the runs that finished in the last week, newest first, with each run's repo, issue, state, current step, age and pull request. Show all runs to read the full history. It refreshes every 30 seconds; the full history from Show all runs is read once and not refreshed.
 
 It also says when the factory is idle and why (no machine config, or one that failed to load), and lets you pause claims. While claims are paused the factory takes no new `factory:ready` issues in any repo. Runs already under way carry on: sessions, gates and feedback all continue. Resume to start claiming again.
 
@@ -20,7 +20,7 @@ It also says when the factory is idle and why (no machine config, or one that fa
 
 Open a run from the list to see why it is where it is. The page shows the run's state and step, links to its T3 thread so you can read the session, and shows the last gate: each command with its exit code and duration, and the failure output the factory sent back to the session. Below that is the run's ledger, every event the factory recorded for it, in order.
 
-A run in `factory:building` can be stopped from here. See [Stopping a run by hand](/guide/when-a-run-stops#stopping-a-run-by-hand).
+A run in `factory:building` can be stopped from here with the Stop button. See [Stopping a run by hand](/guide/when-a-run-stops#stopping-a-run-by-hand).
 
 ## Needs attention
 
@@ -31,10 +31,11 @@ The top of the Factory page lists what needs a person, and the sidebar's Factory
 
 - a run went to `factory:stuck` or `factory:needs-info`,
 - a run is holding a slot but nothing will move it, for example its label was changed by hand,
+- a run was abandoned because its issue was closed, or its session thread may need archiving by hand,
 - the machine config failed to load,
 - three passes in a row failed.
 
-Each item links to its run, or to Settings → Factory for a config problem. Each new item also posts a macOS notification, as does a run abandoned because its issue was closed, on the server's Mac, unless `notify` is `false` in the [machine config](/guide/machine-config).
+Each item links to its run, or to Settings → Factory for a config problem; the three-passes item has no link. Each new item also posts a macOS notification on the server's Mac, unless `notify` is `false` in the [machine config](/guide/machine-config). An abandoned run's item clears on the next pass, so its notification is the record that lasts.
 
 An item clears itself when its cause goes away: the config loads, a pass succeeds, the issue is claimed again. Dismiss an item to hide it once you've dealt with it. A dismissed item stays hidden until its cause clears and comes back.
 

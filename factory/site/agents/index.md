@@ -26,18 +26,26 @@ Paths in these pages are the defaults of the LaunchAgent install:
 
 ```text
 ~/.config/t3fac/
+├── env
+├── gh/
 └── factory/
     ├── config.yml
     ├── runs/
+    ├── stop-requests/
     └── events.jsonl
 ~/.local/share/t3fac/
 ├── versions/<version>
 ├── current -> versions/<version>
-└── previous -> versions/<version>
-~/Library/Logs/t3fac/t3fac.log
+├── previous -> versions/<version>
+└── rotate-log.sh
+~/Library/Logs/t3fac/
+├── t3fac.log
+└── logrotate.log
 ~/Library/LaunchAgents/
 ├── io.github.rawphp.t3fac.plist
 └── io.github.rawphp.t3fac.logrotate.plist
 ```
+
+`env` is optional and `stop-requests/` appears when a stop is requested. `previous` exists only after installing a different version and is removed by a rollback.
 
 The whole site as plain text: [llms.txt](https://t3code-factory-docs.originalsolutions.com.au/llms.txt), [llms-full.txt](https://t3code-factory-docs.originalsolutions.com.au/llms-full.txt).

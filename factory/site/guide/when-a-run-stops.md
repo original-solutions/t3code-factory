@@ -20,6 +20,8 @@ The factory gave up. The comment gives the reason and, when the session had made
 | The gate failed after the allowed attempts                    | Read the gate output on the [run's page](/guide/watching-runs#a-run-s-page), fix the cause or the issue, then set `factory:ready`. |
 | The run passed its time limit                                 | Split the issue, or raise `limits.minutes` in `.dw/config.yml`.                                                                    |
 | The session gave up, or ended without a result line           | Read the session in its T3 thread.                                                                                                 |
+| The base branch kept moving and the gate could not settle     | Set `factory:ready` to try again; raise `limits.regates` if it keeps happening.                                                    |
+| The session's T3 thread no longer exists                      | Set `factory:ready` for a new run.                                                                                                 |
 | The issue text was changed by someone who isn't an instructor | Review the text, then set `factory:ready`.                                                                                         |
 | The session ran as the wrong GitHub account                   | Restart the server so it has the right `GH_CONFIG_DIR` (see [the machine config](/guide/machine-config#changing-it)).              |
 | The required checks failed, or didn't report in time          | Check the repo's CI and `required_checks`.                                                                                         |
