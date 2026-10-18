@@ -85,7 +85,7 @@ Builds the server archive and smoke-tests it.
 | Does   | Writes `<data dir>/stop-requests/<run id>`. The next pass archives the session, removes the worktree and sets `factory:stuck` ("stopped by hand"). |
 | Prints | `stop requested: <id>; the issue goes to factory:stuck on the next pass`                                                                           |
 | 0      | Request written.                                                                                                                                   |
-| 1      | Wrong argument count; no ledger; run finished; run not `building` (the message says what to do instead).                                           |
+| 1      | Wrong argument count; a run id that names a path; no ledger; run finished; run not `building` (the message says what to do instead).               |
 
 ## rotate-log.sh
 

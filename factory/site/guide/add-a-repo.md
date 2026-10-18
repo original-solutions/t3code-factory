@@ -3,7 +3,7 @@
 The factory watches a repo when two things are true:
 
 1. A clone of the repo is a T3 [project](https://github.com/pingdotgg/t3code/tree/main/docs/user/project-settings.md) on the factory's server.
-2. That checkout has a `.dw/config.yml` with a `factory` block.
+2. That checkout has a `.dw/config.yml` with a `factory` block, in its working tree or, when the working tree has none, in the copy on origin's default branch.
 
 There is no list of repos to edit. Adding the project is the switch, and deleting the project is how the repo leaves.
 
