@@ -197,6 +197,9 @@ const defaultPr = (): PullRequest => ({
   headSha: "abc123",
 });
 
+/** The folder T3 names a new worktree on branch `t3/2e8db933`. */
+const LAUNCH_WORKTREE = "/t3/worktrees/softfac/t3-2e8db933";
+
 const statusOf = (
   run: RunStatus | null,
   message: string | null,
@@ -242,8 +245,6 @@ interface World {
   /** The text of each message T3 took, by command id. */
   delivered: Map<string, string>;
   archived: Array<string>;
-  /** The branch git has checked out in the session's worktree. */
-  checkedOut: string | null;
 }
 
 const issueDetail = (state: State | null, assignees: ReadonlyArray<string>): IssueDetail => ({
@@ -322,7 +323,6 @@ const rigFor = (
     threadOnce: null,
     delivered: new Map(),
     archived: [],
-    checkedOut: "t3code/abc",
   };
   const gh: Array<string> = [];
   const reads: Array<string> = [];
@@ -448,10 +448,6 @@ const rigFor = (
     removeWorktree: (path) => {
       t3Call(`removeWorktree ${path}`);
       return Effect.void;
-    },
-    checkedOutBranch: (path) => {
-      t3Call(`checkedOutBranch ${path}`);
-      return Effect.succeed(world.checkedOut);
     },
   };
   const ctx: BuildingContext = {
@@ -741,58 +737,53 @@ describe("advance: done", () => {
   );
 
   it.effect(
-    "with a pull request on the branch checked out in the session's worktree is ready for the gate",
+    "with a pull request on the branch T3 made the session's worktree on is ready for the gate",
     () =>
       Effect.gen(function* () {
         // T3 renamed the thread's branch; the session pushed the worktree's own `t3/<hash>`.
         const rig = rigFor();
-        rig.world.checkedOut = "t3/2e8db933";
+        setStatus(rig, "completed", DONE_MESSAGE, { worktreePath: LAUNCH_WORKTREE });
         rig.world.pr = { ...defaultPr(), headRef: "t3/2e8db933" };
         const outcome = yield* advanceIn(rig);
         assert.deepStrictEqual(outcome, { kind: "ready-for-gate", pr: 12, prUrl: URL12 });
-        assert.ok(rig.t3.includes("checkedOutBranch /t3/wt"), rig.t3.join("\n"));
         assert.deepStrictEqual(linesOf(rig), [...STARTED, PR_OPENED]);
       }),
   );
 
-  it.effect("with a pull request on a branch the worktree does not have checked out is stuck", () =>
-    Effect.gen(function* () {
-      const rig = rigFor();
-      rig.world.checkedOut = "t3/2e8db933";
-      rig.world.pr = { ...defaultPr(), headRef: "someone/else" };
-      const outcome = yield* advanceIn(rig);
-      assert.ok(
-        outcome.kind === "stuck" &&
-          outcome.reason.startsWith(
-            "the session reported PR #12 but its branch someone/else is not this session's branch",
-          ),
-        JSON.stringify(outcome),
-      );
-      assert.deepStrictEqual(stuckCauses(rig), Array(3).fill("advance pr-not-bound"));
-    }),
-  );
-
   it.effect(
-    "with no branch recorded for the thread binds the branch checked out in its worktree",
+    "with a pull request on a branch that is not the worktree's launch branch is stuck",
     () =>
       Effect.gen(function* () {
-        const rig = rigFor();
-        setStatus(rig, "completed", DONE_MESSAGE, { branch: null });
-        rig.world.checkedOut = "t3/2e8db933";
-        rig.world.pr = { ...defaultPr(), headRef: "t3/2e8db933" };
-        assert.deepStrictEqual(yield* advanceIn(rig), {
-          kind: "ready-for-gate",
-          pr: 12,
-          prUrl: URL12,
-        });
+        // A session that checks out someone else's branch in its worktree cannot bind its PR, nor
+        // one on another worktree's `t3/<hash>`.
+        for (const headRef of ["someone/else", "t3/0badf00d", "t3-2e8db933x"]) {
+          const rig = rigFor();
+          setStatus(rig, "completed", DONE_MESSAGE, { worktreePath: LAUNCH_WORKTREE });
+          rig.world.pr = { ...defaultPr(), headRef };
+          const outcome = yield* advanceIn(rig);
+          assert.ok(
+            outcome.kind === "stuck" &&
+              outcome.reason.startsWith(
+                `the session reported PR #12 but its branch ${headRef} is not this session's branch`,
+              ),
+            JSON.stringify(outcome),
+          );
+          assert.deepStrictEqual(stuckCauses(rig), Array(3).fill("advance pr-not-bound"));
+        }
       }),
   );
 
-  it.effect("with the thread's own branch does not ask git", () =>
+  it.effect("with no branch recorded for the thread binds the worktree's launch branch", () =>
     Effect.gen(function* () {
       const rig = rigFor();
-      assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
-      assert.ok(!rig.t3.some((call) => call.startsWith("checkedOutBranch")), rig.t3.join("\n"));
+      setStatus(rig, "completed", DONE_MESSAGE, { branch: null, worktreePath: LAUNCH_WORKTREE });
+      // T3 flattens `t3/<hex>` to `t3-<hex>` when a plain `t3` branch exists; the folder is the same.
+      rig.world.pr = { ...defaultPr(), headRef: "t3-2e8db933" };
+      assert.deepStrictEqual(yield* advanceIn(rig), {
+        kind: "ready-for-gate",
+        pr: 12,
+        prUrl: URL12,
+      });
     }),
   );
 
@@ -900,8 +891,6 @@ describe("advance: done", () => {
     Effect.gen(function* () {
       const rig = rigFor();
       setStatus(rig, "completed", DONE_MESSAGE, { branch: null });
-      // git has no branch checked out in the worktree either (a detached HEAD).
-      rig.world.checkedOut = null;
       assertStuck(rig, yield* advanceIn(rig), {
         publicReason: "the session reported PR #12 but the session has no branch",
         text: DONE_MESSAGE,

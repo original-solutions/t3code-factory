@@ -6,6 +6,7 @@ import {
   ThreadId,
   type ModelSelection,
 } from "@t3tools/contracts";
+import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -125,6 +126,18 @@ export interface ThreadStatus extends Thread {
   readonly lastAssistantMessage: string | null;
 }
 
+/**
+ * Whether `branch` is the temporary `t3/<hex>` branch T3 made the worktree at
+ * `worktreePath` on. T3 can rename the thread's branch after launch while the
+ * session pushes the one it started on. T3 names a new worktree's folder after
+ * that branch, `/` written `-`, and its record of the folder is one the
+ * session cannot change, unlike the branch git has checked out there.
+ */
+export const isLaunchBranch = (branch: string, worktreePath: string | null): boolean =>
+  worktreePath !== null &&
+  isTemporaryWorktreeBranch(branch) &&
+  branch.replaceAll("/", "-") === worktreePath.split(/[\\/]/).pop();
+
 export class ThreadNotFoundError extends Schema.TaggedError<ThreadNotFoundError>()(
   "FactoryThreadNotFoundError",
   { threadId: Schema.String },
@@ -156,7 +169,6 @@ export class SessionsError extends Schema.TaggedError<SessionsError>()("FactoryS
     "send",
     "archive",
     "remove-worktree",
-    "checked-out-branch",
   ]),
   cause: Schema.Defect(),
 }) {
@@ -315,14 +327,6 @@ export class FactorySessions extends Context.Service<
      * left behind (a restart mid-wait) fails, naming the path, for a person.
      */
     readonly removeWorktree: (path: string) => Effect.Effect<void, SessionsError>;
-    /**
-     * The branch git has checked out in the worktree at `path`, which T3's
-     * record of the thread may not match: T3 can rename a thread's branch
-     * after launch, and a session can switch branch. `null` for a detached
-     * HEAD, a path that is not absolute or not a worktree, and one gone from
-     * disk.
-     */
-    readonly checkedOutBranch: (path: string) => Effect.Effect<string | null, SessionsError>;
   }
 >()("t3/factory/t3/sessions/FactorySessions") {}
 
@@ -553,24 +557,6 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.retry(LEFTOVER_REMOVE_ATTEMPTS), Effect.mapError(removeWorktreeFailed));
     });
 
-  const checkedOutBranch: FactorySessions["Service"]["checkedOutBranch"] = (worktreePath) =>
-    Effect.gen(function* () {
-      if (!path.isAbsolute(worktreePath)) return null;
-      const exists = yield* fs.exists(worktreePath);
-      if (!exists) return null;
-      const result = yield* git.execute({
-        operation: "factory.sessions.checkedOutBranch",
-        cwd: worktreePath,
-        args: ["branch", "--show-current"],
-        env: { LC_ALL: "C" },
-        allowNonZeroExit: true,
-      });
-      const branch = result.stdout.trim();
-      return result.exitCode === 0 && branch !== "" ? branch : null;
-    }).pipe(
-      Effect.mapError((cause) => new SessionsError({ operation: "checked-out-branch", cause })),
-    );
-
   return FactorySessions.of({
     findProject,
     launch,
@@ -579,7 +565,6 @@ export const make = Effect.gen(function* () {
     send,
     archive,
     removeWorktree,
-    checkedOutBranch,
   });
 });
 

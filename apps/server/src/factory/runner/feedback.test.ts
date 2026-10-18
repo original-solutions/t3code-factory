@@ -467,8 +467,6 @@ class FakeT3 {
       }
       return Effect.void;
     },
-    // The thread's own branch is the one bound here: `building.test.ts` owns the rest.
-    checkedOutBranch: () => Effect.succeed(null),
   };
 }
 

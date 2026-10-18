@@ -171,6 +171,8 @@ export interface PassWorld {
   readonly baseTip: (repo: Repo) => Effect.Effect<string, PassError>;
   /** Whether GitHub has the issue closed. */
   readonly issueClosed: (repo: Repo, issue: number) => Effect.Effect<boolean, PassError>;
+  /** When the issue of each stuck attention item was last read, by item id, in epoch milliseconds; kept from pass to pass. */
+  readonly stuckReads: Map<string, number>;
   /** The head of the open pull request, in lower case; null for one that is merged, closed or gone. */
   readonly openHead: (repo: Repo, pr: number) => Effect.Effect<string | null, PassError>;
   /** Appends an `error` line to the run's own ledger. */
@@ -571,10 +573,18 @@ export const runPass = (
   });
 
 /**
+ * How often the issue of one stuck item is read at most. Stuck items stay until a person or the
+ * issue closes them, so they pile up: at 40 of them a 60 second poll would spend 2,400 reads an
+ * hour of the login's 5,000 points. At one read in 10 minutes it is about 240.
+ */
+export const STUCK_READ_EVERY_MS = 10 * 60 * 1000;
+
+/**
  * Clears the item of a stuck run whose issue GitHub has closed: a person is done with it, or its
  * pull request merged and closed it. Only stuck items of the repos loaded this pass are asked
- * about, one issue read each. An item whose issue cannot be read stays, with a line that is not
- * an error: an issue that can never be read again (deleted, transferred) must not fail every pass.
+ * about, each at most once every `STUCK_READ_EVERY_MS`. An item whose issue cannot be read stays,
+ * with a line that is not an error: an issue that can never be read again (deleted, transferred)
+ * must not fail every pass.
  */
 const closedStuck = (
   world: PassWorld,
@@ -582,11 +592,19 @@ const closedStuck = (
   pass: Pass,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
-    for (const item of yield* world.attention.list()) {
+    const items = yield* world.attention.list();
+    for (const id of world.stuckReads.keys()) {
+      if (!items.some((item) => item.id === id)) world.stuckReads.delete(id);
+    }
+    const now = world.nowMs();
+    for (const item of items) {
       const { repo: name, issue } = item;
       if (item.kind !== "stuck" || name === null || issue === null) continue;
       const loaded = repos.find((l) => l.kind === "ready" && sameRepo(l.repo.watched.repo, name));
       if (loaded === undefined || loaded.kind !== "ready") continue;
+      const last = world.stuckReads.get(item.id);
+      if (last !== undefined && now >= last && now - last < STUCK_READ_EVERY_MS) continue;
+      world.stuckReads.set(item.id, now);
       const closed = yield* Effect.result(world.issueClosed(loaded.repo, issue));
       if (closed._tag === "Failure") {
         pass.line(
@@ -596,6 +614,7 @@ const closedStuck = (
         );
       } else if (closed.success) {
         yield* world.attention.clear((open) => open.id === item.id);
+        world.stuckReads.delete(item.id);
       }
     }
   });

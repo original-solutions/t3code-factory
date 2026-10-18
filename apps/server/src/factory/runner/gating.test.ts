@@ -498,8 +498,6 @@ class FakeT3 {
   archiveFails = false;
   failAt: number | null = null;
   worktreeRemoveFails = false;
-  /** The branch git has checked out in the session's worktree. */
-  checkedOut: string | null = "t3code/abc";
   /** The T3 project of the repo; none when there is no project for it on this machine. */
   project: FactoryProject | null = {
     id: "proj-1",
@@ -523,9 +521,7 @@ class FakeT3 {
     operation: Parameters<typeof sessionsFailure>[0] = "status",
   ): SessionsError | null {
     this.calls.push(text);
-    const index =
-      this.calls.filter((c) => !c.startsWith("removeWorktree") && !c.startsWith("checkedOutBranch"))
-        .length - 1;
+    const index = this.calls.filter((c) => !c.startsWith("removeWorktree")).length - 1;
     return this.failAt === index ? sessionsFailure(operation) : null;
   }
 
@@ -583,10 +579,6 @@ class FakeT3 {
         return Effect.fail(sessionsFailure("archive"));
       }
       return Effect.void;
-    },
-    checkedOutBranch: (path) => {
-      this.calls.push(`checkedOutBranch ${path}`);
-      return Effect.succeed(this.checkedOut);
     },
   };
 }
@@ -1477,12 +1469,15 @@ describe("gate: the session's PR becomes ready, or it does not", () => {
       }),
   );
 
-  it.effect("a PR on the branch checked out in the session's worktree is gated", () =>
+  it.effect("a PR on the branch T3 made the session's worktree on is gated", () =>
     Effect.gen(function* () {
       // T3 renamed the thread's branch; the session pushed the worktree's own `t3/<hash>`.
       const rig = rigFor();
-      setRun(rig, "completed", 1);
-      rig.t3.checkedOut = "t3/2e8db933";
+      rig.t3.status = () =>
+        statusOf("completed", DONE_MESSAGE, {
+          runOrdinal: 1,
+          worktreePath: "/t3/worktrees/softfac/t3-2e8db933",
+        });
       rig.gh.pr = { ...defaultPr(), headRef: "t3/2e8db933" };
       assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
       clearCalls(rig);
@@ -1541,8 +1536,6 @@ describe("gate: the session's PR becomes ready, or it does not", () => {
     Effect.gen(function* () {
       const rig = yield* readyForGate();
       rig.t3.status = () => statusOf("completed", DONE_MESSAGE, { branch: null });
-      // git has no branch checked out in the worktree either (a detached HEAD).
-      rig.t3.checkedOut = null;
       assertGateStuckOnPr(
         rig,
         yield* gateIn(rig),

@@ -79,7 +79,6 @@ const stubSessions = Sessions.FactorySessions.of({
   send: () => Effect.die("not sent"),
   archive: () => Effect.die("not archived"),
   removeWorktree: () => Effect.die("not removed"),
-  checkedOutBranch: () => Effect.succeed(null),
 });
 const noSessions = Layer.succeed(Sessions.FactorySessions, stubSessions);
 

@@ -589,6 +589,7 @@ export const liveWorld = (
         Effect.map((detail) => detail.closed),
         Effect.mapError(asPassError("tracker")),
       ),
+    stuckReads: new Map(),
     openHead: (repo, pr) =>
       trackerFor(repo.watched)
         .pullRequest(pr)

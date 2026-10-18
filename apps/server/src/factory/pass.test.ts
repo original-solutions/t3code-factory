@@ -30,6 +30,7 @@ import { newRunId, runIdToString, type RunId } from "./ledger/runId.ts";
 import { useTempDirs } from "./ledger/testSupport.ts";
 import { formatTs } from "./ledger/time.ts";
 import {
+  STUCK_READ_EVERY_MS,
   runPass,
   type Loaded,
   type PassError,
@@ -171,6 +172,7 @@ class Fake implements PassWorld {
   openHeads: Record<string, string | null | "error"> = {};
   /** The issues GitHub has closed, per `"<repo>#<issue>"`; `"error"` is a read that fails. Open otherwise. */
   closedIssues: Record<string, boolean | "error"> = {};
+  stuckReads = new Map<string, number>();
   /** The repos the T3 projects list as watched; set per pass by `pass`. */
   watched: Array<WatchedProject> = [];
   /** The repos whose every T3 project was deleted since the reader watched them. */
@@ -3239,6 +3241,25 @@ describe("attention items", () => {
           [`issue_closed ${REPO}#41`, `issue_closed ${REPO}#42`],
         );
       }),
+  );
+
+  it.effect("a stuck item's issue is read at most once every ten minutes", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.items = [open({ id: "stuck", kind: "stuck", issue: 41, run: runIdToString(rid(41)) })];
+      const reads = () => fake.calls.filter((c) => c.startsWith("issue_closed")).length;
+      yield* pass(fake, [REPO], 5);
+      fake.now += STUCK_READ_EVERY_MS - 1;
+      yield* pass(fake, [REPO], 5);
+      assert.strictEqual(reads(), 1);
+      fake.now += 1;
+      fake.closedIssues[`${REPO}#41`] = true;
+      yield* pass(fake, [REPO], 5);
+      assert.strictEqual(reads(), 2);
+      assert.deepEqual(ids(fake), []);
+      // The read time of a cleared item is not kept.
+      assert.strictEqual(fake.stuckReads.size, 0);
+    }),
   );
 
   it.effect(
