@@ -322,12 +322,14 @@ export const gateDecided = (step: GateStep | null): boolean =>
 
 /**
  * What a world keeps for as long as the factory runs, however often a reload builds a new one:
- * the claim judgements, and the runs whose gate this process is running now (a gate holds the
- * run's lock file only while an attempt runs; this covers the whole call).
+ * the claim judgements, the runs whose gate this process is running now (a gate holds the
+ * run's lock file only while an attempt runs; this covers the whole call), and when each stuck
+ * item's issue was last read.
  */
 export interface LiveShared {
   readonly gating: Set<string>;
   readonly claimMemo: ClaimMemo;
+  readonly stuckReads: Map<string, number>;
 }
 
 /**
@@ -359,7 +361,11 @@ export const liveWorld = (
   gateRemoteBase?: string,
   onProject?: (repo: string, reading: RepoConfigReading) => void,
   // Built once per process by the factory, so a reload's new world goes on from the old one's.
-  { gating, claimMemo }: LiveShared = { gating: new Set(), claimMemo: new ClaimMemo() },
+  { gating, claimMemo, stuckReads }: LiveShared = {
+    gating: new Set(),
+    claimMemo: new ClaimMemo(),
+    stuckReads: new Map(),
+  },
 ): Omit<PassWorld, "watchedRepos"> => {
   const withProcess = <A, E>(effect: Effect.Effect<A, E, FactoryProcess>) =>
     Effect.provideService(effect, FactoryProcess, process);
@@ -589,7 +595,7 @@ export const liveWorld = (
         Effect.map((detail) => detail.closed),
         Effect.mapError(asPassError("tracker")),
       ),
-    stuckReads: new Map(),
+    stuckReads,
     openHead: (repo, pr) =>
       trackerFor(repo.watched)
         .pullRequest(pr)
@@ -761,7 +767,11 @@ const startFactory = (options: RuntimeOptions) =>
         }),
       ),
     );
-    const shared: LiveShared = { gating: new Set(), claimMemo: new ClaimMemo() };
+    const shared: LiveShared = {
+      gating: new Set(),
+      claimMemo: new ClaimMemo(),
+      stuckReads: new Map(),
+    };
     // The threads of the unfinished runs, read at start and after every pass: a pass is what
     // launches and finishes sessions, so between passes the set does not change.
     const owned = yield* Ref.make<ReadonlySet<string>>(new Set());

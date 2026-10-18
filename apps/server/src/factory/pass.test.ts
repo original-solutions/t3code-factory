@@ -3262,6 +3262,22 @@ describe("attention items", () => {
     }),
   );
 
+  it.effect("a stuck item whose issue could not be read is read again ten minutes later", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.closedIssues[`${REPO}#41`] = "error";
+      fake.items = [open({ id: "stuck", kind: "stuck", issue: 41, run: runIdToString(rid(41)) })];
+      const reads = () => fake.calls.filter((c) => c.startsWith("issue_closed")).length;
+      yield* pass(fake, [REPO], 5);
+      fake.now += STUCK_READ_EVERY_MS - 1;
+      yield* pass(fake, [REPO], 5);
+      assert.strictEqual(reads(), 1);
+      fake.now += 1;
+      yield* pass(fake, [REPO], 5);
+      assert.strictEqual(reads(), 2);
+    }),
+  );
+
   it.effect(
     "a stuck item whose issue cannot be read stays, said in a line that is not an error",
     () =>

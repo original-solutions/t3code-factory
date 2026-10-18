@@ -1510,7 +1510,11 @@ describe("the gate in the background", () => {
         wake: Effect.void,
         scope: yield* Scope.make(),
       };
-      const shared = { gating: new Set<string>(), claimMemo: new ClaimMemo() };
+      const shared = {
+        gating: new Set<string>(),
+        claimMemo: new ClaimMemo(),
+        stuckReads: new Map<string, number>(),
+      };
       const build = () =>
         liveWorld(
           gateMachine,
@@ -1531,6 +1535,8 @@ describe("the gate in the background", () => {
       // What a reload does: a new world, on the state the old one shares.
       const after = build();
       assert.strictEqual(after.gateRunning(run), true);
+      // Nor does a reload read every stuck item's issue again at once.
+      assert.strictEqual(after.stuckReads, before.stuckReads);
       assert.deepStrictEqual(yield* after.gate(gateRepo, other), {
         kind: "queued",
         running: 1,
