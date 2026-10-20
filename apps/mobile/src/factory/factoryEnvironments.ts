@@ -5,21 +5,34 @@ export const FACTORY_RELAY_ONLY_MESSAGE =
 
 export const FACTORY_NO_ENVIRONMENT_MESSAGE = "Add an environment in Settings to open Factory.";
 
+export interface FactoryEnvironmentOption {
+  readonly connection: SavedRemoteConnection;
+  /** False for relay (DPoP, T3 Connect) connections, which cannot sign a WebView in. */
+  readonly openable: boolean;
+}
+
 export type FactoryEnvironmentChoice =
   | { readonly kind: "none" }
   | { readonly kind: "relay-only" }
   | { readonly kind: "one"; readonly connection: SavedRemoteConnection }
-  | { readonly kind: "several"; readonly connections: ReadonlyArray<SavedRemoteConnection> };
+  | { readonly kind: "several"; readonly options: ReadonlyArray<FactoryEnvironmentOption> };
 
-/** Relay (DPoP, T3 Connect) connections cannot sign a WebView in, so only direct ones count. */
+/**
+ * One saved connection opens straight away, or explains why it cannot. Several are all
+ * listed, sorted by label, so a relay one shows as unopenable instead of vanishing.
+ */
 export function factoryEnvironmentChoice(
   connections: ReadonlyArray<SavedRemoteConnection>,
 ): FactoryEnvironmentChoice {
   if (connections.length === 0) return { kind: "none" };
-  const direct = connections
-    .filter((connection) => !isRelayManagedConnection(connection))
-    .sort((a, b) => a.environmentLabel.localeCompare(b.environmentLabel));
-  if (direct.length === 0) return { kind: "relay-only" };
-  if (direct.length === 1) return { kind: "one", connection: direct[0]! };
-  return { kind: "several", connections: direct };
+  if (connections.length === 1) {
+    const connection = connections[0]!;
+    return isRelayManagedConnection(connection)
+      ? { kind: "relay-only" }
+      : { kind: "one", connection };
+  }
+  const options = connections
+    .map((connection) => ({ connection, openable: !isRelayManagedConnection(connection) }))
+    .sort((a, b) => a.connection.environmentLabel.localeCompare(b.connection.environmentLabel));
+  return { kind: "several", options };
 }

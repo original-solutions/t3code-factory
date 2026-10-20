@@ -65,17 +65,30 @@ export function FactoryScreen() {
         <FactoryWebView key={choice.connection.environmentId} connection={choice.connection} />
       );
     case "several": {
-      const picked = choice.connections.find((c) => c.environmentId === pickedId);
-      if (picked) return <FactoryWebView key={picked.environmentId} connection={picked} />;
+      const picked = choice.options.find(
+        (option) => option.openable && option.connection.environmentId === pickedId,
+      );
+      if (picked) {
+        return (
+          <FactoryWebView key={picked.connection.environmentId} connection={picked.connection} />
+        );
+      }
+      const anyRelay = choice.options.some((option) => !option.openable);
       return (
         <View className="flex-1 bg-screen px-5 pt-4">
-          <ListSection title="Environment">
-            {choice.connections.map((connection) => (
+          <ListSection
+            title="Environment"
+            {...(anyRelay ? { footer: FACTORY_RELAY_ONLY_MESSAGE } : {})}
+          >
+            {choice.options.map(({ connection, openable }) => (
               <ListRow
                 key={connection.environmentId}
                 icon="desktopcomputer"
                 label={connection.environmentLabel}
-                onPress={() => setPickedId(connection.environmentId)}
+                {...(openable ? {} : { detail: "Relay", disabled: true })}
+                onPress={() => {
+                  if (openable) setPickedId(connection.environmentId);
+                }}
               />
             ))}
           </ListSection>
