@@ -25,30 +25,66 @@ describe("factoryEnvironmentChoice", () => {
     expect(factoryEnvironmentChoice([])).toEqual({ kind: "none" });
   });
 
-  it("is relay-only when every connection is relay managed or DPoP", () => {
-    const choice = factoryEnvironmentChoice([
-      connection("a", { relayManaged: true }),
-      connection("b", { authenticationMethod: "dpop" }),
-    ]);
-    expect(choice).toEqual({ kind: "relay-only" });
-  });
-
-  it("opens the only direct connection and ignores relay ones", () => {
+  it("opens the only connection when it is direct", () => {
     const direct = connection("direct");
-    const choice = factoryEnvironmentChoice([connection("relay", { relayManaged: true }), direct]);
-    expect(choice).toEqual({ kind: "one", connection: direct });
+    expect(factoryEnvironmentChoice([direct])).toEqual({ kind: "one", connection: direct });
   });
 
-  it("lists several direct connections sorted by label", () => {
+  it("is relay-only when the only connection is relay managed", () => {
+    expect(factoryEnvironmentChoice([connection("a", { relayManaged: true })])).toEqual({
+      kind: "relay-only",
+    });
+  });
+
+  it("is relay-only when the only connection is DPoP", () => {
+    expect(factoryEnvironmentChoice([connection("a", { authenticationMethod: "dpop" })])).toEqual({
+      kind: "relay-only",
+    });
+  });
+
+  it("lists several direct connections sorted by label, all openable", () => {
     const choice = factoryEnvironmentChoice([
       connection("zeta"),
       connection("Alpha"),
       connection("mid"),
-      connection("relay", { relayManaged: true }),
     ]);
     expect(choice.kind).toBe("several");
     if (choice.kind === "several") {
-      expect(choice.connections.map((c) => c.environmentLabel)).toEqual(["Alpha", "mid", "zeta"]);
+      expect(choice.options.map((o) => [o.connection.environmentLabel, o.openable])).toEqual([
+        ["Alpha", true],
+        ["mid", true],
+        ["zeta", true],
+      ]);
+    }
+  });
+
+  it("lists a relay connection beside a direct one instead of dropping it", () => {
+    const choice = factoryEnvironmentChoice([
+      connection("Trilogy Mac"),
+      connection("relay", { relayManaged: true }),
+      connection("dpop", { authenticationMethod: "dpop" }),
+    ]);
+    expect(choice.kind).toBe("several");
+    if (choice.kind === "several") {
+      expect(choice.options.map((o) => [o.connection.environmentLabel, o.openable])).toEqual([
+        ["dpop", false],
+        ["relay", false],
+        ["Trilogy Mac", true],
+      ]);
+    }
+  });
+
+  it("lists several relay connections, none openable", () => {
+    const choice = factoryEnvironmentChoice([
+      connection("b", { relayManaged: true }),
+      connection("a", { authenticationMethod: "dpop" }),
+    ]);
+    expect(choice.kind).toBe("several");
+    if (choice.kind === "several") {
+      expect(choice.options.map((o) => [o.connection.environmentLabel, o.openable])).toEqual([
+        ["a", false],
+        ["b", false],
+      ]);
     }
   });
 
