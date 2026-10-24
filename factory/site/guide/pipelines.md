@@ -4,6 +4,9 @@ A pipeline is the path a run follows, drawn as a graph: which agent steps run, w
 
 Pipelines belong to the machine that runs the factory. Open them from the Factory page's Pipelines link, or at `/factory/pipelines`. Reading needs a normal paired session; saving needs `settings:write`, starting a run `orchestration:operate`.
 
+<img class="screenshot light-only" src="/screenshots/pipeline-editor-light.png" alt="The pipeline editor: the Learning loop pipeline on the canvas, Build selected, and the inspector showing its label and the factory skill" />
+<img class="screenshot dark-only" src="/screenshots/pipeline-editor-dark.png" alt="The pipeline editor: the Learning loop pipeline on the canvas, Build selected, and the inspector showing its label and the factory skill" />
+
 ## Start from a template
 
 New pipeline offers a blank canvas and three templates: Brief and gate (one agent with a brief, one gate, two tries), Build, review, ship (the factory's lifecycle with an agent review before the pull request), and Learning loop (the same, plus a learn step after the work is merged or given up). Pick the nearest one and change it.
@@ -37,6 +40,9 @@ An outcome with no transition ends the run stuck, and the editor warns about it.
 The editor validates as you edit. Errors (a missing brief, a loop without a limit, a skill this machine does not have) stop a run from starting; warnings do not.
 
 Simulate walks the graph with outcomes you pick. Turn it on, and the current node's outcomes become buttons. Click them to follow the run, watch the loop counts on the transitions, and see where it ends. Happy path picks the first outcome every time. What the simulation shows is what a run does, because they share the same interpreter.
+
+<img class="screenshot light-only" src="/screenshots/pipeline-simulation-light.png" alt="Simulation of the Learning loop: the happy path walked to the done end, every transition it took counted, and the steps listed in the inspector" />
+<img class="screenshot dark-only" src="/screenshots/pipeline-simulation-dark.png" alt="Simulation of the Learning loop: the happy path walked to the done end, every transition it took counted, and the steps listed in the inspector" />
 
 ## Run it
 
