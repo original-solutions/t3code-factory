@@ -27,6 +27,7 @@ import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import { Attention } from "../attention.ts";
 import { FactoryLoop } from "../index.ts";
 import { useTempDirs } from "../ledger/testSupport.ts";
+import { PipelineRunError, PipelineRuns } from "../pipeline/runsService.ts";
 import * as ServerExitService from "./exit.ts";
 import { FactoryRoutes, STATUS_PATH } from "./http.ts";
 import { FactoryPaths } from "./paths.ts";
@@ -171,6 +172,12 @@ const statusCall = (
         passEnded: () => Effect.void,
         setNotify: () => Effect.void,
         dismiss: () => Effect.succeed([]),
+      }),
+      Context.add(PipelineRuns, {
+        start: () => Effect.fail(new PipelineRunError({ kind: "io", message: "not benchmarked" })),
+        stop: () => Effect.fail(new PipelineRunError({ kind: "io", message: "not benchmarked" })),
+        list: () => Effect.fail(new PipelineRunError({ kind: "io", message: "not benchmarked" })),
+        get: () => Effect.fail(new PipelineRunError({ kind: "io", message: "not benchmarked" })),
       }),
       Context.add(FactoryPaths, {
         baseDir: dir,

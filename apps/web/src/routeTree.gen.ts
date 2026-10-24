@@ -34,12 +34,14 @@ import { Route as SettingsConnectionsRouteImport } from './routes/settings.conne
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
+import { Route as FactoryPipelinesRouteImport } from './routes/factory_.pipelines'
 import { Route as FactoryRunIdRouteImport } from './routes/factory_.$runId'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
 import { Route as FactoryEnvironmentIdRunIdRouteImport } from './routes/factory_.$environmentId.$runId'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
+import { Route as FactoryPipelinesEnvironmentIdPipelineIdRouteImport } from './routes/factory_.pipelines_.$environmentId.$pipelineId'
 
 const WelcomeRoute = WelcomeRouteImport.update({
   id: '/welcome',
@@ -166,6 +168,11 @@ const ProjectsProjectKeyRoute = ProjectsProjectKeyRouteImport.update({
   path: '/projects/$projectKey',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FactoryPipelinesRoute = FactoryPipelinesRouteImport.update({
+  id: '/factory_/pipelines',
+  path: '/factory/pipelines',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const FactoryRunIdRoute = FactoryRunIdRouteImport.update({
   id: '/factory_/$runId',
   path: '/factory/$runId',
@@ -198,6 +205,12 @@ const ChatEnvironmentIdThreadIdRoute =
     path: '/$environmentId/$threadId',
     getParentRoute: () => ChatRoute,
   } as any)
+const FactoryPipelinesEnvironmentIdPipelineIdRoute =
+  FactoryPipelinesEnvironmentIdPipelineIdRouteImport.update({
+    id: '/factory_/pipelines_/$environmentId/$pipelineId',
+    path: '/factory/pipelines/$environmentId/$pipelineId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
@@ -211,6 +224,7 @@ export interface FileRoutesByFullPath {
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/factory/$runId': typeof FactoryRunIdRoute
+  '/factory/pipelines': typeof FactoryPipelinesRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -230,6 +244,7 @@ export interface FileRoutesByFullPath {
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/factory/$environmentId/$runId': typeof FactoryEnvironmentIdRunIdRoute
+  '/factory/pipelines/$environmentId/$pipelineId': typeof FactoryPipelinesEnvironmentIdPipelineIdRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
@@ -242,6 +257,7 @@ export interface FileRoutesByTo {
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/factory/$runId': typeof FactoryRunIdRoute
+  '/factory/pipelines': typeof FactoryPipelinesRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -262,6 +278,7 @@ export interface FileRoutesByTo {
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/factory/$environmentId/$runId': typeof FactoryEnvironmentIdRunIdRoute
+  '/factory/pipelines/$environmentId/$pipelineId': typeof FactoryPipelinesEnvironmentIdPipelineIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -276,6 +293,7 @@ export interface FileRoutesById {
   '/_chat/new': typeof ChatNewRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/factory_/$runId': typeof FactoryRunIdRoute
+  '/factory_/pipelines': typeof FactoryPipelinesRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -296,6 +314,7 @@ export interface FileRoutesById {
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/factory_/$environmentId/$runId': typeof FactoryEnvironmentIdRunIdRoute
+  '/factory_/pipelines_/$environmentId/$pipelineId': typeof FactoryPipelinesEnvironmentIdPipelineIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -311,6 +330,7 @@ export interface FileRouteTypes {
     | '/new'
     | '/pull-requests'
     | '/factory/$runId'
+    | '/factory/pipelines'
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
@@ -330,6 +350,7 @@ export interface FileRouteTypes {
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
     | '/factory/$environmentId/$runId'
+    | '/factory/pipelines/$environmentId/$pipelineId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
@@ -342,6 +363,7 @@ export interface FileRouteTypes {
     | '/new'
     | '/pull-requests'
     | '/factory/$runId'
+    | '/factory/pipelines'
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
@@ -362,6 +384,7 @@ export interface FileRouteTypes {
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
     | '/factory/$environmentId/$runId'
+    | '/factory/pipelines/$environmentId/$pipelineId'
   id:
     | '__root__'
     | '/_chat'
@@ -375,6 +398,7 @@ export interface FileRouteTypes {
     | '/_chat/new'
     | '/_chat/pull-requests'
     | '/factory_/$runId'
+    | '/factory_/pipelines'
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
@@ -395,6 +419,7 @@ export interface FileRouteTypes {
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
     | '/factory_/$environmentId/$runId'
+    | '/factory_/pipelines_/$environmentId/$pipelineId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -407,8 +432,10 @@ export interface RootRouteChildren {
   UsageRoute: typeof UsageRoute
   WelcomeRoute: typeof WelcomeRoute
   FactoryRunIdRoute: typeof FactoryRunIdRoute
+  FactoryPipelinesRoute: typeof FactoryPipelinesRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
   FactoryEnvironmentIdRunIdRoute: typeof FactoryEnvironmentIdRunIdRoute
+  FactoryPipelinesEnvironmentIdPipelineIdRoute: typeof FactoryPipelinesEnvironmentIdPipelineIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -588,6 +615,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectKeyRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/factory_/pipelines': {
+      id: '/factory_/pipelines'
+      path: '/factory/pipelines'
+      fullPath: '/factory/pipelines'
+      preLoaderRoute: typeof FactoryPipelinesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/factory_/$runId': {
       id: '/factory_/$runId'
       path: '/factory/$runId'
@@ -629,6 +663,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/$environmentId/$threadId'
       preLoaderRoute: typeof ChatEnvironmentIdThreadIdRouteImport
       parentRoute: typeof ChatRoute
+    }
+    '/factory_/pipelines_/$environmentId/$pipelineId': {
+      id: '/factory_/pipelines_/$environmentId/$pipelineId'
+      path: '/factory/pipelines/$environmentId/$pipelineId'
+      fullPath: '/factory/pipelines/$environmentId/$pipelineId'
+      preLoaderRoute: typeof FactoryPipelinesEnvironmentIdPipelineIdRouteImport
+      parentRoute: typeof rootRouteImport
     }
   }
 }
@@ -701,8 +742,11 @@ const rootRouteChildren: RootRouteChildren = {
   UsageRoute: UsageRoute,
   WelcomeRoute: WelcomeRoute,
   FactoryRunIdRoute: FactoryRunIdRoute,
+  FactoryPipelinesRoute: FactoryPipelinesRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
   FactoryEnvironmentIdRunIdRoute: FactoryEnvironmentIdRunIdRoute,
+  FactoryPipelinesEnvironmentIdPipelineIdRoute:
+    FactoryPipelinesEnvironmentIdPipelineIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

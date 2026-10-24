@@ -1,5 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useNavigate, useSearch } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useState } from "react";
 
 import {
@@ -18,6 +18,7 @@ import { FactoryError, FactoryLoading, FactoryReadFailure } from "./FactoryNotic
 import { messageOf, parseRunId } from "./format";
 import { RunsTable } from "./RunsTable";
 import type { FactorySearch } from "./search";
+import { TouchLink } from "./TouchLink";
 import {
   useFactoryEnvironments,
   useFactoryRunsOf,
@@ -300,6 +301,9 @@ export function FactoryPage() {
       header={
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <h1 className="min-w-0 truncate text-sm font-medium">Factory</h1>
+          <TouchLink render={<Link to="/factory/pipelines" />} tone="muted">
+            Pipelines
+          </TouchLink>
           <div className="ml-auto flex min-w-0 items-center gap-2">
             {/* A filter that is on keeps its select, so it can be cleared. */}
             {environments.length > 1 || environmentFilter !== null ? (

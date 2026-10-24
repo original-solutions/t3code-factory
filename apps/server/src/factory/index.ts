@@ -69,6 +69,7 @@ import {
   type Repo,
   type Report,
 } from "./pass.ts";
+import * as PipelineRuns from "./pipeline/runs.ts";
 import * as Process from "./process.ts";
 import { FactoryProcess } from "./process.ts";
 import { readProgress, type Moved } from "./runner/progress.ts";
@@ -1065,6 +1066,7 @@ export const FactoryRuntime = factoryRuntime();
 
 /** The factory's root layer. server.ts merges it into the runtime; nothing else imports it. */
 export const FactoryLayer = FactoryRuntime.pipe(
+  Layer.provideMerge(PipelineRuns.layer),
   Layer.provideMerge(Paths.layer),
   Layer.provideMerge(ServerExitService.layer),
   Layer.provide(Gate.layer),

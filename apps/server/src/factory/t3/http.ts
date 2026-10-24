@@ -69,6 +69,7 @@ import { buildStatus } from "../status.ts";
 import { route } from "./auth.ts";
 import { ServerExit } from "./exit.ts";
 import { FactoryPaths } from "./paths.ts";
+import { PipelineRoutes } from "./pipelineHttp.ts";
 
 export const STATUS_PATH = "/api/factory/status";
 export const RUNS_PATH = "/api/factory/runs";
@@ -358,4 +359,5 @@ export const FactoryRoutes = Layer.mergeAll(
   configRoute,
   saveConfigRoute,
   restartRoute,
+  PipelineRoutes,
 );

@@ -105,11 +105,14 @@ export interface FactoryResumeResult {
 export class FactoryApiError extends Error {
   readonly status: number;
   readonly code: string | null;
-  constructor(status: number, code: string | null, message: string) {
+  /** The answer's parsed body, for callers that read more than the message (decode errors). */
+  readonly body: unknown;
+  constructor(status: number, code: string | null, message: string, body: unknown = null) {
     super(message);
     this.name = "FactoryApiError";
     this.status = status;
     this.code = code;
+    this.body = body;
   }
 }
 
@@ -221,14 +224,15 @@ const call = async <T>(
       result.status,
       textField(body, "code"),
       failureMessage(result.status, body),
+      body,
     );
   }
   return body as T;
 };
 
-const post = <T>(environmentId: EnvironmentId, path: string, body?: unknown) =>
+export const post = <T>(environmentId: EnvironmentId, path: string, body?: unknown) =>
   call<T>(environmentId, "POST", path, undefined, body);
-const get = <T>(
+export const get = <T>(
   environmentId: EnvironmentId,
   path: string,
   searchParams?: Record<string, string>,
