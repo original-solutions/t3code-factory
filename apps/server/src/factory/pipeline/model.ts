@@ -185,31 +185,33 @@ const decodeInstructions = (
   const [key] = keys;
   if (key === "skill") {
     const skill = value["skill"];
-    if (!isText(skill) || skill.trim() === "") {
-      errors.add(`${path}.skill`, "pick a skill this machine has");
+    if (!isText(skill)) {
+      errors.add(`${path}.skill`, "must be a skill name");
       return undefined;
     }
+    // An empty name decodes: the editor saves drafts, and validation names the problem.
     return { skill: skill.trim() };
   }
   if (key === "brief") {
     const brief = value["brief"];
-    if (!isText(brief) || brief.trim() === "") {
-      errors.add(`${path}.brief`, "the brief is empty: say what the agent should do");
+    if (!isText(brief)) {
+      errors.add(`${path}.brief`, "must be text");
       return undefined;
     }
     return { brief };
   }
   if (key === "commands" && commandsAllowed) {
     const commands = value["commands"];
-    if (
-      !Array.isArray(commands) ||
-      commands.length === 0 ||
-      !commands.every((command) => isText(command) && command.trim() !== "")
-    ) {
-      errors.add(`${path}.commands`, "add at least one command, one per line");
+    if (!Array.isArray(commands) || !commands.every((command) => isText(command))) {
+      errors.add(`${path}.commands`, "must be a list of command lines");
       return undefined;
     }
-    return { commands: commands.map((command: string) => command.trim()) };
+    // Blank lines are dropped; an empty list decodes and validation names the problem.
+    return {
+      commands: commands
+        .map((command: string) => command.trim())
+        .filter((command) => command !== ""),
+    };
   }
   errors.add(`${path}.${key}`, "is not a known key");
   return undefined;

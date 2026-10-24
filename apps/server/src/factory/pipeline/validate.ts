@@ -124,10 +124,18 @@ export const validate = (pipeline: Pipeline, skills: Skills): ReadonlyArray<Prob
           : null;
     if (check !== null) {
       const skill = skillOf(check);
-      if (skill !== null && !skills.has(skill)) {
+      if (skill === "")
+        error(`${nameOf(node)} needs a skill: pick one this machine has`, { node: node.id });
+      else if (skill !== null && !skills.has(skill)) {
         error(`${nameOf(node)} names the skill ${skill}, which this machine does not have`, {
           node: node.id,
         });
+      }
+      if ("brief" in check && check.brief.trim() === "") {
+        error(`${nameOf(node)}'s brief is empty: say what the agent should do`, { node: node.id });
+      }
+      if ("commands" in check && check.commands.length === 0) {
+        error(`${nameOf(node)} has no commands: add at least one, one per line`, { node: node.id });
       }
     }
   }
@@ -150,7 +158,11 @@ export const validate = (pipeline: Pipeline, skills: Skills): ReadonlyArray<Prob
       error(`nothing enters ${nameOf(to)}: it is the start`, { edge: edge.id });
     if (edge.instructions !== undefined) {
       const skill = skillOf(edge.instructions);
-      if (skill !== null && !skills.has(skill)) {
+      if (skill === "")
+        error(`transition ${edge.id} needs a skill: pick one this machine has`, { edge: edge.id });
+      else if ("brief" in edge.instructions && edge.instructions.brief.trim() === "") {
+        error(`transition ${edge.id}'s brief is empty`, { edge: edge.id });
+      } else if (skill !== null && !skills.has(skill)) {
         error(`transition ${edge.id} names the skill ${skill}, which this machine does not have`, {
           edge: edge.id,
         });

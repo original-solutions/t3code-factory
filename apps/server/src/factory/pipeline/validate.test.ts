@@ -137,6 +137,27 @@ describe("validate", () => {
     ]);
   });
 
+  it("names an empty skill, brief or command list on its node or transition", () => {
+    const empty: Pipeline = {
+      ...buildAndGate,
+      nodes: buildAndGate.nodes.map((node) =>
+        node.id === "build"
+          ? { ...node, kind: "agent", instructions: { brief: "  " }, fresh: false }
+          : node.id === "gate"
+            ? { ...node, kind: "verify", check: { commands: [] } }
+            : node,
+      ),
+      edges: buildAndGate.edges.map((edge) =>
+        edge.id === "e3" ? { ...edge, instructions: { skill: "" } } : edge,
+      ),
+    };
+    expect(errors(empty)).toEqual([
+      "Build's brief is empty: say what the agent should do",
+      "Gate has no commands: add at least one, one per line",
+      "transition e3 needs a skill: pick one this machine has",
+    ]);
+  });
+
   it("reports duplicate ids", () => {
     const dup = withNodes(buildAndGate, [...buildAndGate.nodes, { ...buildAndGate.nodes[3]! }]);
     expect(errors(dup)).toContain("two nodes have the id done");

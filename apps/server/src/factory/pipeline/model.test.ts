@@ -33,8 +33,8 @@ describe("decodePipeline", () => {
       id: "Bad Id",
       name: "",
       nodes: [
-        { id: "a", kind: "agent", x: 0, y: 0, instructions: { skill: "" } },
-        { id: "b", kind: "verify", x: 0, y: 1, check: { commands: [] } },
+        { id: "a", kind: "agent", x: 0, y: 0, instructions: { skill: 7 } },
+        { id: "b", kind: "verify", x: 0, y: 1, check: { commands: "ls" } },
         { id: "c", kind: "end", x: 0, y: 0, result: "maybe" },
         { id: "d", kind: "robot", x: 0, y: 0 },
         { id: "e", kind: "agent", x: 0, y: 0, instructions: { skill: "x", brief: "y" } },
@@ -94,6 +94,24 @@ describe("decodePipeline", () => {
       check: { skill: "review-gate" },
     });
     expect(pipeline.edges[0]).toEqual({ id: "x", from: "a", port: "done", to: "e" });
+  });
+
+  it("decodes an empty skill, brief or command list: validation names those", () => {
+    const pipeline = decodeOk({
+      id: "p",
+      name: "P",
+      nodes: [
+        { id: "a", kind: "agent", x: 0, y: 0, instructions: { skill: "" } },
+        { id: "b", kind: "learn", x: 0, y: 0, instructions: { brief: "" } },
+        { id: "c", kind: "verify", x: 0, y: 0, check: { commands: ["", "  "] } },
+      ],
+      edges: [],
+    });
+    expect(
+      pipeline.nodes.map((node) =>
+        "instructions" in node ? node.instructions : "check" in node ? node.check : null,
+      ),
+    ).toEqual([{ skill: "" }, { brief: "" }, { commands: [] }]);
   });
 
   it("refuses commands anywhere but a verify's check", () => {
