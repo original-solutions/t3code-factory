@@ -104,6 +104,45 @@ describe("makeSpanRegistry.active", () => {
     expect(names.length).toBeLessThanOrEqual(5);
   });
 
+  it("reports the connection a SQL statement ran on", () => {
+    const c = clock();
+    const registry = makeSpanRegistry({ now: c.now });
+    c.set(10);
+    const sql = registry.start("sqlite", "span");
+    registry.markSql(sql, "SELECT 1");
+    registry.markConnection(sql, "reader");
+    expect(registry.active(0, 100, 10)).toEqual([
+      {
+        name: "sqlite",
+        kind: "sql",
+        ageMs: 90,
+        open: true,
+        query: "SELECT 1",
+        connection: "reader",
+      },
+    ]);
+  });
+
+  it("gives a SQL statement the connection of the transaction it runs in, through the spans between, and no other span", () => {
+    const c = clock();
+    const registry = makeSpanRegistry({ now: c.now });
+    c.set(10);
+    const tx = registry.start("sql.transaction", "span");
+    registry.markConnection(tx, "writer");
+    c.set(20);
+    const repo = registry.start("EventSink.commit", "span", tx);
+    c.set(30);
+    const sql = registry.start("sqlite", "span", repo);
+    registry.markSql(sql, "INSERT INTO t VALUES (1)");
+    c.set(40);
+    registry.start("decode rows", "span", repo);
+    const byName = new Map(registry.active(0, 100, 10).map((s) => [s.name, s.connection]));
+    expect(byName.get("sqlite")).toBe("writer");
+    expect(byName.get("decode rows")).toBeUndefined();
+    expect(byName.get("EventSink.commit")).toBeUndefined();
+    expect(byName.get("sql.transaction")).toBeUndefined();
+  });
+
   it("ignores an end for a span it already dropped", () => {
     const registry = makeSpanRegistry({ maxInFlight: 1 });
     const first = registry.start("first", "span");
@@ -222,6 +261,38 @@ describe("wrapTracer", () => {
     const spans = registry.active(0, 10, 10);
     expect(spans.map((s) => s.kind)).toEqual(["sql", "span"]);
     expect(spans[0]?.query).toHaveLength(160);
+  });
+
+  it("keeps the connection a client span's db.connection names, and ignores a value it does not know", () => {
+    const { registry, tracer } = setup();
+    const reader = tracer.span(spanOptions("sqlite", Option.some(parentSpan), "client"));
+    reader.attribute("db.system.name", "sqlite");
+    reader.attribute("db.connection", "reader");
+    const writer = tracer.span(spanOptions("sqlite 2", Option.some(parentSpan), "client"));
+    writer.attribute("db.system.name", "sqlite");
+    writer.attribute("db.connection", "writer");
+    const odd = tracer.span(spanOptions("sqlite 3", Option.some(parentSpan), "client"));
+    odd.attribute("db.system.name", "sqlite");
+    odd.attribute("db.connection", 42);
+    const byName = new Map(registry.active(0, 10, 10).map((s) => [s.name, s.connection]));
+    expect(byName.get("sqlite")).toBe("reader");
+    expect(byName.get("sqlite 2")).toBe("writer");
+    expect(byName.get("sqlite 3")).toBeUndefined();
+  });
+
+  it("takes the connection a sql.transaction span names, so the statements inside inherit it", () => {
+    const { registry, tracer } = setup();
+    const tx = tracer.span(spanOptions("sql.transaction", Option.some(parentSpan)));
+    tx.attribute("db.connection", "writer");
+    const body = tracer.span(spanOptions("EventSink.commit", Option.some(tx)));
+    const sql = tracer.span(spanOptions("sqlite", Option.some(body), "client"));
+    sql.attribute("db.system.name", "sqlite");
+    const other = tracer.span(spanOptions("rpc.request", Option.some(parentSpan)));
+    other.attribute("db.connection", "writer");
+    const byName = new Map(registry.active(0, 10, 10).map((s) => [s.name, s.connection]));
+    expect(byName.get("sqlite")).toBe("writer");
+    expect(byName.get("EventSink.commit")).toBeUndefined();
+    expect(byName.get("rpc.request")).toBeUndefined();
   });
 
   it("links a span to its parent, so the parent's own time excludes the child's", () => {
