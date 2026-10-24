@@ -186,7 +186,7 @@ const decodeInstructions = (
   if (key === "skill") {
     const skill = value["skill"];
     if (!isText(skill) || skill.trim() === "") {
-      errors.add(`${path}.skill`, "must be a skill name");
+      errors.add(`${path}.skill`, "pick a skill this machine has");
       return undefined;
     }
     return { skill: skill.trim() };
@@ -194,7 +194,7 @@ const decodeInstructions = (
   if (key === "brief") {
     const brief = value["brief"];
     if (!isText(brief) || brief.trim() === "") {
-      errors.add(`${path}.brief`, "must be the brief's text");
+      errors.add(`${path}.brief`, "the brief is empty: say what the agent should do");
       return undefined;
     }
     return { brief };
@@ -206,7 +206,7 @@ const decodeInstructions = (
       commands.length === 0 ||
       !commands.every((command) => isText(command) && command.trim() !== "")
     ) {
-      errors.add(`${path}.commands`, "must be a list of at least one command line");
+      errors.add(`${path}.commands`, "add at least one command, one per line");
       return undefined;
     }
     return { commands: commands.map((command: string) => command.trim()) };
