@@ -42,14 +42,15 @@ describe("the example pipelines", () => {
     ]);
   });
 
-  for (const { name, body } of examples) {
-    it(`${name} decodes, validates without problems, and its file name is its id`, () => {
+  it.each(examples)(
+    "$name decodes, validates without problems, and its file name is its id",
+    ({ name, body }) => {
       const decoded = decodePipeline(body);
       if (!decoded.ok) throw new Error(JSON.stringify(decoded.errors));
       expect(`${decoded.pipeline.id}.yml`).toBe(name);
       expect(validate(decoded.pipeline, namedSkills(decoded.pipeline))).toEqual([]);
-    });
-  }
+    },
+  );
 
   it("the learning loop reaches Capture lessons on a merge and Postmortem on a close", () => {
     const decoded = decodePipeline(examples.find((e) => e.name === "learning-loop.yml")!.body);

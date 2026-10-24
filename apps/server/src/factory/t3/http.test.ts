@@ -39,6 +39,7 @@ import { Ledger } from "../ledger/ledger.ts";
 import { runIdToString, runPath, type RunId } from "../ledger/runId.ts";
 import { T0, useTempDirs } from "../ledger/testSupport.ts";
 import { formatTs } from "../ledger/time.ts";
+import { PipelineRunError, PipelineRuns } from "../pipeline/runsService.ts";
 import { stopRequestPath } from "../runner/stop.ts";
 import type { FactoryStatus } from "../status.ts";
 import { saveMachineConfig } from "../settings.ts";
@@ -209,6 +210,16 @@ const attentionWith = (items: ReadonlyArray<AttentionItem>) =>
       Effect.succeed(items.filter((item) => ids.includes(item.id)).map((item) => item.id)),
   });
 
+const noPipelineRun = () =>
+  Effect.fail(new PipelineRunError({ kind: "io", message: "no pipeline runs here" }));
+
+const noPipelineRuns = PipelineRuns.of({
+  start: noPipelineRun,
+  stop: noPipelineRun,
+  list: noPipelineRun,
+  get: noPipelineRun,
+});
+
 const worldContext = (
   auth: EnvironmentAuth.EnvironmentAuth["Service"],
   world: World,
@@ -264,6 +275,8 @@ const worldContext = (
       }),
     ),
     Context.add(Attention, attentionWith(world.attention ?? [])),
+    // The pipeline routes are tested in pipelineHttp.test.ts; these tests never reach them.
+    Context.add(PipelineRuns, noPipelineRuns),
     Context.add(FactoryPaths, {
       baseDir: dir,
       worktreesDir: NodePath.join(dir, "worktrees"),

@@ -115,6 +115,7 @@ The prototype's limits, by choice:
 - Commands run in the session's worktree, not in a fresh checkout merged with the base, as the factory's gate does.
 - `ask` and `pr` need an issue on a watched repo. A run started without one ends `stuck` when it reaches them.
 - A thread's settlement is polled, every 10 seconds; the factory's own runs are woken by the event stream.
+- An `ask` node waits for the issue to be `factory:ready` again, which is also what the claim loop claims. On a watched repo the fixed lifecycle can claim the issue before the pipeline reads the answer. Until the claim loop hands issues to pipelines, run pipelines with `ask` nodes on issues the claim loop will not take: a repo the factory does not watch, or with claims paused.
 
 The claim loop does not start pipeline runs for `factory:ready` issues yet. Wiring that is the follow-up once the design has been used: a repo's factory block would name its pipeline, and the pass would hand a claimed issue to `PipelineRuns` instead of the fixed lifecycle.
 
