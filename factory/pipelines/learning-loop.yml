@@ -1,0 +1,162 @@
+# The learning loop: build, gate, check the tests, agent review, pull request, and after the
+# work is accepted or given up, a learn step that writes what the run taught into the skills the
+# next run reads. Both ends learn: a merged run captures what worked, a stuck run a postmortem.
+id: learning-loop
+name: Learning loop
+nodes:
+  - id: start
+    kind: start
+    x: 40
+    y: 260
+  - id: build
+    kind: agent
+    label: Build
+    x: 280
+    y: 260
+    instructions:
+      skill: factory
+  - id: ask
+    kind: ask
+    label: Ask
+    x: 280
+    y: 520
+  - id: gate
+    kind: verify
+    label: Gate
+    x: 520
+    y: 260
+    check:
+      commands:
+        - factory/scripts/check.sh
+  - id: tests
+    kind: verify
+    label: Tests honest
+    x: 760
+    y: 260
+    check:
+      skill: test-tests
+  - id: review
+    kind: verify
+    label: Review
+    x: 1000
+    y: 260
+    check:
+      skill: review-gate
+  - id: pr
+    kind: pr
+    label: Pull request
+    x: 1240
+    y: 260
+  - id: learn
+    kind: learn
+    label: Capture lessons
+    x: 1480
+    y: 260
+    instructions:
+      skill: session-capture
+  - id: postmortem
+    kind: learn
+    label: Postmortem
+    x: 1000
+    y: 520
+    instructions:
+      brief: |
+        This run ended stuck. Read its record below, find the one lesson that would have let the
+        next run on this repo avoid the same end, and append it to
+        ~/EA/skills/factory/references/field-lessons.md as one short dated bullet. Do not touch
+        the repo. End with FACTORY-DONE: <the lesson in one line>.
+  - id: done
+    kind: end
+    result: done
+    x: 1720
+    y: 260
+  - id: stuck
+    kind: end
+    result: stuck
+    x: 1240
+    y: 520
+edges:
+  - id: e1
+    from: start
+    port: next
+    to: build
+  - id: e2
+    from: build
+    port: done
+    to: gate
+  - id: e3
+    from: build
+    port: questions
+    to: ask
+  - id: e4
+    from: ask
+    port: answered
+    to: build
+    max: 3
+    instructions:
+      brief: The answers to your questions are below. Continue the work and end with a result line.
+  - id: e5
+    from: build
+    port: stop
+    to: postmortem
+  - id: e6
+    from: gate
+    port: fail
+    to: build
+    max: 2
+    instructions:
+      brief: The gate failed. Fix what its output below shows, push, and end with a result line.
+  - id: e7
+    from: gate
+    port: pass
+    to: tests
+  - id: e8
+    from: tests
+    port: fail
+    to: build
+    max: 2
+    instructions:
+      brief: The test review below found tests that do not prove the behaviour. Fix them, push, and end with a result line.
+  - id: e9
+    from: tests
+    port: pass
+    to: review
+  - id: e10
+    from: review
+    port: fail
+    to: build
+    max: 3
+    instructions:
+      brief: The reviewer's findings are below. Fix each one, push, and end with a result line.
+  - id: e11
+    from: review
+    port: pass
+    to: pr
+  - id: e12
+    from: pr
+    port: feedback
+    to: build
+    max: 5
+    instructions:
+      brief: A person left the feedback below on the pull request. Address it, push, and end with a result line.
+  - id: e13
+    from: pr
+    port: base-moved
+    to: gate
+    max: 10
+  - id: e14
+    from: pr
+    port: merged
+    to: learn
+  - id: e15
+    from: pr
+    port: closed
+    to: postmortem
+  - id: e16
+    from: learn
+    port: done
+    to: done
+  - id: e17
+    from: postmortem
+    port: done
+    to: stuck

@@ -1,0 +1,117 @@
+# The factory's lifecycle plus an agent review before the pull request: build with the factory
+# skill, gate, review-gate as a reviewer, then wait on the pull request and loop on feedback.
+id: build-review-ship
+name: Build, review, ship
+nodes:
+  - id: start
+    kind: start
+    x: 40
+    y: 240
+  - id: build
+    kind: agent
+    label: Build
+    x: 280
+    y: 240
+    instructions:
+      skill: factory
+  - id: ask
+    kind: ask
+    label: Ask
+    x: 280
+    y: 480
+  - id: gate
+    kind: verify
+    label: Gate
+    x: 520
+    y: 240
+    check:
+      commands:
+        - factory/scripts/check.sh
+  - id: review
+    kind: verify
+    label: Review
+    x: 760
+    y: 240
+    check:
+      skill: review-gate
+  - id: pr
+    kind: pr
+    label: Pull request
+    x: 1000
+    y: 240
+  - id: done
+    kind: end
+    result: done
+    x: 1240
+    y: 240
+  - id: stuck
+    kind: end
+    result: stuck
+    x: 1000
+    y: 480
+edges:
+  - id: e1
+    from: start
+    port: next
+    to: build
+  - id: e2
+    from: build
+    port: done
+    to: gate
+  - id: e3
+    from: build
+    port: questions
+    to: ask
+  - id: e4
+    from: ask
+    port: answered
+    to: build
+    max: 3
+    instructions:
+      brief: The answers to your questions are below. Continue the work and end with a result line.
+  - id: e5
+    from: build
+    port: stop
+    to: stuck
+  - id: e6
+    from: gate
+    port: fail
+    to: build
+    max: 2
+    instructions:
+      brief: The gate failed. Fix what its output below shows, push, and end with a result line.
+  - id: e7
+    from: gate
+    port: pass
+    to: review
+  - id: e8
+    from: review
+    port: fail
+    to: build
+    max: 3
+    instructions:
+      brief: The reviewer's findings are below. Fix each one, push, and end with a result line.
+  - id: e9
+    from: review
+    port: pass
+    to: pr
+  - id: e10
+    from: pr
+    port: feedback
+    to: build
+    max: 5
+    instructions:
+      brief: A person left the feedback below on the pull request. Address it, push, and end with a result line.
+  - id: e11
+    from: pr
+    port: base-moved
+    to: gate
+    max: 10
+  - id: e12
+    from: pr
+    port: merged
+    to: done
+  - id: e13
+    from: pr
+    port: closed
+    to: stuck

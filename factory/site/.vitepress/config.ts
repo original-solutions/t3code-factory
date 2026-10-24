@@ -14,6 +14,7 @@ const guide: DefaultTheme.SidebarItem[] = [
   { text: "The machine config", link: "/guide/machine-config" },
   { text: "File work", link: "/guide/filing-work" },
   { text: "Watch runs", link: "/guide/watching-runs" },
+  { text: "Design a pipeline", link: "/guide/pipelines" },
   { text: "When a run stops", link: "/guide/when-a-run-stops" },
 ];
 
