@@ -3,9 +3,12 @@
  * records every step as it happens. The ports are the only I/O, so the tests drive it with fakes
  * and `live.ts` binds them to T3 sessions, the process runner and GitHub.
  */
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { asciiLower } from "../ledger/runId.ts";
 import {
   kindInfo,
   type Check,
@@ -15,7 +18,7 @@ import {
   type Pipeline,
 } from "./model.ts";
 import { advance, initialCursor, nodeOf, type Cursor } from "./interpret.ts";
-import { readResult } from "./resultLine.ts";
+import { readResult, type PullRequestRef } from "./resultLine.ts";
 import type { RunEvent } from "./runsService.ts";
 
 export class PortError extends Schema.TaggedError<PortError>()("PipelinePortError", {
@@ -75,6 +78,11 @@ export interface RunContext {
   /** The watched repo, `owner/name`, when the project is one. */
   readonly repo: string | null;
   readonly issue: number | null;
+  /**
+   * How long the run may work, in minutes. Like the factory's own limit, the time a run waits
+   * for a person (an `ask` or a `pr` node) is not counted.
+   */
+  readonly limitMinutes: number;
 }
 
 export type RunEnd = {
@@ -93,6 +101,7 @@ export const REVIEW_ENDING =
 export const NO_RESULT_TWICE = "no result line twice";
 export const NO_WORKTREE = "no worktree yet";
 export const NO_PULL_REQUEST = "no pull request was reported";
+export const pastLimit = (minutes: number) => `the run passed its time limit of ${minutes} minutes`;
 
 /** How much of each outcome's detail a learner is shown. */
 const DETAIL_IN_SUMMARY = 400;
@@ -199,6 +208,28 @@ export const execute = Effect.fn("PipelineExecute.execute")(function* (
   let pr: number | null = null;
   const markedReady = new Set<number>();
   const visits = new Map<string, number>();
+  const archived = new Set<string>();
+  let workedMs = 0;
+
+  const archive = Effect.fn("PipelineExecute.archive")(function* (threadId: string) {
+    yield* ports.archive(threadId);
+    archived.add(threadId);
+  });
+
+  /** Archives every thread the run launched and has not archived, and ignores a failure. */
+  const archiveLeft = Effect.fn("PipelineExecute.archiveLeft")(function* (keepMain: boolean) {
+    const ids = new Set(log.flatMap((event) => (event.event === "thread" ? [event.threadId] : [])));
+    for (const id of ids) {
+      if (archived.has(id) || (keepMain && id === main?.threadId)) continue;
+      yield* Effect.ignore(archive(id));
+    }
+  });
+
+  /** The pull request on the run's repo among those a message names; another repo's is ignored. */
+  const ownPullRequest = (refs: ReadonlyArray<PullRequestRef>): number | undefined =>
+    run.repo === null
+      ? undefined
+      : refs.find((ref) => asciiLower(`${ref.owner}/${ref.name}`) === asciiLower(run.repo!))?.pr;
 
   // One step that a stop cannot cut in two: a stopped run archives the threads its record
   // names, so a thread that was launched must be in the record.
@@ -254,10 +285,10 @@ export const execute = Effect.fn("PipelineExecute.execute")(function* (
       yield* ports.send(thread.threadId, RESULT_LINE_REMINDER);
       result = readResult(yield* settle(node, thread));
     }
-    if (node.fresh) yield* ports.archive(thread.threadId);
+    if (node.fresh) yield* archive(thread.threadId);
     switch (result.kind) {
       case "done":
-        if (result.pr !== null) pr = result.pr;
+        pr = ownPullRequest(result.pullRequests) ?? pr;
         return { port: "done", detail: result.text } as const;
       case "questions":
         return { port: "questions", detail: result.questions } as const;
@@ -283,7 +314,7 @@ export const execute = Effect.fn("PipelineExecute.execute")(function* (
     const message = `${instructionsText(check)}${contextBlock(incoming)}\n\n${REVIEW_ENDING}`;
     const reviewer = yield* launch(node, message, main?.branch ?? null);
     const text = yield* settle(node, reviewer);
-    yield* ports.archive(reviewer.threadId);
+    yield* archive(reviewer.threadId);
     const result = readResult(text);
     return result.kind === "done"
       ? ({ port: "pass", detail: result.text } as const)
@@ -294,10 +325,19 @@ export const execute = Effect.fn("PipelineExecute.execute")(function* (
     node: Extract<Node, { kind: "learn" }>,
   ) {
     const message = `${instructionsText(node.instructions)}\n\nThe run's record:\n\n${recordSummary(pipeline, log)}\n\n${preamble(pipeline, node, run)}`;
-    const learner = yield* launch(node, message, main?.branch ?? null);
-    const text = yield* settle(node, learner);
-    yield* ports.archive(learner.threadId);
-    return { port: "done", detail: text } as const;
+    // The learner never blocks the run: a failure is recorded and the run goes on.
+    const learned = yield* Effect.result(
+      Effect.gen(function* () {
+        const learner = yield* launch(node, message, main?.branch ?? null);
+        const text = yield* settle(node, learner);
+        yield* archive(learner.threadId);
+        return text;
+      }),
+    );
+    if (learned._tag === "Success") return { port: "done", detail: learned.success } as const;
+    yield* record({ event: "error", message: learned.failure.message });
+    yield* archiveLeft(true);
+    return { port: "done", detail: null } as const;
   });
 
   const step = Effect.fn("PipelineExecute.step")(function* (
@@ -342,7 +382,7 @@ export const execute = Effect.fn("PipelineExecute.execute")(function* (
     result: RunEnd["result"],
     reason: string | null,
   ) {
-    if (main !== null) yield* Effect.ignore(ports.archive(main.threadId));
+    yield* archiveLeft(false);
     yield* record({ event: "ended", result, reason });
     return { result, reason } satisfies RunEnd;
   });
@@ -351,6 +391,22 @@ export const execute = Effect.fn("PipelineExecute.execute")(function* (
     const visit = (visits.get(id) ?? 0) + 1;
     visits.set(id, visit);
     yield* record({ event: "entered", node: id, visit });
+  });
+
+  /** Runs a node's work against what is left of the run's time, and counts the time it took. */
+  const withinLimit = Effect.fn("PipelineExecute.withinLimit")(function* (
+    node: Node,
+    work: Effect.Effect<Step, PortError>,
+  ) {
+    const before = yield* Clock.currentTimeMillis;
+    const left = Math.max(0, run.limitMinutes * 60_000 - workedMs);
+    const done = yield* Effect.timeoutOption(work, left);
+    workedMs += (yield* Clock.currentTimeMillis) - before;
+    if (Option.isSome(done)) return done.value;
+    const reason = pastLimit(run.limitMinutes);
+    if (node.kind !== "learn") return { stuck: reason } satisfies Step;
+    yield* record({ event: "error", message: reason });
+    return { port: "done", detail: null } satisfies Step;
   });
 
   const walk = Effect.gen(function* () {
@@ -363,7 +419,10 @@ export const execute = Effect.fn("PipelineExecute.execute")(function* (
       const node = nodeOf(pipeline, cursor.node);
       if (node === undefined) return yield* finish("stuck", `node ${cursor.node} does not exist`);
       if (node.kind === "end") return yield* finish(node.result, null);
-      const outcome: Step = yield* step(node, edge, incoming);
+      const outcome: Step =
+        node.kind === "ask" || node.kind === "pr"
+          ? yield* step(node, edge, incoming)
+          : yield* withinLimit(node, step(node, edge, incoming));
       if ("stuck" in outcome) return yield* finish("stuck", outcome.stuck);
       yield* record({ event: "outcome", node: node.id, ...outcome });
       const move = advance(pipeline, cursor, outcome.port);

@@ -11,6 +11,7 @@ import { buildAndGate } from "./fixtures.ts";
 import { encodePipeline } from "./model.ts";
 import {
   appendEvent,
+  createRecord,
   isRunId,
   listRecords,
   markInterrupted,
@@ -103,6 +104,31 @@ describe("the record on disk", () => {
           { ms: T0, ...started },
           { ms: T0 + 5, event: "entered", node: "start", visit: 1 },
         ]);
+      }),
+    ),
+  );
+
+  it.effect("starts the next event on its own line after a torn last write", () =>
+    withTempDir((dir) =>
+      Effect.gen(function* () {
+        const path = recordPath(dir, "a-20261025-010203-0000");
+        NodeFS.writeFileSync(path, `${JSON.stringify({ ms: T0, ...started })}\n{"ms": 2, "ev`);
+        yield* appendEvent(path, T0 + 1, { event: "ended", result: "done", reason: null });
+        assert.deepStrictEqual(yield* readRecord(path), [
+          { ms: T0, ...started },
+          { ms: T0 + 1, event: "ended", result: "done", reason: null },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("creates a record only when none is there", () =>
+    withTempDir((dir) =>
+      Effect.gen(function* () {
+        const path = recordPath(dir, "a-20261025-010203-0000");
+        assert.isTrue(yield* createRecord(path, T0, started));
+        assert.isFalse(yield* createRecord(path, T0 + 1, started));
+        assert.deepStrictEqual(yield* readRecord(path), [{ ms: T0, ...started }]);
       }),
     ),
   );

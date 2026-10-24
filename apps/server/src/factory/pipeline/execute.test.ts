@@ -1,12 +1,16 @@
 import { assert, it } from "@effect/vitest";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import { describe } from "vite-plus/test";
 
 import {
   execute,
   NO_PULL_REQUEST,
   NO_RESULT_TWICE,
+  pastLimit,
   PortError,
   RESULT_LINE_REMINDER,
   type Ports,
@@ -26,9 +30,14 @@ const next = <A>(name: string, script: Array<A>): A => {
   return value;
 };
 
+/** A reply that never comes: the thread keeps working. */
+const NEVER = Symbol("never");
+
 interface Script {
   /** The last assistant message each `settle` answers, in order; a PortError fails it. */
-  readonly replies: Array<string | null | PortError>;
+  readonly replies: Array<string | null | PortError | typeof NEVER>;
+  /** How long each wait on the pull request takes, on the TestClock. */
+  readonly pullRequestWait?: Duration.Input;
   readonly commands?: Array<{ ok: boolean; output: string }>;
   readonly answers?: Array<string>;
   readonly pullRequest?: Array<{ port: PullRequestPort; detail: string | null }>;
@@ -52,7 +61,10 @@ const fakePorts = (script: Script) => {
     postQuestions: (text) => Effect.sync(() => void questions.push(text)),
     awaitAnswer: () => Effect.sync(() => ({ text: next("answers", script.answers ?? []) })),
     markReady: (pr) => Effect.sync(() => void ready.push(pr)),
-    awaitPullRequest: () => Effect.sync(() => next("pull request", script.pullRequest ?? [])),
+    awaitPullRequest: () =>
+      Effect.sleep(script.pullRequestWait ?? "0 seconds").pipe(
+        Effect.andThen(Effect.sync(() => next("pull request", script.pullRequest ?? []))),
+      ),
   };
   const ports: Ports = {
     launch: (input) =>
@@ -65,6 +77,7 @@ const fakePorts = (script: Script) => {
     settle: (threadId) =>
       Effect.suspend(() => {
         const reply = next("replies", script.replies);
+        if (reply === NEVER) return Effect.never;
         return isPortError(reply)
           ? Effect.fail(reply)
           : Effect.succeed({ ...thread(threadId), text: reply });
@@ -81,7 +94,7 @@ const fakePorts = (script: Script) => {
   return { ports, events, launches, sent, archived, ran, questions, ready };
 };
 
-const run = { repo: "acme/widgets", issue: 12 };
+const run = { repo: "acme/widgets", issue: 12, limitMinutes: 180 };
 
 /** The record without the thread lines, which the tests that follow nodes do not care about. */
 const steps = (events: ReadonlyArray<RunEvent>) =>
@@ -245,7 +258,11 @@ describe("execute", () => {
         replies: ["1. Which base?\nFACTORY-STOP: needs-info"],
         tracker: false,
       });
-      const end = yield* execute(buildAndLearn, fake.ports, { repo: null, issue: null });
+      const end = yield* execute(buildAndLearn, fake.ports, {
+        repo: null,
+        issue: null,
+        limitMinutes: 180,
+      });
       assert.deepStrictEqual(end, {
         result: "stuck",
         reason: "Ask needs an issue on a watched repo",
@@ -364,6 +381,99 @@ describe("execute", () => {
         { event: "ended", result: "error", reason: "T3 does not know t1" },
       ]);
       assert.deepStrictEqual(fake.archived, ["t1"]);
+    }),
+  );
+  it.effect("remembers only a pull request on the run's repo", () =>
+    Effect.gen(function* () {
+      const upstream = "https://github.com/pingdotgg/t3code/pull/900";
+      const onlyUpstream = fakePorts({
+        replies: [`FACTORY-DONE: ported ${upstream}`],
+        commands: [{ ok: true, output: "green" }],
+      });
+      assert.deepStrictEqual(yield* execute(buildAndLearn, onlyUpstream.ports, run), {
+        result: "stuck",
+        reason: NO_PULL_REQUEST,
+      });
+      assert.deepStrictEqual(onlyUpstream.ready, []);
+
+      const both = fakePorts({
+        replies: [`FACTORY-DONE: ported ${upstream} in https://github.com/ACME/widgets/pull/42`],
+        commands: [{ ok: true, output: "green" }],
+        pullRequest: [{ port: "closed", detail: null }],
+      });
+      yield* execute(buildAndLearn, both.ports, run);
+      assert.deepStrictEqual(both.ready, [42]);
+    }),
+  );
+
+  it.effect("archives a reviewer thread when the run ends on its error", () =>
+    Effect.gen(function* () {
+      const reviewed: Pipeline = {
+        ...buildAndGate,
+        nodes: buildAndGate.nodes.map((node) =>
+          node.id === "gate" ? { ...node, kind: "verify", check: { skill: "review-gate" } } : node,
+        ),
+      };
+      const fake = fakePorts({
+        replies: ["FACTORY-DONE: built", new PortError({ message: "the reviewer is gone" })],
+      });
+      const end = yield* execute(reviewed, fake.ports, run);
+      assert.deepStrictEqual(end, { result: "error", reason: "the reviewer is gone" });
+      assert.sameMembers(fake.archived, ["t1", "t2"]);
+    }),
+  );
+
+  it.effect("records a learner's failure and still ends done", () =>
+    Effect.gen(function* () {
+      const fake = fakePorts({
+        replies: [
+          `FACTORY-DONE: ${PR_URL}`,
+          new PortError({ message: "the learner's thread is gone" }),
+        ],
+        commands: [{ ok: true, output: "green" }],
+        pullRequest: [{ port: "merged", detail: null }],
+      });
+      const end = yield* execute(buildAndLearn, fake.ports, run);
+      assert.deepStrictEqual(end, { result: "done", reason: null });
+      assert.deepInclude(fake.events, { event: "error", message: "the learner's thread is gone" });
+      assert.deepInclude(fake.events, {
+        event: "outcome",
+        node: "learn",
+        port: "done",
+        detail: null,
+      });
+      assert.deepStrictEqual(fake.archived, ["t2", "t1"]);
+    }),
+  );
+
+  it.effect("ends stuck when the work passes the time limit, and archives its threads", () =>
+    Effect.gen(function* () {
+      const fake = fakePorts({ replies: [NEVER] });
+      const running = yield* Effect.forkChild(execute(buildAndGate, fake.ports, run), {
+        startImmediately: true,
+      });
+      yield* TestClock.adjust("180 minutes");
+      assert.deepStrictEqual(yield* Fiber.join(running), {
+        result: "stuck",
+        reason: pastLimit(180),
+      });
+      assert.deepStrictEqual(fake.archived, ["t1"]);
+    }),
+  );
+
+  it.effect("does not count the time a pull request waits for a person", () =>
+    Effect.gen(function* () {
+      const fake = fakePorts({
+        replies: [`FACTORY-DONE: ${PR_URL}`, "FACTORY-DONE: learned"],
+        commands: [{ ok: true, output: "green" }],
+        pullRequestWait: "4 hours",
+        pullRequest: [{ port: "merged", detail: null }],
+      });
+      const running = yield* Effect.forkChild(execute(buildAndLearn, fake.ports, run), {
+        startImmediately: true,
+      });
+      yield* TestClock.adjust("4 hours");
+      assert.deepStrictEqual(yield* Fiber.join(running), { result: "done", reason: null });
     }),
   );
 });

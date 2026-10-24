@@ -8,6 +8,7 @@ import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Random from "effect/Random";
 import { describe } from "vite-plus/test";
 
 import { FactoryProcess } from "../process.ts";
@@ -16,7 +17,7 @@ import { FactorySessions } from "../t3/sessions.ts";
 import { FactoryWatchedRepos } from "../t3/watchedRepos.ts";
 import { buildAndGate } from "./fixtures.ts";
 import { encodePipeline } from "./model.ts";
-import { appendEvent, recordPath, runIdFor } from "./record.ts";
+import { appendEvent, readRecord, recordPath, runIdFor } from "./record.ts";
 import * as Runs from "./runs.ts";
 import { PipelineRuns } from "./runsService.ts";
 
@@ -25,13 +26,16 @@ const ROOT = "/work/widgets";
 type Setup = {
   readonly archived: Array<string>;
   readonly launched: Deferred.Deferred<void>;
+  /** Done when the first thread is archived. */
+  readonly archivedOne: Deferred.Deferred<void>;
   readonly layer: Layer.Layer<PipelineRuns>;
 };
 
-/** The service over a temp factory dir, with sessions whose runs never settle. */
-const setup = (factoryDir: string): Setup => {
+/** The service over a temp factory dir, with sessions whose runs never settle unless `status` says. */
+const setup = (factoryDir: string, status: Effect.Effect<never> = Effect.never): Setup => {
   const archived: Array<string> = [];
   const launched = Deferred.makeUnsafe<void>();
+  const archivedOne = Deferred.makeUnsafe<void>();
   const sessions = {
     findProject: (root: string) =>
       Effect.succeed(
@@ -41,8 +45,11 @@ const setup = (factoryDir: string): Setup => {
       Deferred.succeed(launched, undefined).pipe(
         Effect.as({ threadId: "t1", worktreePath: null, branch: null }),
       ),
-    status: () => Effect.never,
-    archive: (threadId: string) => Effect.sync(() => void archived.push(threadId)),
+    status: () => status,
+    archive: (threadId: string) =>
+      Effect.sync(() => void archived.push(threadId)).pipe(
+        Effect.andThen(Deferred.succeed(archivedOne, undefined)),
+      ),
   } as unknown as FactorySessions["Service"];
   const layer = Runs.layer.pipe(
     Layer.provide(
@@ -72,16 +79,17 @@ const setup = (factoryDir: string): Setup => {
       ),
     ),
   );
-  return { archived, launched, layer };
+  return { archived, launched, archivedOne, layer };
 };
 
 /** The service over a temp factory dir that is removed however the test ends. */
 const withRuns = <A, E>(
   body: (setup: Setup & { readonly factoryDir: string }) => Effect.Effect<A, E>,
+  status?: Effect.Effect<never>,
 ) =>
   Effect.acquireUseRelease(
     Effect.sync(() => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "pipeline-runs-"))),
-    (factoryDir) => body({ ...setup(factoryDir), factoryDir }),
+    (factoryDir) => body({ ...setup(factoryDir, status), factoryDir }),
     (dir) => Effect.sync(() => NodeFS.rmSync(dir, { recursive: true, force: true })),
   );
 
@@ -147,6 +155,75 @@ describe("PipelineRuns", () => {
         }).pipe(Effect.provide(layer));
         assert.strictEqual(run.status, "interrupted");
         assert.strictEqual(run.reason, "the server restarted");
+      }),
+    ),
+  );
+  it.effect("ends a run whose executor dies as error, and archives its threads", () =>
+    withRuns(
+      ({ archived, archivedOne, layer }) =>
+        Effect.gen(function* () {
+          const runs = yield* PipelineRuns;
+          const started = yield* runs.start({
+            pipeline: buildAndGate,
+            projectRoot: ROOT,
+            issue: null,
+          });
+          yield* Deferred.await(archivedOne);
+          const run = yield* runs.get(started.id);
+          assert.strictEqual(run.status, "error");
+          assert.strictEqual(run.reason, "the projection broke");
+          assert.deepStrictEqual(archived, ["t1"]);
+        }).pipe(Effect.provide(layer)),
+      Effect.die(new Error("the projection broke")),
+    ),
+  );
+
+  it.effect("picks another id when a record by the first one exists", () =>
+    withRuns(({ factoryDir, layer }) =>
+      Effect.gen(function* () {
+        const hex = (yield* Random.nextIntBetween(0, 0xffff).pipe(Random.withSeed("s")))
+          .toString(16)
+          .padStart(4, "0");
+        const taken = runIdFor("build-and-gate", 0, hex);
+        const runsDir = NodePath.join(factoryDir, "pipelines", "runs");
+        yield* appendEvent(recordPath(runsDir, taken), 0, {
+          event: "ended",
+          result: "done",
+          reason: null,
+        });
+        const runs = yield* PipelineRuns;
+        const started = yield* runs
+          .start({ pipeline: buildAndGate, projectRoot: ROOT, issue: null })
+          .pipe(Random.withSeed("s"));
+        assert.notStrictEqual(started.id, taken);
+        assert.strictEqual((yield* readRecord(recordPath(runsDir, taken))).length, 1);
+      }).pipe(Effect.provide(layer)),
+    ),
+  );
+
+  it.effect("ends its running runs as interrupted when the server stops", () =>
+    withRuns(({ factoryDir, archived, launched, layer }) =>
+      Effect.gen(function* () {
+        const id = yield* Effect.gen(function* () {
+          const runs = yield* PipelineRuns;
+          const started = yield* runs.start({
+            pipeline: buildAndGate,
+            projectRoot: ROOT,
+            issue: null,
+          });
+          yield* Deferred.await(launched);
+          return started.id;
+        }).pipe(Effect.provide(layer));
+        const events = yield* readRecord(
+          recordPath(NodePath.join(factoryDir, "pipelines", "runs"), id),
+        );
+        assert.deepStrictEqual(events.at(-1), {
+          ms: 0,
+          event: "ended",
+          result: "interrupted",
+          reason: Runs.SERVER_STOPPED,
+        });
+        assert.deepStrictEqual(archived, ["t1"]);
       }),
     ),
   );

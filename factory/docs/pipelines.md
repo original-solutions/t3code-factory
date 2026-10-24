@@ -111,7 +111,10 @@ A simulation walks the graph with outcomes the person picks. `POST /api/factory/
 
 The prototype's limits, by choice:
 
-- A run that the server stopped mid-way is marked `interrupted` at the next start, not resumed. The factory's issue runs have resumable steps; pipeline runs do not yet.
+- A run is not resumed across a server stop. When the server stops, each running run is interrupted, its threads archived and its record ended `interrupted`; a record a crash left open is marked so at the next start. The factory's issue runs have resumable steps; pipeline runs do not yet.
+- A run may work for 180 minutes in all (`RUN_LIMIT_MINUTES`), counted like the factory's own limit: time spent waiting at `ask` and `pr` nodes does not count. Past it the run ends `stuck`.
+- Reads in the wait loops (a thread's status, the issue's approval, the pull request) are retried on failure and give up only after ten failures in a row, so a day-long wait survives a network blip. Writes fail at once.
+- Who counts as a person is the repo's `instructors`, read from the checkout's `.dw/config.yml`, else from the default branch's. With neither, the run has no tracker, and its `ask` and `pr` nodes end it stuck.
 - Commands run in the session's worktree, not in a fresh checkout merged with the base, as the factory's gate does.
 - `ask` and `pr` need an issue on a watched repo. A run started without one ends `stuck` when it reaches them.
 - A thread's settlement is polled, every 10 seconds; the factory's own runs are woken by the event stream.

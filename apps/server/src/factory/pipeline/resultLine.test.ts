@@ -6,14 +6,22 @@ describe("readResult", () => {
   it("reads FACTORY-DONE with a pull request URL on any repo", () => {
     expect(
       readResult("Built it.\n\nFACTORY-DONE: https://github.com/acme/widgets/pull/42\n"),
-    ).toEqual({ kind: "done", text: "https://github.com/acme/widgets/pull/42", pr: 42 });
+    ).toEqual({
+      kind: "done",
+      text: "https://github.com/acme/widgets/pull/42",
+      pullRequests: [{ owner: "acme", name: "widgets", pr: 42 }],
+    });
   });
 
-  it("finds the pull request inside a summary and ignores trailing punctuation", () => {
-    expect(readResult("FACTORY-DONE: opened https://github.com/a/b/pull/7.")).toEqual({
+  it("finds every pull request inside a summary and ignores trailing punctuation", () => {
+    const text = "opened https://github.com/a/b/pull/7, after https://github.com/up/b/pull/9.";
+    expect(readResult(`FACTORY-DONE: ${text}`)).toEqual({
       kind: "done",
-      text: "opened https://github.com/a/b/pull/7.",
-      pr: 7,
+      text,
+      pullRequests: [
+        { owner: "a", name: "b", pr: 7 },
+        { owner: "up", name: "b", pr: 9 },
+      ],
     });
   });
 
@@ -21,14 +29,18 @@ describe("readResult", () => {
     expect(readResult("FACTORY-DONE: wrote the skill")).toEqual({
       kind: "done",
       text: "wrote the skill",
-      pr: null,
+      pullRequests: [],
     });
-    expect(readResult("Looks good.\nFACTORY-DONE")).toEqual({ kind: "done", text: "", pr: null });
+    expect(readResult("Looks good.\nFACTORY-DONE")).toEqual({
+      kind: "done",
+      text: "",
+      pullRequests: [],
+    });
   });
 
   it("does not take an issue URL as a pull request", () => {
     expect(readResult("FACTORY-DONE: see https://github.com/a/b/issues/7")).toMatchObject({
-      pr: null,
+      pullRequests: [],
     });
   });
 

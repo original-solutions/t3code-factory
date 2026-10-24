@@ -42,11 +42,46 @@ const io = <A>(what: string, run: () => A) =>
       }),
   });
 
-/** Appends one event, with its time, as a line. Creates the record and its folder when missing. */
+const line = (ms: number, event: RunEvent) => `${JSON.stringify({ ms, ...event })}\n`;
+
+/** Whether the file at `path` has bytes and its last one is not a newline: a torn last write. */
+const endsTorn = (path: string): boolean => {
+  const size = NodeFS.statSync(path, { throwIfNoEntry: false })?.size ?? 0;
+  if (size === 0) return false;
+  const fd = NodeFS.openSync(path, "r");
+  try {
+    const last = Buffer.alloc(1);
+    NodeFS.readSync(fd, last, 0, 1, size - 1);
+    return last[0] !== 0x0a;
+  } finally {
+    NodeFS.closeSync(fd);
+  }
+};
+
+/**
+ * Appends one event, with its time, as a line. Creates the record and its folder when missing.
+ * After a torn last write the event starts on a line of its own, so it is not lost with it.
+ */
 export const appendEvent = (path: string, ms: number, event: RunEvent) =>
   io(`cannot write the run record ${path}`, () => {
     NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
-    NodeFS.appendFileSync(path, `${JSON.stringify({ ms, ...event })}\n`);
+    NodeFS.appendFileSync(path, `${endsTorn(path) ? "\n" : ""}${line(ms, event)}`);
+  });
+
+/**
+ * Writes a new record's first line. Answers false, and writes nothing, when a record by that
+ * path already exists.
+ */
+export const createRecord = (path: string, ms: number, event: RunEvent) =>
+  io(`cannot write the run record ${path}`, () => {
+    NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
+    try {
+      NodeFS.writeFileSync(path, line(ms, event), { flag: "wx" });
+      return true;
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code === "EEXIST") return false;
+      throw cause;
+    }
   });
 
 const isRecorded = (value: unknown): value is RecordedEvent =>
