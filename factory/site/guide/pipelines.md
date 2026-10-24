@@ -4,6 +4,10 @@ A pipeline is the path a run follows, drawn as a graph: which agent steps run, w
 
 Pipelines belong to the machine that runs the factory. Open them from the Factory page's Pipelines link, or at `/factory/pipelines`. Reading needs a normal paired session; saving needs `settings:write`, starting a run `orchestration:operate`.
 
+## Start from a template
+
+New pipeline offers a blank canvas and three templates: Brief and gate (one agent with a brief, one gate, two tries), Build, review, ship (the factory's lifecycle with an agent review before the pull request), and Learning loop (the same, plus a learn step after the work is merged or given up). Pick the nearest one and change it.
+
 ## Nodes
 
 Add a node from the Add menu, drag it where you want it, and fill it in on the right.

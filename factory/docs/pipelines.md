@@ -142,6 +142,10 @@ Under `/api/factory/pipelines`, with the factory's auth (`t3/auth.ts`):
 
 POST, not PUT or DELETE: the browser CORS layer allows GET and POST.
 
+## Templates
+
+`pipeline/templates.ts` holds three pipelines the catalog serves and the New pipeline dialog offers: the three prototypes the design was exercised on, simplest first. A template is a pipeline body; the dialog gives it the new name and id. They are the examples in this document, kept valid by their test.
+
 ## Skills on the machine
 
 The catalog lists `<dir>/<name>/SKILL.md` under `~/.claude/skills`, `~/.codex/skills` and `~/.agents/skills`, with the `name` and `description` from the front matter. The same skill reached through two of those (the hub symlinks) is listed once.

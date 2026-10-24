@@ -21,6 +21,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 
 import { simulate } from "../pipeline/interpret.ts";
 import { decodePipeline, encodePipeline, KINDS, type Pipeline } from "../pipeline/model.ts";
+import { TEMPLATES } from "../pipeline/templates.ts";
 import { PipelineRuns, type PipelineRunError } from "../pipeline/runsService.ts";
 import { listSkillsCached, PipelineSkillDirs, skillNames } from "../pipeline/skills.ts";
 import {
@@ -122,7 +123,16 @@ const catalogRoute = pipelineRoute(
   CATALOG_PATH,
   AuthOrchestrationReadScope,
   Effect.gen(function* () {
-    return respond({ kinds: KINDS, skills: yield* listSkillsCached(yield* PipelineSkillDirs) });
+    return respond({
+      kinds: KINDS,
+      skills: yield* listSkillsCached(yield* PipelineSkillDirs),
+      templates: TEMPLATES.map((template) => ({
+        id: template.pipeline.id,
+        name: template.pipeline.name,
+        description: template.description,
+        pipeline: encodePipeline(template.pipeline),
+      })),
+    });
   }),
 );
 

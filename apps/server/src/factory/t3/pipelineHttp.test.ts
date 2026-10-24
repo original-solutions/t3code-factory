@@ -260,6 +260,16 @@ describe("the pipeline routes", () => {
       const body = await json(response);
       assert.deepStrictEqual(body["kinds"], JSON.parse(JSON.stringify(KINDS)));
       assert.deepStrictEqual(
+        (body["templates"] as Array<{ id: string; pipeline: { nodes: Array<unknown> } }>).map(
+          (template) => [template.id, template.pipeline.nodes.length],
+        ),
+        [
+          ["brief-and-gate", 5],
+          ["build-review-ship", 8],
+          ["learning-loop", 11],
+        ],
+      );
+      assert.deepStrictEqual(
         (body["skills"] as Array<{ name: string; description: string }>).map((skill) => [
           skill.name,
           skill.description,
