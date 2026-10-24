@@ -1,6 +1,7 @@
 /** What the pipeline pages say about a pipeline: summaries, names, trails and the new template. */
 import type {
   DecodeError,
+  PipelineEdge,
   Kind,
   KindInfo,
   Pipeline,
@@ -66,15 +67,33 @@ export const summaryOf = (node: PipelineNode): string => {
 export const kindLabel = (kinds: ReadonlyArray<KindInfo>, kind: Kind): string =>
   kinds.find((info) => info.kind === kind)?.label ?? kind;
 
+/** Whether the node's label says more than its kind's name does. */
+export const hasOwnLabel = (kinds: ReadonlyArray<KindInfo>, node: PipelineNode): boolean =>
+  node.label !== undefined &&
+  node.label.trim() !== "" &&
+  node.label.trim().toLowerCase() !== kindLabel(kinds, node.kind).toLowerCase();
+
 /** A node's name for people: its label, else its kind's. */
 export const nodeName = (kinds: ReadonlyArray<KindInfo>, node: PipelineNode): string =>
-  node.label ?? kindLabel(kinds, node.kind);
+  hasOwnLabel(kinds, node) ? node.label!.trim() : kindLabel(kinds, node.kind);
 
 export const portsOf = (kinds: ReadonlyArray<KindInfo>, kind: Kind): ReadonlyArray<string> =>
   kinds.find((info) => info.kind === kind)?.ports.map((port) => port.name) ?? [];
 
-/** A pipeline id from a name, as the server accepts ids, not in `taken`. */
+/**
+ * Ids the server refuses (400 reserved_id): its own routes under `/api/factory/pipelines` would
+ * shadow them. Mirrors `RESERVED_PIPELINE_IDS` on the server.
+ */
+export const RESERVED_PIPELINE_IDS: ReadonlySet<string> = new Set([
+  "catalog",
+  "validate",
+  "simulate",
+  "runs",
+]);
+
+/** A pipeline id from a name, as the server accepts ids, neither reserved nor in `taken`. */
 export const slugOf = (name: string, taken: ReadonlySet<string>): string => {
+  const free = (id: string) => !taken.has(id) && !RESERVED_PIPELINE_IDS.has(id);
   const base =
     name
       .toLowerCase()
@@ -82,9 +101,9 @@ export const slugOf = (name: string, taken: ReadonlySet<string>): string => {
       .replace(/^-+|-+$/g, "")
       .slice(0, 56)
       .replace(/-+$/, "") || "pipeline";
-  if (!taken.has(base)) return base;
+  if (free(base)) return base;
   let n = 2;
-  while (taken.has(`${base}-${n}`)) n++;
+  while (!free(`${base}-${n}`)) n++;
   return `${base}-${n}`;
 };
 
@@ -175,3 +194,57 @@ export const problemCounts = (problems: ReadonlyArray<Problem>) => ({
 });
 
 export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * The outcome the happy path picks at a node of `kind`: the one that moves the work on. A pull
+ * request's first port is feedback, which would loop back to the agent until its limit.
+ */
+const HAPPY_PORT: Partial<Record<Kind, string>> = {
+  start: "next",
+  agent: "done",
+  verify: "pass",
+  ask: "answered",
+  pr: "merged",
+  learn: "done",
+};
+
+export const happyPort = (kind: Kind | undefined, ports: ReadonlyArray<string>): string | null => {
+  const wanted = kind === undefined ? undefined : HAPPY_PORT[kind];
+  if (wanted !== undefined && ports.includes(wanted)) return wanted;
+  return ports[0] ?? null;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const hasIds = (value: unknown): boolean =>
+  Array.isArray(value) && value.every((item) => isRecord(item) && typeof item["id"] === "string");
+
+/**
+ * A run's own copy of its pipeline, as the run record keeps it, or null when it does not look like
+ * one. The server wrote it from a pipeline that decoded, so the check is only that it has the
+ * shape the canvas reads.
+ */
+export const asPipeline = (snapshot: unknown): Pipeline | null =>
+  isRecord(snapshot) &&
+  typeof snapshot["id"] === "string" &&
+  hasIds(snapshot["nodes"]) &&
+  hasIds(snapshot["edges"])
+    ? (snapshot as unknown as Pipeline)
+    : null;
+
+/**
+ * A transition's label: its port, and its limit while editing ("max 3"). On a trail the count
+ * taken shows instead, against the limit when there is one ("2/3"), else as "×2".
+ */
+export const edgeLabelText = (
+  edge: PipelineEdge,
+  taken: Readonly<Record<string, number>> | null,
+): string => {
+  if (taken !== null) {
+    const n = taken[edge.id] ?? 0;
+    if (edge.max !== undefined) return `${edge.port} ${n}/${edge.max}`;
+    return n > 0 ? `${edge.port} ×${n}` : edge.port;
+  }
+  return edge.max === undefined ? edge.port : `${edge.port} · max ${edge.max}`;
+};

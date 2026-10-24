@@ -65,9 +65,11 @@ export function SimulationPanel({
         </p>
       ) : null}
       {end === undefined ? (
-        <p className="text-xs text-muted-foreground" role="status">
-          Simulating…
-        </p>
+        error === null ? (
+          <p className="text-xs text-muted-foreground" role="status">
+            Simulating…
+          </p>
+        ) : null
       ) : end.kind === "waiting" ? (
         <div className="flex flex-col gap-2">
           <p className="text-sm" role="status">

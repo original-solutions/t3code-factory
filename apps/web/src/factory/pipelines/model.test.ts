@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { problemsFromDecodeErrors, slugOf, summaryOf, trailOfTrace } from "./model";
-import type { Pipeline } from "./types";
+import {
+  asPipeline,
+  edgeLabelText,
+  happyPort,
+  nodeName,
+  problemsFromDecodeErrors,
+  slugOf,
+  summaryOf,
+  trailOfTrace,
+} from "./model";
+import type { KindInfo, Pipeline } from "./types";
 
 const PIPELINE: Pipeline = {
   id: "p",
@@ -34,6 +43,7 @@ describe("slugOf", () => {
     expect(slugOf("Build & Learn!", new Set())).toBe("build-learn");
     expect(slugOf("Build & Learn", new Set(["build-learn"]))).toBe("build-learn-2");
     expect(slugOf("!!!", new Set())).toBe("pipeline");
+    expect(slugOf("Runs", new Set())).toBe("runs-2");
   });
 });
 
@@ -71,5 +81,59 @@ describe("trailOfTrace", () => {
     expect([...trail.nodes]).toEqual(["start", "build"]);
     expect([...trail.edges]).toEqual(["e1"]);
     expect(trail.current).toBe("build");
+  });
+});
+
+describe("nodeName", () => {
+  const kinds: ReadonlyArray<KindInfo> = [
+    { kind: "end", label: "End", description: "", ports: [], instructions: "none" },
+  ];
+  const end = { id: "done", kind: "end", result: "done", x: 0, y: 0 } as const;
+
+  it("is the label when the node has one of its own, else the kind", () => {
+    expect(nodeName(kinds, { ...end, label: "Shipped" })).toBe("Shipped");
+    expect(nodeName(kinds, end)).toBe("End");
+    expect(nodeName(kinds, { ...end, label: "end" })).toBe("End");
+    expect(nodeName(kinds, { ...end, label: "  " })).toBe("End");
+  });
+});
+
+describe("happyPort", () => {
+  it("moves the work on at each kind of node", () => {
+    expect(happyPort("pr", ["feedback", "base-moved", "merged", "closed"])).toBe("merged");
+    expect(happyPort("verify", ["pass", "fail"])).toBe("pass");
+    expect(happyPort("agent", ["done", "questions", "stop"])).toBe("done");
+    expect(happyPort("ask", ["answered"])).toBe("answered");
+    expect(happyPort("start", ["next"])).toBe("next");
+  });
+
+  it("falls back to the first outcome, and to none when there is none", () => {
+    expect(happyPort(undefined, ["a", "b"])).toBe("a");
+    expect(happyPort("pr", ["feedback"])).toBe("feedback");
+    expect(happyPort("end", [])).toBeNull();
+  });
+});
+
+describe("asPipeline", () => {
+  it("reads a run's snapshot that has nodes and edges, and nothing else", () => {
+    expect(asPipeline(PIPELINE)).toBe(PIPELINE);
+    expect(asPipeline({ id: "p", nodes: "no", edges: [] })).toBeNull();
+    expect(asPipeline({})).toBeNull();
+  });
+});
+
+describe("edgeLabelText", () => {
+  const edge = { id: "e3", from: "gate", port: "fail", to: "build", max: 3 };
+
+  it("says the limit while editing, and the count against it on a trail", () => {
+    expect(edgeLabelText(edge, null)).toBe("fail · max 3");
+    expect(edgeLabelText(edge, { e3: 2 })).toBe("fail 2/3");
+  });
+
+  it("counts traversals of an edge with no limit only on a trail", () => {
+    const open = { id: "e1", from: "start", port: "next", to: "build" };
+    expect(edgeLabelText(open, null)).toBe("next");
+    expect(edgeLabelText(open, { e1: 2 })).toBe("next ×2");
+    expect(edgeLabelText(open, {})).toBe("next");
   });
 });

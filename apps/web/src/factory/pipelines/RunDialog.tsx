@@ -26,6 +26,26 @@ import { messageOf } from "../format";
 import { pipelineApi, runProblemsOf } from "./api";
 import type { Problem, RunSummary } from "./types";
 
+const rememberedKey = (environmentId: EnvironmentId) =>
+  `t3code:factory:pipeline-run-project:${environmentId}`;
+
+/** The project last run on in this environment, so a second run is one click. Storage may be off. */
+const readRemembered = (environmentId: EnvironmentId): string | null => {
+  try {
+    return window.localStorage.getItem(rememberedKey(environmentId));
+  } catch {
+    return null;
+  }
+};
+
+const remember = (environmentId: EnvironmentId, projectRoot: string) => {
+  try {
+    window.localStorage.setItem(rememberedKey(environmentId), projectRoot);
+  } catch {
+    // A browser that refuses storage just asks again next time.
+  }
+};
+
 /** Starts a run of the saved pipeline on one of the environment's projects, optionally on an issue. */
 export function RunDialog({
   environmentId,
@@ -46,7 +66,13 @@ export function RunDialog({
   const projects = useProjects().filter(
     (project) => project.environmentId === environmentId && !project.isScratch,
   );
-  const [projectRoot, setProjectRoot] = useState<string | null>(null);
+  const [chosen, setChosen] = useState<string | null>(() => readRemembered(environmentId));
+  // A remembered project this environment no longer has is no choice at all.
+  const projectRoot = projects.some((project) => project.workspaceRoot === chosen) ? chosen : null;
+  const choose = (root: string | null) => {
+    setChosen(root);
+    if (root !== null) remember(environmentId, root);
+  };
   const [issue, setIssue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,6 +80,16 @@ export function RunDialog({
   const issueNumber = issue.trim() === "" ? undefined : Number(issue.trim());
   const issueValid =
     issueNumber === undefined || (Number.isInteger(issueNumber) && issueNumber > 0);
+
+  // Closing clears what the last attempt left, so the next open starts clean; the project stays.
+  const changeOpen = (next: boolean) => {
+    if (!next) {
+      setIssue("");
+      setError(null);
+      setProblems([]);
+    }
+    onOpenChange(next);
+  };
 
   const start = async () => {
     if (projectRoot === null || !issueValid) return;
@@ -66,16 +102,15 @@ export function RunDialog({
         ...(issueNumber === undefined ? {} : { issue: issueNumber }),
       });
       onStarted(run);
-      onOpenChange(false);
+      changeOpen(false);
     } catch (cause) {
       const refused = runProblemsOf(cause);
       if (refused !== null) {
         setError("The saved pipeline has errors, so it cannot run.");
         setProblems(refused.filter((problem) => problem.level === "error"));
       } else setError(messageOf(cause));
-    } finally {
-      setBusy(false);
     }
+    setBusy(false);
   };
 
   const items = projects.map((project) => ({
@@ -84,7 +119,7 @@ export function RunDialog({
   }));
 
   return (
-    <Dialog onOpenChange={onOpenChange} open={open}>
+    <Dialog onOpenChange={changeOpen} open={open}>
       <DialogPopup>
         <DialogHeader>
           <DialogTitle>Run pipeline</DialogTitle>
@@ -103,7 +138,7 @@ export function RunDialog({
             {projects.length === 0 ? (
               <p className="text-sm text-muted-foreground">This environment has no projects.</p>
             ) : (
-              <Select items={items} onValueChange={setProjectRoot} value={projectRoot}>
+              <Select items={items} onValueChange={choose} value={projectRoot}>
                 <SelectTrigger aria-label="Project">
                   <SelectValue placeholder="Choose a project" />
                 </SelectTrigger>
@@ -151,7 +186,7 @@ export function RunDialog({
           ) : null}
         </DialogPanel>
         <DialogFooter>
-          <Button onClick={() => onOpenChange(false)} variant="outline">
+          <Button onClick={() => changeOpen(false)} variant="outline">
             Cancel
           </Button>
           <Button

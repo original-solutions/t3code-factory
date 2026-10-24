@@ -4,9 +4,12 @@ import {
   MAX_ZOOM,
   MIN_ZOOM,
   NODE_WIDTH,
+  afterRect,
   curvePath,
+  edgeLabelPoint,
   edgeRoute,
   fitView,
+  freeSlot,
   hitTest,
   inputPoint,
   nodeRect,
@@ -48,7 +51,7 @@ describe("edgeRoute", () => {
     expect(route.kind).toBe("forward");
     expect(route.curve[0]).toEqual(port);
     expect(route.curve[3]).toEqual(inputPoint(target));
-    expect(curvePath(route.curve)).toMatch(/^M 224 274 C .* 400 /);
+    expect(curvePath(route.curve)).toMatch(/^M 224 258 C .* 400 /);
   });
 
   it("routes a back edge as a loop below both nodes", () => {
@@ -118,5 +121,58 @@ describe("hitTest", () => {
 
   it("finds nothing over empty canvas", () => {
     expect(hitTest(rects, { x: 500, y: 500 })).toBeNull();
+  });
+});
+
+describe("freeSlot", () => {
+  const size = { width: NODE_WIDTH, height: 100 };
+
+  it("takes the start when nothing is there", () => {
+    expect(freeSlot([], size, { x: 101, y: 203 })).toEqual({ x: 104, y: 200 });
+  });
+
+  it("steps right past every node in the way", () => {
+    const first = at(280, 200);
+    const second = at(280 + NODE_WIDTH + 32, 200);
+    const slot = freeSlot([first, second], size, { x: 280, y: 200 });
+    expect(slot).toEqual({ x: 280 + 2 * (NODE_WIDTH + 32), y: 200 });
+  });
+
+  it("wraps to the next row when a row is full", () => {
+    const row = Array.from({ length: 6 }, (_, i) => at(i * (NODE_WIDTH + 32), 0));
+    expect(freeSlot(row, size, { x: 0, y: 0 })).toEqual({ x: 0, y: 200 });
+  });
+
+  it("starts after a node one gap to its right, level with it", () => {
+    const node = at(280, 200);
+    expect(afterRect(node)).toEqual({ x: 280 + NODE_WIDTH + 32, y: 200 });
+  });
+});
+
+describe("edgeLabelPoint", () => {
+  it("puts a forward edge's label 30% along from the source", () => {
+    const source = at(40, 200);
+    const route = edgeRoute(source, portPoint(source, 0), at(400, 200));
+    expect(edgeLabelPoint(route)).toEqual(pointOnCurve(route.curve, 0.3));
+  });
+
+  it("parts the labels of edges that leave nearby ports for one target", () => {
+    const build = at(280, 200, 3);
+    const stuck = at(760, 420, 0);
+    const labels = [0, 1, 2].map((index) =>
+      edgeLabelPoint(edgeRoute(build, portPoint(build, index), stuck)),
+    );
+    expect(labels[1]!.y - labels[0]!.y).toBeGreaterThan(10);
+    expect(labels[2]!.y - labels[1]!.y).toBeGreaterThan(10);
+  });
+
+  it("puts a loop's label at the lowest point of the loop", () => {
+    const build = at(280, 200, 3);
+    const gate = at(520, 200, 2);
+    const route = edgeRoute(gate, portPoint(gate, 1), build);
+    const label = edgeLabelPoint(route);
+    for (let t = 0; t <= 1; t += 0.05) {
+      expect(label.y).toBeGreaterThanOrEqual(pointOnCurve(route.curve, t).y - 0.5);
+    }
   });
 });

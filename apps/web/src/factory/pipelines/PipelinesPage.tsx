@@ -1,6 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { PlusIcon } from "lucide-react";
+import { PlusIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
 import { Badge } from "~/components/ui/badge";
@@ -22,6 +22,7 @@ import {
 } from "~/components/ui/empty";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
+import { Radio, RadioGroup } from "~/components/ui/radio-group";
 import {
   Select,
   SelectItem,
@@ -29,6 +30,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select";
+
+import { requestConfirmDialog } from "~/confirmDialog";
 
 import { FactoryFrame } from "../FactoryFrame";
 import { FactoryError, FactoryLoading, FactoryReadFailure } from "../FactoryNotices";
@@ -40,7 +43,8 @@ import { useRequest } from "./hooks";
 import { plural, slugOf, templatePipeline } from "./model";
 import type { PipelineListItem } from "./types";
 
-const updated = (iso: string) => {
+const updated = (iso: string | null) => {
+  if (iso === null) return "-";
   const date = new Date(iso);
   return Number.isNaN(date.getTime())
     ? iso
@@ -55,10 +59,29 @@ const updated = (iso: string) => {
 function PipelineRow({
   environmentId,
   pipeline,
+  onDeleted,
 }: {
   environmentId: EnvironmentId;
   pipeline: PipelineListItem;
+  onDeleted: () => void;
 }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const remove = async () => {
+    const message = `Delete the pipeline "${pipeline.name}"?\nIts runs' records stay; the pipeline itself cannot be restored.`;
+    const confirmed =
+      (await requestConfirmDialog(message, { variant: "destructive" })) ?? window.confirm(message);
+    if (!confirmed) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await pipelineApi.remove(environmentId, pipeline.id);
+      onDeleted();
+    } catch (cause) {
+      setError(messageOf(cause));
+    }
+    setBusy(false);
+  };
   return (
     <li className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border bg-card px-3 py-2 text-sm">
       <TouchLink
@@ -72,10 +95,14 @@ function PipelineRow({
         {pipeline.name}
       </TouchLink>
       <span className="font-mono text-xs text-muted-foreground">{pipeline.id}</span>
-      <span className="text-xs text-muted-foreground">
-        {plural(pipeline.nodes, "node")} · {plural(pipeline.edges, "transition")}
-      </span>
-      {pipeline.errors > 0 ? (
+      {pipeline.unreadable ? null : (
+        <span className="text-xs text-muted-foreground">
+          {plural(pipeline.nodes, "node")} · {plural(pipeline.edges, "transition")}
+        </span>
+      )}
+      {pipeline.unreadable ? (
+        <Badge variant="error">Unreadable</Badge>
+      ) : pipeline.errors > 0 ? (
         <Badge variant="error">{plural(pipeline.errors, "error")}</Badge>
       ) : pipeline.warnings > 0 ? (
         <Badge variant="warning">{plural(pipeline.warnings, "warning")}</Badge>
@@ -88,6 +115,29 @@ function PipelineRow({
       <span className="ml-auto text-xs text-muted-foreground">
         Updated {updated(pipeline.updatedAt)}
       </span>
+      <Button
+        aria-label={`Delete ${pipeline.name}`}
+        disabled={busy}
+        onClick={() => void remove()}
+        size="icon-xs"
+        variant="ghost-destructive"
+      >
+        <Trash2Icon />
+      </Button>
+      {pipeline.unreadable && pipeline.decodeErrors && pipeline.decodeErrors.length > 0 ? (
+        <ul className="w-full text-xs text-muted-foreground">
+          {pipeline.decodeErrors.map((decodeError) => (
+            <li key={`${decodeError.path} ${decodeError.message}`}>
+              <span className="font-mono">{decodeError.path || "file"}</span> {decodeError.message}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {error ? (
+        <p className="w-full text-xs text-destructive-foreground" role="alert">
+          Could not delete: {error}
+        </p>
+      ) : null}
     </li>
   );
 }
@@ -154,7 +204,12 @@ function EnvironmentPipelines({
     body = (
       <ul className="flex flex-col gap-2">
         {listed.pipelines.map((pipeline) => (
-          <PipelineRow environmentId={environmentId} key={pipeline.id} pipeline={pipeline} />
+          <PipelineRow
+            environmentId={environmentId}
+            key={pipeline.id}
+            onDeleted={listed.reload}
+            pipeline={pipeline}
+          />
         ))}
       </ul>
     );
@@ -175,40 +230,61 @@ function EnvironmentPipelines({
   );
 }
 
+/** The "Start from" value for an empty canvas; template ids are pipeline ids, which cannot clash. */
+const BLANK = "";
+
 function NewPipelineDialog({ target, onClose }: { target: Listed | null; onClose: () => void }) {
   const navigate = useNavigate();
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [from, setFrom] = useState(BLANK);
+  // A local, not `target.environmentId` in the closure: the compiler reads a closure's property
+  // paths as its dependencies, during render, while `target` may still be null.
+  const environmentId = target?.environmentId ?? null;
+  const catalog = useRequest(environmentId === null ? null : `${environmentId} catalog`, () =>
+    environmentId === null
+      ? Promise.reject(new Error("No environment"))
+      : pipelineApi.catalog(environmentId),
+  );
+  const templates = catalog.data?.templates ?? [];
+  const template = templates.find((candidate) => candidate.id === from);
   const taken = new Set((target?.pipelines ?? []).map((pipeline) => pipeline.id));
   const id = slugOf(name, taken);
+
+  const close = () => {
+    setName("");
+    setError(null);
+    setFrom(BLANK);
+    onClose();
+  };
 
   const create = async () => {
     if (target === null || name.trim() === "") return;
     setBusy(true);
     setError(null);
+    // A template keeps its nodes, edges and positions; only the id and name are the person's.
+    const body =
+      template === undefined
+        ? templatePipeline(id, name.trim())
+        : { ...template.pipeline, id, name: name.trim() };
     try {
-      await pipelineApi.save(target.environmentId, templatePipeline(id, name.trim()));
-      onClose();
+      await pipelineApi.save(target.environmentId, body);
+      close();
       void navigate({
         to: "/factory/pipelines/$environmentId/$pipelineId",
         params: { environmentId: target.environmentId, pipelineId: id },
       });
     } catch (cause) {
       setError(messageOf(cause));
-    } finally {
-      setBusy(false);
     }
+    setBusy(false);
   };
 
   return (
     <Dialog
       onOpenChange={(open) => {
-        if (!open) {
-          onClose();
-          setName("");
-          setError(null);
-        }
+        if (!open) close();
       }}
       open={target !== null}
     >
@@ -237,6 +313,24 @@ function NewPipelineDialog({ target, onClose }: { target: Listed | null; onClose
               Saved as <span className="font-mono">{id}</span>
               {target !== null ? ` on ${target.label}` : ""}.
             </p>
+            <Label id="new-pipeline-from">Start from</Label>
+            <RadioGroup aria-labelledby="new-pipeline-from" onValueChange={setFrom} value={from}>
+              {[
+                { id: BLANK, name: "Blank", description: "A start and two ends, done and stuck." },
+                ...templates,
+              ].map((choice) => (
+                <label
+                  className="flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2 text-sm"
+                  key={choice.id}
+                >
+                  <Radio value={choice.id} />
+                  <span className="flex min-w-0 flex-col">
+                    <span className="font-medium">{choice.name}</span>
+                    <span className="text-xs text-muted-foreground">{choice.description}</span>
+                  </span>
+                </label>
+              ))}
+            </RadioGroup>
             {error ? (
               <p className="text-sm text-destructive-foreground" role="alert">
                 {error}
@@ -245,7 +339,7 @@ function NewPipelineDialog({ target, onClose }: { target: Listed | null; onClose
           </form>
         </DialogPanel>
         <DialogFooter>
-          <Button onClick={onClose} variant="outline">
+          <Button onClick={close} variant="outline">
             Cancel
           </Button>
           <Button disabled={busy || name.trim() === ""} form="new-pipeline" type="submit">

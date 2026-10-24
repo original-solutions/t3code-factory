@@ -15,11 +15,11 @@ export const MIN_ZOOM = 0.25;
 export const MAX_ZOOM = 2;
 
 export const NODE_WIDTH = 184;
-/** Where the first port row starts, below the kind, label and summary lines. */
-export const PORTS_TOP = 64;
+/** Where the first port row starts, below the title and summary lines. */
+export const PORTS_TOP = 48;
 export const PORT_ROW = 20;
 const PORTS_BOTTOM_PAD = 6;
-const PORTLESS_HEIGHT = 68;
+const PORTLESS_HEIGHT = 52;
 
 export const nodeHeight = (portCount: number): number =>
   portCount === 0 ? PORTLESS_HEIGHT : PORTS_TOP + portCount * PORT_ROW + PORTS_BOTTOM_PAD;
@@ -106,6 +106,44 @@ export const hitTest = (
   return null;
 };
 
+/** The gap a placed node keeps from its neighbours, and the step to the next free slot. */
+const SLOT_GAP = 32;
+const SLOT_ROW = 200;
+const SLOTS_PER_ROW = 6;
+
+const overlaps = (a: Rect, b: Rect, gap: number): boolean =>
+  a.x < b.x + b.width + gap &&
+  b.x < a.x + a.width + gap &&
+  a.y < b.y + b.height + gap &&
+  b.y < a.y + a.height + gap;
+
+/**
+ * The first place from `start` where a node of `size` overlaps none of `occupied`: `start`, then
+ * steps to the right of one node width plus a gap, wrapping to the next row after a few.
+ */
+export const freeSlot = (
+  occupied: ReadonlyArray<Rect>,
+  size: { readonly width: number; readonly height: number },
+  start: Point,
+): Point => {
+  const origin = { x: snap(start.x), y: snap(start.y) };
+  for (let row = 0; ; row++) {
+    for (let column = 0; column < SLOTS_PER_ROW; column++) {
+      const candidate = {
+        x: origin.x + column * (NODE_WIDTH + SLOT_GAP),
+        y: origin.y + row * SLOT_ROW,
+        ...size,
+      };
+      if (!occupied.some((rect) => overlaps(candidate, rect, SLOT_GAP / 2))) {
+        return { x: candidate.x, y: candidate.y };
+      }
+    }
+  }
+};
+
+/** Where a node added "after" `rect` starts looking for a free slot: one gap to its right. */
+export const afterRect = (rect: Rect): Point => ({ x: rect.x + rect.width + SLOT_GAP, y: rect.y });
+
 /** A cubic bezier: start, two control points, end. */
 export type Curve = readonly [Point, Point, Point, Point];
 
@@ -162,6 +200,25 @@ export const pointOnCurve = ([p0, p1, p2, p3]: Curve, t: number): Point => {
     x: a * p0.x + b * p1.x + c * p2.x + d * p3.x,
     y: a * p0.y + b * p1.y + c * p2.y + d * p3.y,
   };
+};
+
+/** How far along a forward edge its label sits: near the port, so labels leaving one node part. */
+const LABEL_AT = 0.3;
+const LABEL_SAMPLES = 50;
+
+/**
+ * Where an edge's label goes: 30% along the path from the source, so labels of edges that
+ * converge on one target stay apart; for a loop, the lowest point of the loop, where it reads
+ * as the way back.
+ */
+export const edgeLabelPoint = (route: EdgeRoute): Point => {
+  if (route.kind !== "loop") return pointOnCurve(route.curve, LABEL_AT);
+  let lowest = pointOnCurve(route.curve, 0);
+  for (let i = 1; i <= LABEL_SAMPLES; i++) {
+    const point = pointOnCurve(route.curve, i / LABEL_SAMPLES);
+    if (point.y > lowest.y) lowest = point;
+  }
+  return lowest;
 };
 
 const round = (n: number) => Math.round(n * 10) / 10;

@@ -4,7 +4,7 @@ import { page as browser, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../testing";
 import { __setPipelineApiForTests, type PipelineApi } from "./api";
-import type { Pipeline, PipelineListItem } from "./types";
+import type { Catalog, Pipeline, PipelineListItem } from "./types";
 
 const state = vi.hoisted(() => ({
   navigations: [] as Array<{ to: string; params?: Record<string, string> }>,
@@ -44,10 +44,45 @@ const ITEM: PipelineListItem = {
   updatedAt: "2026-10-25T09:00:00.000Z",
 };
 
+const TEMPLATE_PIPELINE: Pipeline = {
+  id: "brief-and-gate",
+  name: "Brief and gate",
+  nodes: [
+    { id: "start", kind: "start", x: 40, y: 200 },
+    {
+      id: "build",
+      kind: "agent",
+      label: "Build",
+      x: 280,
+      y: 200,
+      instructions: { brief: "Do it." },
+      fresh: false,
+    },
+    { id: "done", kind: "end", result: "done", x: 520, y: 200 },
+  ],
+  edges: [
+    { id: "e1", from: "start", port: "next", to: "build" },
+    { id: "e2", from: "build", port: "done", to: "done" },
+  ],
+};
+
+const CATALOG: Catalog = {
+  kinds: [],
+  skills: [],
+  templates: [
+    {
+      id: "brief-and-gate",
+      name: "Brief and gate",
+      description: "The simplest useful pipeline.",
+      pipeline: TEMPLATE_PIPELINE,
+    },
+  ],
+};
+
 function setup(pipelines: ReadonlyArray<PipelineListItem>) {
   state.navigations = [];
   const api: PipelineApi = {
-    catalog: vi.fn(),
+    catalog: vi.fn(async () => CATALOG),
     list: vi.fn(async () => ({ pipelines })),
     get: vi.fn(),
     save: vi.fn(async (_environmentId, pipeline: Pipeline) => ({
@@ -55,7 +90,7 @@ function setup(pipelines: ReadonlyArray<PipelineListItem>) {
       problems: [],
       updatedAt: "2026-10-25T09:00:00.000Z",
     })),
-    remove: vi.fn(),
+    remove: vi.fn(async () => ({ deleted: true })),
     validate: vi.fn(),
     simulate: vi.fn(),
     run: vi.fn(),
@@ -83,6 +118,37 @@ describe("PipelinesPage", () => {
     });
   });
 
+  it("marks a file that does not decode as unreadable and says why", async () => {
+    using _api = setup([
+      {
+        id: "broken",
+        name: "broken",
+        nodes: 0,
+        edges: 0,
+        errors: 0,
+        warnings: 0,
+        updatedAt: null,
+        unreadable: true,
+        decodeErrors: [{ path: "nodes.0.kind", message: "must be one of start, agent" }],
+      },
+    ]);
+    await using _screen = await render(createElement(PipelinesPage));
+    await expect.element(browser.getByText("Unreadable")).toBeVisible();
+    await expect
+      .element(browser.getByRole("listitem").filter({ hasText: "nodes.0.kind" }).last())
+      .toHaveTextContent("nodes.0.kind must be one of start, agent");
+  });
+
+  it("deletes a pipeline once confirmed and reads the list again", async () => {
+    using api = setup([ITEM]);
+    await using _screen = await render(createElement(PipelinesPage));
+    // No themed confirm host is mounted here, so the page falls back to the browser's confirm.
+    using _confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    await userEvent.click(browser.getByRole("button", { name: "Delete Build and gate" }));
+    await vi.waitFor(() => expect(api.api.list).toHaveBeenCalledTimes(2));
+    expect(api.api.remove).toHaveBeenCalledWith("env-1", "build-and-gate");
+  });
+
   it("creates a pipeline from the template under an id made from its name, then opens it", async () => {
     using api = setup([]);
     await using _screen = await render(createElement(PipelinesPage));
@@ -100,6 +166,29 @@ describe("PipelinesPage", () => {
     expect(state.navigations[0]).toEqual({
       to: "/factory/pipelines/$environmentId/$pipelineId",
       params: { environmentId: "env-1", pipelineId: "build-and-learn" },
+    });
+  });
+
+  it("starts a new pipeline from a template, under the new id and name", async () => {
+    using api = setup([]);
+    await using _screen = await render(createElement(PipelinesPage));
+    await userEvent.click(browser.getByRole("button", { name: "New pipeline" }));
+    await expect
+      .element(browser.getByRole("radio", { name: /Brief and gate/ }))
+      .toBeInTheDocument();
+    // From the keyboard: the unstyled test page leaves Base UI's inert layer over the dialog.
+    await userEvent.fill(browser.getByLabelText("Name"), "Ship docs");
+    await userEvent.keyboard("{Tab}{ArrowDown}");
+    await expect
+      .element(browser.getByRole("radio", { name: /Brief and gate/ }))
+      .toHaveAttribute("aria-checked", "true");
+    await userEvent.fill(browser.getByLabelText("Name"), "Ship docs");
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() => expect(state.navigations).toHaveLength(1));
+    expect(vi.mocked(api.api.save).mock.calls[0]![1]).toEqual({
+      ...TEMPLATE_PIPELINE,
+      id: "ship-docs",
+      name: "Ship docs",
     });
   });
 });

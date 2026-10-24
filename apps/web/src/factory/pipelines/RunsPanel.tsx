@@ -6,7 +6,7 @@ import { Button } from "~/components/ui/button";
 import { cn } from "~/lib/utils";
 
 import { TouchLink } from "../TouchLink";
-import { nodeName } from "./model";
+import { asPipeline, nodeName } from "./model";
 import type { KindInfo, Pipeline, RecordedEvent, RunDetail, RunStatus, RunSummary } from "./types";
 
 const STATUS_VARIANT: Record<RunStatus, "info" | "success" | "warning" | "error" | "outline"> = {
@@ -120,10 +120,15 @@ export function RunsPanel({
   onSelect: (id: string | null) => void;
   onStop: (id: string) => void;
 }) {
-  const nameOf = (id: string) => {
-    const node = pipeline.nodes.find((candidate) => candidate.id === id);
+  const nameIn = (graph: Pipeline) => (id: string) => {
+    const node = graph.nodes.find((candidate) => candidate.id === id);
     return node === undefined ? id : nodeName(kinds, node);
   };
+  const nameOf = nameIn(pipeline);
+  // The selected run's events name the nodes of the pipeline it started with, which later edits
+  // may have renamed or removed.
+  const runSnapshot = detail === null ? null : asPipeline(detail.pipeline);
+  const eventNameOf = nameIn(runSnapshot ?? pipeline);
   // A record only grows at the end, so an event's position is its identity.
   const events = (detail?.events ?? []).map((event, n) => ({ event, n }));
   if (runs === null) {
@@ -197,7 +202,7 @@ export function RunsPanel({
           <ol aria-label="Run events" className="flex flex-col gap-0.5 text-xs">
             {events.map(({ event, n }) => (
               <li className="break-words" key={n}>
-                <EventLine environmentId={environmentId} event={event} nameOf={nameOf} />
+                <EventLine environmentId={environmentId} event={event} nameOf={eventNameOf} />
               </li>
             ))}
           </ol>

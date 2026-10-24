@@ -1,5 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { Link } from "@tanstack/react-router";
+import { Link, useBlocker } from "@tanstack/react-router";
 import { ChevronDownIcon, PlayIcon, PlusIcon, SaveIcon, WorkflowIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useReducer, useRef, useState, type ReactNode } from "react";
 
@@ -12,6 +12,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { SidebarInset } from "~/components/ui/sidebar";
 import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
+import { requestConfirmDialog } from "~/confirmDialog";
 import { isElectron } from "~/env";
 import { cn } from "~/lib/utils";
 
@@ -22,12 +23,15 @@ import { TouchLink } from "../TouchLink";
 import { decodeErrorsOf, pipelineApi } from "./api";
 import { Canvas, type CanvasHandle } from "./Canvas";
 import { editorReducer, initialEditorState, isDirty, type Selection } from "./editorState";
-import { NODE_WIDTH, snap } from "./geometry";
+import { afterRect, freeSlot, nodeRect, NODE_WIDTH } from "./geometry";
 import { usePolling, useRequest } from "./hooks";
 import { Inspector } from "./Inspector";
 import {
+  asPipeline,
+  happyPort,
   nodeName,
   plural,
+  portsOf,
   problemCounts,
   problemsFromDecodeErrors,
   takenOfRun,
@@ -40,8 +44,13 @@ import { SimulationPanel } from "./SimulationPanel";
 import type { Catalog, Kind, PipelineRecord, Problem, Trace } from "./types";
 
 const VALIDATE_DEBOUNCE_MS = 300;
+const SIMULATE_DEBOUNCE_MS = 300;
+/** While a run is going: often enough to follow it node by node. */
 const RUNS_POLL_MS = 5_000;
+/** While the Runs tab shows and nothing runs here: a run started elsewhere still turns up. */
+const RUNS_IDLE_POLL_MS = 15_000;
 const HAPPY_PATH_STEPS = 50;
+const NO_PROBLEMS: ReadonlyArray<Problem> = [];
 
 /** Keys typed into a field, a menu or a dialog are theirs, not the canvas's. */
 const isTyping = (target: EventTarget | null): boolean =>
@@ -179,9 +188,23 @@ function Editor({
       runs.reload();
       if (detail.data?.run.status === "running") detail.reload();
     },
-    RUNS_POLL_MS,
-    anyRunning,
+    anyRunning ? RUNS_POLL_MS : RUNS_IDLE_POLL_MS,
+    anyRunning || panel === "runs",
   );
+
+  // Leaving with unsaved edits asks first: in-app links through the router, a reload or a closed
+  // tab through the browser's own prompt, which is the only one `beforeunload` may show.
+  useBlocker({
+    disabled: !dirty,
+    enableBeforeUnload: true,
+    shouldBlockFn: async () => {
+      const message = "Leave without saving?\nYour changes to this pipeline will be lost.";
+      const leave =
+        (await requestConfirmDialog(message, { variant: "destructive" })) ??
+        window.confirm(message);
+      return !leave;
+    },
+  });
 
   // The latest validation's number: an answer for an older pipeline is dropped.
   const checks = useRef(0);
@@ -212,23 +235,27 @@ function Editor({
   useEffect(() => {
     if (script === null) return;
     let live = true;
-    pipelineApi.simulate(environmentId, pipeline, script).then(
-      (answer) => {
-        if (!live) return;
-        setTrace(answer.trace);
-        setSimError(null);
-      },
-      (error: unknown) => {
-        if (!live) return;
-        setSimError(
-          decodeErrorsOf(error) === null
-            ? messageOf(error)
-            : "The pipeline has fields the server cannot read. Fix the errors to simulate.",
-        );
-      },
-    );
+    // Debounced like validation, so typing in the inspector does not post the pipeline per key.
+    const timer = setTimeout(() => {
+      pipelineApi.simulate(environmentId, pipeline, script).then(
+        (answer) => {
+          if (!live) return;
+          setTrace(answer.trace);
+          setSimError(null);
+        },
+        (error: unknown) => {
+          if (!live) return;
+          setSimError(
+            decodeErrorsOf(error) === null
+              ? messageOf(error)
+              : "The pipeline has fields the server cannot read. Fix the errors to simulate.",
+          );
+        },
+      );
+    }, SIMULATE_DEBOUNCE_MS);
     return () => {
       live = false;
+      clearTimeout(timer);
     };
   }, [environmentId, pipeline, script]);
 
@@ -249,14 +276,13 @@ function Editor({
           `Not saved: the server could not read ${plural(decode.length, "field")}. They are marked on the canvas.`,
         );
       } else setSaveError(`Not saved: ${messageOf(error)}`);
-    } finally {
-      setSaving(false);
     }
+    setSaving(false);
   };
 
   const select = (next: Selection) => {
     dispatch({ type: "select", selection: next });
-    if (next !== null) setPanel("inspect");
+    if (next !== null) openInspector();
   };
 
   const onKey = useEffectEvent((event: KeyboardEvent) => {
@@ -266,6 +292,16 @@ function Editor({
       return;
     }
     if (isTyping(event.target)) return;
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
+      event.preventDefault();
+      dispatch({ type: event.shiftKey ? "redo" : "undo" });
+      return;
+    }
+    if (event.ctrlKey && event.key.toLowerCase() === "y") {
+      event.preventDefault();
+      dispatch({ type: "redo" });
+      return;
+    }
     if (event.key === "Escape" && selection !== null) dispatch({ type: "select", selection: null });
     if ((event.key === "Delete" || event.key === "Backspace") && selection !== null) {
       event.preventDefault();
@@ -278,20 +314,37 @@ function Editor({
     return () => window.removeEventListener("keydown", listener);
   }, []);
 
-  const addNode = (kind: Kind) => {
-    const centre = canvas.current?.centre() ?? { x: 280, y: 200 };
-    let x = snap(centre.x - NODE_WIDTH / 2);
-    let y = snap(centre.y - 40);
-    // A second add lands beside the first rather than exactly on it.
-    while (pipeline.nodes.some((node) => node.x === x && node.y === y)) {
-      x += 24;
-      y += 24;
-    }
-    dispatch({ type: "add-node", kind, x, y });
+  /** The Inspect tab, with no run selected: a run's trail would dim the nodes being edited. */
+  const openInspector = () => {
     setPanel("inspect");
+    setRunId(null);
   };
 
+  const addNode = (kind: Kind) => {
+    const rectOf = (node: (typeof pipeline.nodes)[number]) =>
+      nodeRect(node, portsOf(kinds, node.kind).length);
+    const size = nodeRect({ x: 0, y: 0 }, portsOf(kinds, kind).length);
+    const selected =
+      selection?.kind === "node"
+        ? pipeline.nodes.find((node) => node.id === selection.id)
+        : undefined;
+    const centre = canvas.current?.centre() ?? { x: 280, y: 200 };
+    // After the selected node, the natural "add next"; else where the person is looking.
+    const start =
+      selected === undefined
+        ? { x: centre.x - NODE_WIDTH / 2, y: centre.y - size.height / 2 }
+        : afterRect(rectOf(selected));
+    const { x, y } = freeSlot(pipeline.nodes.map(rectOf), size, start);
+    dispatch({ type: "add-node", kind, x, y });
+    openInspector();
+  };
+
+  // Each simulation session's number: a happy path still walking when the person turns the
+  // simulation off (or on again) must not write its script into the new session.
+  const simSession = useRef(0);
   const toggleSimulation = () => {
+    simSession.current++;
+    setSimBusy(false);
     if (script === null) {
       setScript([]);
       setTrace(null);
@@ -300,20 +353,24 @@ function Editor({
   };
 
   const happyPath = async () => {
+    const session = simSession.current;
     const walk = [...(script ?? [])];
+    const kindOf = (id: string) => pipeline.nodes.find((node) => node.id === id)?.kind;
     setSimBusy(true);
     try {
       for (let step = 0; step < HAPPY_PATH_STEPS; step++) {
         const { trace: next } = await pipelineApi.simulate(environmentId, pipeline, walk);
-        if (next.end.kind !== "waiting" || next.end.ports.length === 0) break;
-        walk.push(next.end.ports[0]!);
+        if (session !== simSession.current) return;
+        if (next.end.kind !== "waiting") break;
+        const port = happyPort(kindOf(next.end.node), next.end.ports);
+        if (port === null) break;
+        walk.push(port);
       }
       setScript(walk);
     } catch (error) {
-      setSimError(messageOf(error));
-    } finally {
-      setSimBusy(false);
+      if (session === simSession.current) setSimError(messageOf(error));
     }
+    if (session === simSession.current) setSimBusy(false);
   };
 
   const stopRun = async (id: string) => {
@@ -322,11 +379,10 @@ function Editor({
       await pipelineApi.stopRun(environmentId, id);
     } catch (error) {
       setRunNote(messageOf(error));
-    } finally {
-      setStopping(false);
-      runs.reload();
-      detail.reload();
     }
+    setStopping(false);
+    runs.reload();
+    detail.reload();
   };
 
   const pickProblem = (problem: Problem) => {
@@ -337,6 +393,8 @@ function Editor({
   const simulating = script !== null;
   const runDetail = detail.data?.run ?? null;
   const showRun = !simulating && panel === "runs" && runDetail !== null;
+  // A run is drawn on the pipeline it started with: its record names that graph's nodes and edges.
+  const runPipeline = showRun ? asPipeline(runDetail.pipeline) : null;
   const trail = simulating
     ? trace === null
       ? null
@@ -359,7 +417,13 @@ function Editor({
       <Input
         aria-label="Pipeline name"
         className="w-56 min-w-0"
-        onChange={(event) => dispatch({ type: "rename", name: event.target.value })}
+        onChange={(event) =>
+          dispatch({
+            type: "rename",
+            name: event.target.value,
+            edit: { key: "name", at: Date.now() },
+          })
+        }
         size="sm"
         value={pipeline.name}
       />
@@ -418,14 +482,16 @@ function Editor({
             kinds={kinds}
             onConnect={(from, port, to) => {
               dispatch({ type: "connect", from, port, to });
-              setPanel("inspect");
+              openInspector();
             }}
+            onLayout={(positions) => dispatch({ type: "layout", positions })}
             onMove={(id, x, y) => dispatch({ type: "move-node", id, x, y })}
             onSelect={select}
-            pipeline={pipeline}
-            problems={problems}
+            pipeline={runPipeline ?? pipeline}
+            problems={runPipeline === null ? problems : NO_PROBLEMS}
+            readOnly={runPipeline !== null}
             ref={canvas}
-            selection={selection}
+            selection={runPipeline === null ? selection : null}
             taken={taken}
             trail={trail}
           />
@@ -439,7 +505,8 @@ function Editor({
               aria-label="Panel"
               onValueChange={(values) => {
                 const next = values[0];
-                if (next === "inspect" || next === "runs") setPanel(next);
+                if (next === "inspect") openInspector();
+                else if (next === "runs") setPanel(next);
               }}
               value={[panel]}
             >
@@ -468,8 +535,20 @@ function Editor({
                   key={selection === null ? "none" : `${selection.kind} ${selection.id}`}
                   kinds={kinds}
                   onDelete={() => dispatch({ type: "remove-selection" })}
-                  onEdgeChange={(edge) => dispatch({ type: "update-edge", edge })}
-                  onNodeChange={(node) => dispatch({ type: "update-node", node })}
+                  onEdgeChange={(edge, field) =>
+                    dispatch({
+                      type: "update-edge",
+                      edge,
+                      edit: { key: `edge ${edge.id} ${field}`, at: Date.now() },
+                    })
+                  }
+                  onNodeChange={(node, field) =>
+                    dispatch({
+                      type: "update-node",
+                      node,
+                      edit: { key: `node ${node.id} ${field}`, at: Date.now() },
+                    })
+                  }
                   pipeline={pipeline}
                   problems={problems}
                   selection={selection}
@@ -532,8 +611,26 @@ export function PipelineEditorPage({
   if (record.data !== null && catalog.data !== null) {
     return <Editor catalog={catalog.data} environmentId={environmentId} record={record.data} />;
   }
+  const unreadable = record.error === null ? null : decodeErrorsOf(record.error);
   let body: ReactNode;
-  if (failed !== null) {
+  if (unreadable !== null) {
+    body = (
+      <div className="flex flex-col gap-3">
+        <FactoryError
+          message="The file on the factory machine does not describe a pipeline. Fix or delete it, then reload."
+          title={`Pipeline ${pipelineId} is unreadable`}
+          onRetry={record.reload}
+        />
+        <ul className="flex flex-col gap-1 text-sm">
+          {unreadable.map((decodeError) => (
+            <li key={`${decodeError.path} ${decodeError.message}`}>
+              <span className="font-mono">{decodeError.path || "file"}</span> {decodeError.message}
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  } else if (failed !== null) {
     body =
       failed instanceof FactoryApiError && failed.status === 404 && record.error !== null ? (
         <FactoryError

@@ -259,7 +259,8 @@ function NodeFields({
   node: PipelineNode;
   kinds: ReadonlyArray<KindInfo>;
   skills: ReadonlyArray<SkillInfo>;
-  onChange: (node: PipelineNode) => void;
+  /** `field` names what changed, so typing in one field is one undo step. */
+  onChange: (node: PipelineNode, field: string) => void;
 }) {
   const info = kinds.find((kind) => kind.kind === node.kind);
   return (
@@ -272,7 +273,7 @@ function NodeFields({
         <Label htmlFor="pipeline-node-label">Label</Label>
         <Input
           id="pipeline-node-label"
-          onChange={(event) => onChange(withLabel(node, event.target.value))}
+          onChange={(event) => onChange(withLabel(node, event.target.value), "label")}
           placeholder={kindLabel(kinds, node.kind)}
           size="sm"
           value={node.label ?? ""}
@@ -285,7 +286,7 @@ function NodeFields({
             modes={["skill", "brief"]}
             onChange={(value) => {
               if (value !== undefined && !("commands" in value))
-                onChange({ ...node, instructions: value });
+                onChange({ ...node, instructions: value }, "instructions");
             }}
             skills={skills}
             value={node.instructions}
@@ -295,7 +296,7 @@ function NodeFields({
             <Switch
               checked={node.fresh}
               id="pipeline-node-fresh"
-              onCheckedChange={(fresh) => onChange({ ...node, fresh })}
+              onCheckedChange={(fresh) => onChange({ ...node, fresh }, "fresh")}
             />
           </div>
         </>
@@ -306,7 +307,7 @@ function NodeFields({
           modes={["skill", "brief"]}
           onChange={(value) => {
             if (value !== undefined && !("commands" in value))
-              onChange({ ...node, instructions: value });
+              onChange({ ...node, instructions: value }, "instructions");
           }}
           skills={skills}
           value={node.instructions}
@@ -317,7 +318,7 @@ function NodeFields({
           label="Check"
           modes={["commands", "skill", "brief"]}
           onChange={(value) => {
-            if (value !== undefined) onChange({ ...node, check: value });
+            if (value !== undefined) onChange({ ...node, check: value }, "check");
           }}
           skills={skills}
           value={node.check}
@@ -332,7 +333,7 @@ function NodeFields({
               { value: "stuck", label: "Stuck" },
             ]}
             onValueChange={(result) => {
-              if (result === "done" || result === "stuck") onChange({ ...node, result });
+              if (result === "done" || result === "stuck") onChange({ ...node, result }, "result");
             }}
             value={node.result}
           >
@@ -361,7 +362,7 @@ function EdgeFields({
   pipeline: Pipeline;
   kinds: ReadonlyArray<KindInfo>;
   skills: ReadonlyArray<SkillInfo>;
-  onChange: (edge: PipelineEdge) => void;
+  onChange: (edge: PipelineEdge, field: string) => void;
 }) {
   const nameOf = (id: string) => {
     const node = pipeline.nodes.find((candidate) => candidate.id === id);
@@ -383,6 +384,7 @@ function EdgeFields({
               value === null
                 ? { ...base, ...(edge.instructions ? { instructions: edge.instructions } : {}) }
                 : { ...edge, max: Math.max(1, Math.round(value)) },
+              "max",
             )
           }
           size="sm"
@@ -406,6 +408,7 @@ function EdgeFields({
             value === undefined || "commands" in value
               ? { ...base, ...(edge.max === undefined ? {} : { max: edge.max }) }
               : { ...edge, instructions: value },
+            "instructions",
           )
         }
         skills={skills}
@@ -431,8 +434,8 @@ export function Inspector({
   skills: ReadonlyArray<SkillInfo>;
   selection: Selection;
   problems: ReadonlyArray<Problem>;
-  onNodeChange: (node: PipelineNode) => void;
-  onEdgeChange: (edge: PipelineEdge) => void;
+  onNodeChange: (node: PipelineNode, field: string) => void;
+  onEdgeChange: (edge: PipelineEdge, field: string) => void;
   onDelete: () => void;
 }) {
   const node =

@@ -1,16 +1,22 @@
 /**
  * The node editor: nodes are positioned divs in a transformed layer, edges are SVG paths drawn in
- * the same coordinate space. Geometry lives in `geometry.ts`; this file only maps pointer and
- * wheel input onto it. Nothing animates: every repaint follows an input.
+ * the same coordinate space. Geometry lives in `geometry.ts`; this file only maps pointer, wheel
+ * and key input onto it. Nothing animates: every repaint follows an input.
+ *
+ * A pan changes only the layer transforms and the grid: the nodes, edges and labels are memoised
+ * on primitive props and handed handlers that never change, so they keep their render. A drag
+ * re-renders the dragged node and the edges whose path moved.
  */
-import { MaximizeIcon, MinusIcon, PlusIcon } from "lucide-react";
+import { LayoutGridIcon, MaximizeIcon, MinusIcon, PlusIcon } from "lucide-react";
 import {
+  memo,
   useEffect,
-  useEffectEvent,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type Ref,
 } from "react";
@@ -22,25 +28,34 @@ import { cn } from "~/lib/utils";
 
 import type { Selection } from "./editorState";
 import {
+  NODE_WIDTH,
   boundsOf,
   curvePath,
+  edgeLabelPoint,
   edgeRoute,
   fitView,
   hitTest,
   nodeRect,
-  pointOnCurve,
   portPoint,
   previewCurve,
   screenToWorld,
   snap,
   zoomAt,
-  type Curve,
   type Point,
   type Rect,
   type View,
 } from "./geometry";
-import { KIND_ACCENT, kindLabel, nodeName, portsOf, summaryOf, type Trail } from "./model";
-import type { KindInfo, Pipeline, PipelineEdge, PipelineNode, Problem } from "./types";
+import { tidyLayout } from "./layout";
+import {
+  KIND_ACCENT,
+  edgeLabelText,
+  hasOwnLabel,
+  kindLabel,
+  nodeName,
+  summaryOf,
+  type Trail,
+} from "./model";
+import type { Kind, KindInfo, Pipeline, PipelineNode, Problem } from "./types";
 
 export type CanvasHandle = {
   /** The world point at the middle of the viewport, where a new node goes. */
@@ -48,12 +63,7 @@ export type CanvasHandle = {
 };
 
 type Gesture =
-  | {
-      readonly kind: "pan";
-      readonly start: Point;
-      readonly view: View;
-      moved: boolean;
-    }
+  | { readonly kind: "pan"; readonly start: Point; readonly view: View; moved: boolean }
   | {
       readonly kind: "drag";
       readonly id: string;
@@ -74,6 +84,8 @@ const CLICK_SLOP = 3;
 const DEFAULT_VIEW: View = { x: 0, y: 0, k: 1 };
 const ZOOM_STEP = 1.2;
 const NO_PORTS: ReadonlySet<string> = new Set();
+const NO_PROBLEMS: ReadonlyArray<Problem> = [];
+const NO_PORT_NAMES: ReadonlyArray<string> = [];
 
 const levelOf = (problems: ReadonlyArray<Problem>): "error" | "warning" | null =>
   problems.some((problem) => problem.level === "error")
@@ -109,56 +121,65 @@ function ProblemDot({ problems }: { problems: ReadonlyArray<Problem> }) {
 
 type NodeMark = "current" | "visited" | "dim" | null;
 
-function NodeCard({
+/** Handlers the canvas creates once; they read the latest props and view through refs. */
+type Handlers = {
+  readonly nodePointerDown: (event: ReactPointerEvent<HTMLElement>, node: PipelineNode) => void;
+  readonly nodeKeyDown: (event: ReactKeyboardEvent<HTMLElement>, id: string) => void;
+  readonly portPointerDown: (
+    event: ReactPointerEvent<HTMLElement>,
+    node: PipelineNode,
+    port: string,
+  ) => void;
+  readonly edgePointerDown: (event: ReactPointerEvent<Element>, id: string) => void;
+  readonly edgeClick: (id: string) => void;
+};
+
+const NodeCard = memo(function NodeCard({
   node,
-  rect,
+  height,
   kinds,
   ports,
   connected,
   selected,
   mark,
   problems,
-  onNodePointerDown,
-  onPortPointerDown,
+  handlers,
 }: {
   node: PipelineNode;
-  rect: Rect;
+  height: number;
   kinds: ReadonlyArray<KindInfo>;
   ports: ReadonlyArray<string>;
   connected: ReadonlySet<string>;
   selected: boolean;
   mark: NodeMark;
   problems: ReadonlyArray<Problem>;
-  onNodePointerDown: (event: ReactPointerEvent<HTMLElement>, node: PipelineNode) => void;
-  onPortPointerDown: (
-    event: ReactPointerEvent<HTMLElement>,
-    node: PipelineNode,
-    port: string,
-  ) => void;
+  handlers: Handlers;
 }) {
   const name = nodeName(kinds, node);
   const style = {
-    left: rect.x,
-    top: rect.y,
-    width: rect.width,
-    height: rect.height,
+    left: node.x,
+    top: node.y,
+    width: NODE_WIDTH,
+    height,
     "--kind": KIND_ACCENT[node.kind],
   } as CSSProperties;
   return (
     <div
+      aria-current={mark === "current" ? "step" : undefined}
       aria-label={`${name} node`}
       aria-pressed={selected}
       className={cn(
-        "absolute cursor-grab touch-none select-none rounded-lg border bg-card text-card-foreground shadow-xs",
+        "absolute cursor-grab touch-none select-none rounded-lg border bg-card text-card-foreground shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         selected && "ring-2 ring-ring",
         mark === "current" && "ring-2 ring-primary",
         mark === "dim" && "opacity-50",
       )}
       data-node={node.id}
-      onPointerDown={(event) => onNodePointerDown(event, node)}
+      onKeyDown={(event) => handlers.nodeKeyDown(event, node.id)}
+      onPointerDown={(event) => handlers.nodePointerDown(event, node)}
       role="button"
       style={style}
-      tabIndex={-1}
+      tabIndex={0}
     >
       <span
         aria-hidden="true"
@@ -166,15 +187,18 @@ function NodeCard({
         style={{ background: "var(--kind)" }}
       />
       <div className="flex flex-col px-3 pt-2">
-        <div className="flex h-4 items-center gap-1.5 text-xs text-muted-foreground">
-          <span className="truncate" style={{ color: "var(--kind)" }}>
-            {kindLabel(kinds, node.kind)}
-          </span>
-          <span className="ml-auto flex items-center">
+        <div className="flex h-5 min-w-0 items-center gap-1.5">
+          <span className="min-w-0 truncate text-sm font-medium">{name}</span>
+          {/* The kind is the title when there is no label of its own; say it once. */}
+          {hasOwnLabel(kinds, node) ? (
+            <span className="shrink-0 text-xs" style={{ color: "var(--kind)" }}>
+              {kindLabel(kinds, node.kind)}
+            </span>
+          ) : null}
+          <span className="ml-auto flex shrink-0 items-center">
             <ProblemDot problems={problems} />
           </span>
         </div>
-        <div className="h-5 truncate text-sm font-medium">{name}</div>
         <div className="h-4 truncate text-xs text-muted-foreground">{summaryOf(node)}</div>
       </div>
       {ports.map((port, index) => {
@@ -184,9 +208,9 @@ function NodeCard({
             aria-label={`Connect ${port} from ${name}`}
             className="absolute right-0 flex cursor-crosshair items-center justify-end gap-1.5 pl-3 text-xs text-muted-foreground"
             key={port}
-            onPointerDown={(event) => onPortPointerDown(event, node, port)}
+            onPointerDown={(event) => handlers.portPointerDown(event, node, port)}
             role="button"
-            style={{ top: point.y - rect.y - 10, height: 20 }}
+            style={{ top: point.y - node.y - 10, height: 20 }}
             tabIndex={-1}
           >
             <span className="truncate">{port}</span>
@@ -203,21 +227,90 @@ function NodeCard({
       })}
     </div>
   );
-}
+});
 
-type DrawnEdge = {
-  readonly edge: PipelineEdge;
-  readonly curve: Curve;
-  readonly label: Point;
-};
+type EdgeLook = "normal" | "selected" | "trail" | "dim";
 
-const edgeLabelText = (edge: PipelineEdge, taken: Readonly<Record<string, number>> | null) => {
-  if (taken !== null) {
-    const n = taken[edge.id] ?? 0;
-    if (edge.max !== undefined) return `${edge.port} ${n}/${edge.max}`;
-    return n > 0 ? `${edge.port} ×${n}` : edge.port;
-  }
-  return edge.max === undefined ? edge.port : `${edge.port} ×${edge.max}`;
+const EdgePath = memo(function EdgePath({
+  id,
+  d,
+  endX,
+  endY,
+  look,
+  handlers,
+}: {
+  id: string;
+  d: string;
+  endX: number;
+  endY: number;
+  look: EdgeLook;
+  handlers: Handlers;
+}) {
+  const strong = look === "selected" || look === "trail";
+  const stroke = strong ? "var(--color-primary)" : "var(--color-muted-foreground)";
+  return (
+    <g opacity={look === "dim" ? 0.4 : 1}>
+      <path d={d} fill="none" stroke={stroke} strokeWidth={strong ? 2.5 : 1.5} />
+      <path
+        d={`M ${endX - 7} ${endY - 4} L ${endX} ${endY} L ${endX - 7} ${endY + 4} Z`}
+        fill={stroke}
+      />
+      <path
+        className="cursor-pointer"
+        d={d}
+        fill="none"
+        onPointerDown={(event) => handlers.edgePointerDown(event, id)}
+        pointerEvents="stroke"
+        stroke="transparent"
+        strokeWidth={14}
+      />
+    </g>
+  );
+});
+
+const EdgeLabel = memo(function EdgeLabel({
+  id,
+  name,
+  text,
+  x,
+  y,
+  selected,
+  problems,
+  handlers,
+}: {
+  id: string;
+  name: string;
+  text: string;
+  x: number;
+  y: number;
+  selected: boolean;
+  problems: ReadonlyArray<Problem>;
+  handlers: Handlers;
+}) {
+  return (
+    <button
+      aria-label={name}
+      aria-pressed={selected}
+      className={cn(
+        "absolute flex -translate-x-1/2 -translate-y-1/2 items-center gap-1 whitespace-nowrap rounded-sm border bg-background px-1 text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        selected && "border-primary text-foreground",
+      )}
+      onClick={() => handlers.edgeClick(id)}
+      onPointerDown={(event) => handlers.edgePointerDown(event, id)}
+      style={{ left: x, top: y }}
+      type="button"
+    >
+      {text}
+      <ProblemDot problems={problems} />
+    </button>
+  );
+});
+
+type Latest = {
+  readonly rects: ReadonlyArray<{ readonly id: string; readonly rect: Rect }>;
+  readonly portsOfKind: (kind: Kind) => ReadonlyArray<string>;
+  readonly readOnly: boolean;
+  readonly onSelect: (selection: Selection) => void;
 };
 
 export function Canvas({
@@ -227,9 +320,11 @@ export function Canvas({
   problems,
   trail,
   taken,
+  readOnly = false,
   onSelect,
   onMove,
   onConnect,
+  onLayout,
   ref,
 }: {
   pipeline: Pipeline;
@@ -240,35 +335,42 @@ export function Canvas({
   trail: Trail | null;
   /** Traversals per edge for the trail, shown on the edge labels. */
   taken: Readonly<Record<string, number>> | null;
+  /** Shows the graph without letting it be edited: a run's own snapshot. */
+  readOnly?: boolean;
   onSelect: (selection: Selection) => void;
   onMove: (id: string, x: number, y: number) => void;
   onConnect: (from: string, port: string, to: string) => void;
+  onLayout: (positions: Readonly<Record<string, Point>>) => void;
   ref?: Ref<CanvasHandle>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const gesture = useRef<Gesture | null>(null);
-  const [view, setView] = useState<View>(DEFAULT_VIEW);
+  const viewRef = useRef<View>(DEFAULT_VIEW);
+  const [view, setViewState] = useState<View>(DEFAULT_VIEW);
   const [drag, setDrag] = useState<{ id: string; x: number; y: number } | null>(null);
   const [preview, setPreview] = useState<{ from: Point; to: Point } | null>(null);
+
+  const portsByKind = new Map(kinds.map((info) => [info.kind, info.ports.map((p) => p.name)]));
+  const portsOfKind = (kind: Kind) => portsByKind.get(kind) ?? NO_PORT_NAMES;
 
   const placed = pipeline.nodes.map((node) =>
     drag !== null && drag.id === node.id ? { ...node, x: drag.x, y: drag.y } : node,
   );
-  const portsByNode = new Map(placed.map((node) => [node.id, portsOf(kinds, node.kind)]));
   const rects = placed.map((node) => ({
     id: node.id,
     node,
-    rect: nodeRect(node, portsByNode.get(node.id)?.length ?? 0),
+    rect: nodeRect(node, portsOfKind(node.kind).length),
   }));
   const rectById = new Map(rects.map((entry) => [entry.id, entry]));
 
-  const drawn: Array<DrawnEdge> = pipeline.edges.flatMap((edge) => {
+  const drawn = pipeline.edges.flatMap((edge) => {
     const source = rectById.get(edge.from);
     const target = rectById.get(edge.to);
-    const index = portsByNode.get(edge.from)?.indexOf(edge.port) ?? -1;
-    if (source === undefined || target === undefined || index < 0) return [];
-    const { curve } = edgeRoute(source.rect, portPoint(source.node, index), target.rect);
-    return [{ edge, curve, label: pointOnCurve(curve, 0.5) }];
+    if (source === undefined || target === undefined) return [];
+    const index = portsOfKind(source.node.kind).indexOf(edge.port);
+    if (index < 0) return [];
+    const route = edgeRoute(source.rect, portPoint(source.node, index), target.rect);
+    return [{ edge, d: curvePath(route.curve), end: route.curve[3], label: edgeLabelPoint(route) }];
   });
 
   const connectedPorts = new Map<string, Set<string>>();
@@ -277,36 +379,64 @@ export function Canvas({
     set.add(edge.port);
     connectedPorts.set(edge.from, set);
   }
-  const problemsOfNode = (id: string) => problems.filter((problem) => problem.node === id);
-  const problemsOfEdge = (id: string) => problems.filter((problem) => problem.edge === id);
+  const problemsByNode = new Map<string, Array<Problem>>();
+  const problemsByEdge = new Map<string, Array<Problem>>();
+  for (const problem of problems) {
+    const owner =
+      problem.node !== undefined
+        ? { map: problemsByNode, id: problem.node }
+        : problem.edge !== undefined
+          ? { map: problemsByEdge, id: problem.edge }
+          : null;
+    if (owner === null) continue;
+    owner.map.set(owner.id, [...(owner.map.get(owner.id) ?? []), problem]);
+  }
+
+  const latest = useRef<Latest | null>(null);
+  useLayoutEffect(() => {
+    latest.current = { rects, portsOfKind, readOnly, onSelect };
+  });
+
+  const setView = (next: View) => {
+    viewRef.current = next;
+    setViewState(next);
+  };
 
   const local = (event: { clientX: number; clientY: number }): Point => {
     const box = containerRef.current?.getBoundingClientRect();
     return { x: event.clientX - (box?.left ?? 0), y: event.clientY - (box?.top ?? 0) };
   };
 
-  const fitToContent = (size: { width: number; height: number }) => {
-    const bounds = boundsOf(rects.map((entry) => entry.rect));
-    if (bounds !== null && size.width > 0 && size.height > 0) setView(fitView(bounds, size));
+  const fitTo = (bounds: Rect | null) => {
+    const box = containerRef.current?.getBoundingClientRect();
+    if (bounds === null || box === undefined || box.width === 0 || box.height === 0) return;
+    setView(fitView(bounds, { width: box.width, height: box.height }));
   };
-  const fitOnFirstSize = useEffectEvent(fitToContent);
 
   useImperativeHandle(ref, () => ({
     centre: () => {
       const box = containerRef.current?.getBoundingClientRect();
-      return screenToWorld(view, { x: (box?.width ?? 0) / 2, y: (box?.height ?? 0) / 2 });
+      return screenToWorld(viewRef.current, {
+        x: (box?.width ?? 0) / 2,
+        y: (box?.height ?? 0) / 2,
+      });
     },
   }));
 
   useEffect(() => {
     const element = containerRef.current;
     if (element === null) return;
+    const apply = (next: View) => {
+      viewRef.current = next;
+      setViewState(next);
+    };
     let fitted = false;
     const stop = observeResize(element, (entries) => {
       const box = entries[0]?.contentRect;
-      if (fitted || box === undefined || box.width === 0) return;
+      const bounds = boundsOf((latest.current?.rects ?? []).map((entry) => entry.rect));
+      if (fitted || box === undefined || box.width === 0 || bounds === null) return;
       fitted = true;
-      fitOnFirstSize({ width: box.width, height: box.height });
+      apply(fitView(bounds, { width: box.width, height: box.height }));
     });
     // A native listener: React's wheel listener is passive, and ctrl + wheel must not zoom the page.
     const onWheel = (event: WheelEvent) => {
@@ -314,12 +444,15 @@ export function Canvas({
       const box = element.getBoundingClientRect();
       const cursor = { x: event.clientX - box.left, y: event.clientY - box.top };
       const scale = event.deltaMode === 1 ? 16 : 1;
-      const dx = event.deltaX * scale;
-      const dy = event.deltaY * scale;
+      const current = viewRef.current;
       if (event.ctrlKey || event.metaKey) {
-        setView((current) => zoomAt(current, Math.exp(-dy * 0.01), cursor));
+        apply(zoomAt(current, Math.exp(-event.deltaY * scale * 0.01), cursor));
       } else {
-        setView((current) => ({ ...current, x: current.x - dx, y: current.y - dy }));
+        apply({
+          ...current,
+          x: current.x - event.deltaX * scale,
+          y: current.y - event.deltaY * scale,
+        });
       }
     };
     element.addEventListener("wheel", onWheel, { passive: false });
@@ -327,80 +460,110 @@ export function Canvas({
       stop();
       element.removeEventListener("wheel", onWheel);
     };
-  }, []);
+  }, [latest]);
 
-  const capture = (event: ReactPointerEvent<Element>) => {
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-  };
+  // Created once, so the memoised layers never see a new handler; what they need that changes is
+  // read through `latest` and `gesture` when the event happens.
+  const [handlers] = useState<Handlers>(() => {
+    const at = (event: { clientX: number; clientY: number }): Point => {
+      const box = containerRef.current?.getBoundingClientRect();
+      return { x: event.clientX - (box?.left ?? 0), y: event.clientY - (box?.top ?? 0) };
+    };
+    return {
+      nodePointerDown: (event, node) => {
+        const now = latest.current;
+        // A read-only graph pans from anywhere: the press falls through to the background.
+        if (event.button !== 0 || now === null || now.readOnly) return;
+        event.stopPropagation();
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+        now.onSelect({ kind: "node", id: node.id });
+        gesture.current = {
+          kind: "drag",
+          id: node.id,
+          start: at(event),
+          origin: { x: node.x, y: node.y },
+          moved: false,
+        };
+      },
+      nodeKeyDown: (event, id) => {
+        const now = latest.current;
+        if (now === null || now.readOnly || event.target !== event.currentTarget) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          now.onSelect({ kind: "node", id });
+        }
+      },
+      portPointerDown: (event, node, port) => {
+        const now = latest.current;
+        if (event.button !== 0 || now === null || now.readOnly) return;
+        event.stopPropagation();
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+        const from = portPoint(node, Math.max(0, now.portsOfKind(node.kind).indexOf(port)));
+        gesture.current = { kind: "connect", from: node.id, port, start: at(event), moved: false };
+        setPreview({ from, to: from });
+      },
+      edgePointerDown: (event, id) => {
+        const now = latest.current;
+        if (event.button !== 0 || now === null || now.readOnly) return;
+        event.stopPropagation();
+        now.onSelect({ kind: "edge", id });
+      },
+      edgeClick: (id) => {
+        const now = latest.current;
+        if (now !== null && !now.readOnly) now.onSelect({ kind: "edge", id });
+      },
+    };
+  });
 
   const onBackgroundPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
-    capture(event);
-    gesture.current = { kind: "pan", start: local(event), view, moved: false };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    gesture.current = { kind: "pan", start: local(event), view: viewRef.current, moved: false };
   };
 
-  const onNodePointerDown = (event: ReactPointerEvent<HTMLElement>, node: PipelineNode) => {
-    if (event.button !== 0) return;
-    event.stopPropagation();
-    capture(event);
-    onSelect({ kind: "node", id: node.id });
-    gesture.current = {
-      kind: "drag",
-      id: node.id,
-      start: local(event),
-      origin: { x: node.x, y: node.y },
-      moved: false,
-    };
-  };
-
-  const onPortPointerDown = (
-    event: ReactPointerEvent<HTMLElement>,
-    node: PipelineNode,
-    port: string,
-  ) => {
-    if (event.button !== 0) return;
-    event.stopPropagation();
-    capture(event);
-    const index = portsByNode.get(node.id)?.indexOf(port) ?? 0;
-    const from = portPoint(node, index);
-    gesture.current = { kind: "connect", from: node.id, port, start: local(event), moved: false };
-    setPreview({ from, to: from });
-  };
-
-  const onEdgePointerDown = (event: ReactPointerEvent<Element>, edge: PipelineEdge) => {
-    if (event.button !== 0) return;
-    event.stopPropagation();
-    onSelect({ kind: "edge", id: edge.id });
-  };
+  /** Where a drag puts its node for the pointer at `point`, snapped to the grid. */
+  const dragTarget = (current: Extract<Gesture, { kind: "drag" }>, point: Point) => ({
+    x: snap(current.origin.x + (point.x - current.start.x) / viewRef.current.k),
+    y: snap(current.origin.y + (point.y - current.start.y) / viewRef.current.k),
+  });
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const current = gesture.current;
     if (current === null) return;
     const point = local(event);
+    const travel = Math.hypot(point.x - current.start.x, point.y - current.start.y);
+    if (!current.moved && travel < CLICK_SLOP) return;
+    current.moved = true;
     if (current.kind === "pan") {
-      const dx = point.x - current.start.x;
-      const dy = point.y - current.start.y;
-      if (!current.moved && Math.hypot(dx, dy) < CLICK_SLOP) return;
-      current.moved = true;
-      setView({ ...current.view, x: current.view.x + dx, y: current.view.y + dy });
+      setView({
+        ...current.view,
+        x: current.view.x + point.x - current.start.x,
+        y: current.view.y + point.y - current.start.y,
+      });
     } else if (current.kind === "drag") {
-      const dx = point.x - current.start.x;
-      const dy = point.y - current.start.y;
-      if (!current.moved && Math.hypot(dx, dy) < CLICK_SLOP) return;
-      current.moved = true;
-      const x = snap(current.origin.x + dx / view.k);
-      const y = snap(current.origin.y + dy / view.k);
-      if (drag === null || drag.x !== x || drag.y !== y) setDrag({ id: current.id, x, y });
+      const { x, y } = dragTarget(current, point);
+      setDrag((last) =>
+        last !== null && last.x === x && last.y === y ? last : { id: current.id, x, y },
+      );
     } else {
-      if (
-        !current.moved &&
-        Math.hypot(point.x - current.start.x, point.y - current.start.y) < CLICK_SLOP
-      )
-        return;
-      current.moved = true;
-      const to = screenToWorld(view, point);
+      const to = screenToWorld(viewRef.current, point);
       setPreview((last) => (last === null ? null : { ...last, to }));
     }
+  };
+
+  /**
+   * The node card under the pointer, port rows included, as the browser lays it out: what the
+   * person sees is what they drop on, whatever the view or a move just did.
+   */
+  const nodeUnder = (clientX: number, clientY: number): string | null => {
+    const container = containerRef.current;
+    if (container === null || typeof document.elementsFromPoint !== "function") return null;
+    for (const element of document.elementsFromPoint(clientX, clientY)) {
+      if (!container.contains(element)) continue;
+      const id = element.closest<HTMLElement>("[data-node]")?.dataset.node;
+      if (id !== undefined) return id;
+    }
+    return null;
   };
 
   const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -408,9 +571,13 @@ export function Canvas({
     gesture.current = null;
     if (current === null) return;
     if (current.kind === "pan") {
-      if (!current.moved) onSelect(null);
+      if (!current.moved && !readOnly) onSelect(null);
     } else if (current.kind === "drag") {
-      if (current.moved && drag !== null) onMove(drag.id, drag.x, drag.y);
+      // From the release point, not the last rendered drag: a quick flick may end between moves.
+      if (current.moved) {
+        const { x, y } = dragTarget(current, local(event));
+        onMove(current.id, x, y);
+      }
       setDrag(null);
     } else {
       setPreview(null);
@@ -419,7 +586,9 @@ export function Canvas({
         onSelect({ kind: "node", id: current.from });
         return;
       }
-      const target = hitTest(rects, screenToWorld(view, local(event)));
+      const target =
+        nodeUnder(event.clientX, event.clientY) ??
+        hitTest(rects, screenToWorld(viewRef.current, local(event)));
       if (target !== null) onConnect(current.from, current.port, target);
     }
   };
@@ -432,13 +601,16 @@ export function Canvas({
 
   const zoomBy = (factor: number) => {
     const box = containerRef.current?.getBoundingClientRect();
-    setView((current) =>
-      zoomAt(current, factor, { x: (box?.width ?? 0) / 2, y: (box?.height ?? 0) / 2 }),
+    setView(
+      zoomAt(viewRef.current, factor, { x: (box?.width ?? 0) / 2, y: (box?.height ?? 0) / 2 }),
     );
   };
-  const fit = () => {
-    const box = containerRef.current?.getBoundingClientRect();
-    if (box !== undefined) fitToContent({ width: box.width, height: box.height });
+  const fit = () => fitTo(boundsOf(rects.map((entry) => entry.rect)));
+  const tidy = () => {
+    const positions = tidyLayout(pipeline);
+    onLayout(positions);
+    // Fit to where the nodes are going, not where they were: the move lands on the next render.
+    fitTo(boundsOf(rects.map(({ id, rect }) => ({ ...rect, ...positions[id] }))));
   };
 
   const transform = `translate(${view.x}px, ${view.y}px) scale(${view.k})`;
@@ -451,10 +623,18 @@ export function Canvas({
     if (trail.current === id) return "current";
     return trail.nodes.has(id) ? "visited" : "dim";
   };
+  const lookOf = (id: string): EdgeLook =>
+    id === selectedEdge
+      ? "selected"
+      : trail === null
+        ? "normal"
+        : trail.edges.has(id)
+          ? "trail"
+          : "dim";
 
   return (
     <div
-      aria-label="Pipeline canvas"
+      aria-label={readOnly ? "Pipeline canvas, as the run started" : "Pipeline canvas"}
       className="relative size-full touch-none select-none overflow-clip bg-background"
       onPointerCancel={onPointerCancel}
       onPointerDown={onBackgroundPointerDown}
@@ -470,37 +650,17 @@ export function Canvas({
     >
       <svg aria-hidden="true" className="absolute inset-0 size-full overflow-visible">
         <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
-          {drawn.map(({ edge, curve }) => {
-            const selected = edge.id === selectedEdge;
-            const onTrail = trail?.edges.has(edge.id) ?? false;
-            const dimmed = trail !== null && !onTrail;
-            const stroke =
-              selected || onTrail ? "var(--color-primary)" : "var(--color-muted-foreground)";
-            const end = curve[3];
-            return (
-              <g key={edge.id} opacity={dimmed ? 0.4 : 1}>
-                <path
-                  d={curvePath(curve)}
-                  fill="none"
-                  stroke={stroke}
-                  strokeWidth={selected || onTrail ? 2.5 : 1.5}
-                />
-                <path
-                  d={`M ${end.x - 7} ${end.y - 4} L ${end.x} ${end.y} L ${end.x - 7} ${end.y + 4} Z`}
-                  fill={stroke}
-                />
-                <path
-                  className="cursor-pointer"
-                  d={curvePath(curve)}
-                  fill="none"
-                  onPointerDown={(event) => onEdgePointerDown(event, edge)}
-                  pointerEvents="stroke"
-                  stroke="transparent"
-                  strokeWidth={14}
-                />
-              </g>
-            );
-          })}
+          {drawn.map(({ edge, d, end }) => (
+            <EdgePath
+              d={d}
+              endX={end.x}
+              endY={end.y}
+              handlers={handlers}
+              id={edge.id}
+              key={edge.id}
+              look={lookOf(edge.id)}
+            />
+          ))}
           {preview !== null ? (
             <path
               d={curvePath(previewCurve(preview.from, preview.to))}
@@ -513,38 +673,30 @@ export function Canvas({
         </g>
       </svg>
       <div className="absolute left-0 top-0 origin-top-left" style={{ transform }}>
-        {drawn.map(({ edge, label }) => {
-          const edgeProblems = problemsOfEdge(edge.id);
-          return (
-            <button
-              aria-label={`Transition ${edge.port} from ${edge.from} to ${edge.to}`}
-              aria-pressed={edge.id === selectedEdge}
-              className={cn(
-                "absolute flex -translate-x-1/2 -translate-y-1/2 items-center gap-1 whitespace-nowrap rounded-sm border bg-background px-1 text-xs text-muted-foreground",
-                edge.id === selectedEdge && "border-primary text-foreground",
-              )}
-              key={edge.id}
-              onPointerDown={(event) => onEdgePointerDown(event, edge)}
-              style={{ left: label.x, top: label.y }}
-              type="button"
-            >
-              {edgeLabelText(edge, taken)}
-              <ProblemDot problems={edgeProblems} />
-            </button>
-          );
-        })}
+        {drawn.map(({ edge, label }) => (
+          <EdgeLabel
+            handlers={handlers}
+            id={edge.id}
+            key={edge.id}
+            name={`Transition ${edge.port} from ${edge.from} to ${edge.to}`}
+            problems={problemsByEdge.get(edge.id) ?? NO_PROBLEMS}
+            selected={edge.id === selectedEdge}
+            text={edgeLabelText(edge, taken)}
+            x={label.x}
+            y={label.y}
+          />
+        ))}
         {rects.map(({ node, rect }) => (
           <NodeCard
             connected={connectedPorts.get(node.id) ?? NO_PORTS}
+            handlers={handlers}
+            height={rect.height}
             key={node.id}
             kinds={kinds}
             mark={markOf(node.id)}
             node={node}
-            onNodePointerDown={onNodePointerDown}
-            onPortPointerDown={onPortPointerDown}
-            ports={portsByNode.get(node.id) ?? []}
-            problems={problemsOfNode(node.id)}
-            rect={rect}
+            ports={portsOfKind(node.kind)}
+            problems={problemsByNode.get(node.id) ?? NO_PROBLEMS}
             selected={node.id === selectedNode}
           />
         ))}
@@ -575,7 +727,18 @@ export function Canvas({
         <Button aria-label="Fit to view" onClick={fit} size="icon-xs" variant="ghost">
           <MaximizeIcon />
         </Button>
+        {readOnly ? null : (
+          <Button onClick={tidy} size="xs" variant="ghost">
+            <LayoutGridIcon />
+            Tidy
+          </Button>
+        )}
       </div>
+      {readOnly ? (
+        <p className="absolute right-3 top-3 rounded-md border bg-popover px-2 py-1 text-xs text-muted-foreground">
+          The pipeline as this run started. Go back to Inspect to edit.
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -61,9 +61,18 @@ export type SkillInfo = {
   readonly path: string;
 };
 
+/** A pipeline a new one can start from, as the catalog serves it. */
+export type PipelineTemplate = {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+  readonly pipeline: Pipeline;
+};
+
 export type Catalog = {
   readonly kinds: ReadonlyArray<KindInfo>;
   readonly skills: ReadonlyArray<SkillInfo>;
+  readonly templates: ReadonlyArray<PipelineTemplate>;
 };
 
 export type Problem = {
@@ -83,7 +92,11 @@ export type PipelineListItem = {
   readonly edges: number;
   readonly errors: number;
   readonly warnings: number;
-  readonly updatedAt: string;
+  /** ISO time, or null when the server could not tell. */
+  readonly updatedAt: string | null;
+  /** The file did not decode: `name` is the id, the counts are 0, and `decodeErrors` says why. */
+  readonly unreadable?: true;
+  readonly decodeErrors?: ReadonlyArray<DecodeError>;
 };
 
 export type PipelineRecord = {

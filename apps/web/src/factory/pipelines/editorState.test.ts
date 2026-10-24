@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { editorReducer, initialEditorState, isDirty, type EditorState } from "./editorState";
+import {
+  HISTORY_LIMIT,
+  canRedo,
+  canUndo,
+  editorReducer,
+  initialEditorState,
+  isDirty,
+  type EditorState,
+} from "./editorState";
 import type { Pipeline } from "./types";
 
 const PIPELINE: Pipeline = {
@@ -117,5 +125,101 @@ describe("editorReducer", () => {
     );
     expect(state.pipeline.edges.map((edge) => edge.id)).toEqual(["e2"]);
     expect(state.pipeline.nodes).toHaveLength(3);
+  });
+
+  it("moves every node Tidy names in one change", () => {
+    const start = initialEditorState(PIPELINE);
+    const state = reduce(start, {
+      type: "layout",
+      positions: { start: { x: 40, y: 40 }, build: { x: 280, y: 40 } },
+    });
+    expect(state.pipeline.nodes.map(({ x, y }) => [x, y])).toEqual([
+      [40, 40],
+      [280, 40],
+      [520, 200],
+    ]);
+    expect(isDirty(state)).toBe(true);
+    expect(reduce(start, { type: "layout", positions: { done: { x: 520, y: 200 } } })).toBe(start);
+  });
+
+  it("never gives a deleted edge's id to a new one", () => {
+    const state = reduce(
+      initialEditorState(PIPELINE),
+      { type: "select", selection: { kind: "edge", id: "e2" } },
+      { type: "remove-selection" },
+      { type: "connect", from: "build", port: "stop", to: "done" },
+    );
+    expect(state.pipeline.edges.map((edge) => edge.id)).toEqual(["e1", "e3"]);
+  });
+});
+
+describe("undo", () => {
+  const rename = (name: string, at: number) =>
+    ({ type: "rename", name, edit: { key: "name", at } }) as const;
+
+  it("undoes and redoes a structural edit, and is clean back at the saved pipeline", () => {
+    const start = initialEditorState(PIPELINE);
+    const added = reduce(start, { type: "add-node", kind: "verify", x: 0, y: 0 });
+    const undone = reduce(added, { type: "undo" });
+    expect(undone.pipeline).toBe(PIPELINE);
+    expect(isDirty(undone)).toBe(false);
+    expect(undone.selection).toBeNull();
+    expect(canRedo(undone)).toBe(true);
+    const redone = reduce(undone, { type: "redo" });
+    expect(redone.pipeline).toBe(added.pipeline);
+    expect(canRedo(redone)).toBe(false);
+  });
+
+  it("joins edits to one field within half a second into one step", () => {
+    const state = reduce(
+      initialEditorState(PIPELINE),
+      rename("Q", 0),
+      rename("Qu", 200),
+      rename("Que", 650),
+      rename("Quea", 1_500),
+    );
+    expect(state.past.map((pipeline) => pipeline.name)).toEqual(["P", "Que"]);
+    expect(reduce(state, { type: "undo" }).pipeline.name).toBe("Que");
+  });
+
+  it("does not join edits to different fields", () => {
+    const node = PIPELINE.nodes[1]!;
+    const state = reduce(initialEditorState(PIPELINE), rename("Q", 0), {
+      type: "update-node",
+      node: { ...node, label: "B" },
+      edit: { key: "node build label", at: 100 },
+    });
+    expect(state.past).toHaveLength(2);
+  });
+
+  it("drops what was undone once something new is done", () => {
+    const state = reduce(
+      initialEditorState(PIPELINE),
+      { type: "move-node", id: "build", x: 8, y: 8 },
+      { type: "undo" },
+      { type: "move-node", id: "done", x: 16, y: 16 },
+    );
+    expect(canRedo(state)).toBe(false);
+    expect(canUndo(state)).toBe(true);
+  });
+
+  it("keeps at most fifty steps", () => {
+    const moves = Array.from({ length: HISTORY_LIMIT + 10 }, (_, i) => ({
+      type: "move-node" as const,
+      id: "build",
+      x: (i + 1) * 8,
+      y: 200,
+    }));
+    const state = reduce(initialEditorState(PIPELINE), ...moves);
+    expect(state.past).toHaveLength(HISTORY_LIMIT);
+  });
+
+  it("does not record selecting or a no-op", () => {
+    const state = reduce(
+      initialEditorState(PIPELINE),
+      { type: "select", selection: { kind: "node", id: "build" } },
+      { type: "move-node", id: "build", x: 280, y: 200 },
+    );
+    expect(canUndo(state)).toBe(false);
   });
 });
