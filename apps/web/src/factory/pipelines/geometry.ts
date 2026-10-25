@@ -110,6 +110,7 @@ export const hitTest = (
 const SLOT_GAP = 32;
 const SLOT_ROW = 200;
 const SLOTS_PER_ROW = 6;
+const MAX_SLOT_ROWS = 60;
 
 const overlaps = (a: Rect, b: Rect, gap: number): boolean =>
   a.x < b.x + b.width + gap &&
@@ -127,18 +128,23 @@ export const freeSlot = (
   start: Point,
 ): Point => {
   const origin = { x: snap(start.x), y: snap(start.y) };
-  for (let row = 0; ; row++) {
+  // `size` is often a measured rect with its own x and y; only its extent is wanted.
+  const { width, height } = size;
+  // Bounded: a canvas is never this full, and an unbounded search once hung the page.
+  for (let row = 0; row < MAX_SLOT_ROWS; row++) {
     for (let column = 0; column < SLOTS_PER_ROW; column++) {
       const candidate = {
         x: origin.x + column * (NODE_WIDTH + SLOT_GAP),
         y: origin.y + row * SLOT_ROW,
-        ...size,
+        width,
+        height,
       };
       if (!occupied.some((rect) => overlaps(candidate, rect, SLOT_GAP / 2))) {
         return { x: candidate.x, y: candidate.y };
       }
     }
   }
+  return { x: origin.x, y: origin.y + MAX_SLOT_ROWS * SLOT_ROW };
 };
 
 /** Where a node added "after" `rect` starts looking for a free slot: one gap to its right. */

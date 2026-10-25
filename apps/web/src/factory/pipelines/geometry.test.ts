@@ -143,6 +143,22 @@ describe("freeSlot", () => {
     expect(freeSlot(row, size, { x: 0, y: 0 })).toEqual({ x: 0, y: 200 });
   });
 
+  it("takes the size from a rect that carries its own x and y, and still moves", () => {
+    // The editor passes a measured node rect as the size. Its x and y are 0, and must not pin
+    // every candidate to the origin: with a node at the origin that never ends.
+    const measured = nodeRect({ x: 0, y: 0 }, 2);
+    const slot = freeSlot([at(40, 40, 1)], measured, { x: 40, y: 40 });
+    expect(slot).toEqual({ x: 40 + NODE_WIDTH + 32, y: 40 });
+  });
+
+  it("gives up on a wall of nodes after a bounded search instead of spinning", () => {
+    const wall = Array.from({ length: 6 * 60 }, (_, i) =>
+      at((i % 6) * (NODE_WIDTH + 32), Math.floor(i / 6) * 200),
+    );
+    const slot = freeSlot(wall, size, { x: 0, y: 0 });
+    expect(slot.y).toBeGreaterThanOrEqual(60 * 200);
+  });
+
   it("starts after a node one gap to its right, level with it", () => {
     const node = at(280, 200);
     expect(afterRect(node)).toEqual({ x: 280 + NODE_WIDTH + 32, y: 200 });
