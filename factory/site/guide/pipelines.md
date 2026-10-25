@@ -13,7 +13,7 @@ New pipeline offers a blank canvas and three templates: Brief and gate (one agen
 
 ## Nodes
 
-Add a node from the Add menu, drag it where you want it, and fill it in on the right.
+Add a node from the Add menu, drag it where you want it, and fill it in on the right. Tidy, next to the zoom controls, lays the whole graph out again in columns from Start. Undo and redo work as in any editor.
 
 | Node             | What it does                                                                              | Ways out                             |
 | ---------------- | ----------------------------------------------------------------------------------------- | ------------------------------------ |
@@ -39,7 +39,7 @@ An outcome with no transition ends the run stuck, and the editor warns about it.
 
 The editor validates as you edit. Errors (a missing brief, a loop without a limit, a skill this machine does not have) stop a run from starting; warnings do not.
 
-Simulate walks the graph with outcomes you pick. Turn it on, and the current node's outcomes become buttons. Click them to follow the run, watch the loop counts on the transitions, and see where it ends. Happy path picks the first outcome every time. What the simulation shows is what a run does, because they share the same interpreter.
+Simulate walks the graph with outcomes you pick. Turn it on, and the current node's outcomes become buttons. Click them to follow the run, watch the loop counts on the transitions, and see where it ends. Happy path picks the outcome that moves the work on at every node: done, pass, answered, merged. What the simulation shows is what a run does, because they share the same interpreter.
 
 <img class="screenshot light-only" src="/screenshots/pipeline-simulation-light.png" alt="Simulation of the Learning loop: the happy path walked to the done end, every transition it took counted, and the steps listed in the inspector" />
 <img class="screenshot dark-only" src="/screenshots/pipeline-simulation-dark.png" alt="Simulation of the Learning loop: the happy path walked to the done end, every transition it took counted, and the steps listed in the inspector" />

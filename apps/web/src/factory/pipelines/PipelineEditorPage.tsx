@@ -3,6 +3,8 @@ import { Link, useBlocker } from "@tanstack/react-router";
 import { ChevronDownIcon, PlayIcon, PlusIcon, SaveIcon, WorkflowIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useReducer, useRef, useState, type ReactNode } from "react";
 
+import { useMediaQuery } from "~/hooks/useMediaQuery";
+
 import { WorkspacePageHeader } from "~/components/WorkspacePageHeader";
 import { Alert, AlertDescription } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
@@ -320,6 +322,8 @@ function Editor({
     setRunId(null);
   };
 
+  const stacked = useMediaQuery("max-sm");
+
   const addNode = (kind: Kind) => {
     const rectOf = (node: (typeof pipeline.nodes)[number]) =>
       nodeRect(node, portsOf(kinds, node.kind).length);
@@ -411,12 +415,51 @@ function Editor({
       : undefined;
   const selectedName = selectedNode === undefined ? null : nodeName(kinds, selectedNode);
 
+  const actions = (
+    <div className="ml-auto flex shrink-0 items-center gap-1.5">
+      <Menu>
+        <MenuTrigger render={<Button size="xs" variant="outline" />}>
+          <PlusIcon />
+          Add
+          <ChevronDownIcon />
+        </MenuTrigger>
+        <MenuPopup align="end">
+          {addable.map((info) => (
+            <MenuItem key={info.kind} onClick={() => addNode(info.kind)}>
+              <span className="flex flex-col">
+                <span>{info.label}</span>
+                <span className="text-xs text-muted-foreground">{info.description}</span>
+              </span>
+            </MenuItem>
+          ))}
+        </MenuPopup>
+      </Menu>
+      <Button
+        aria-pressed={simulating}
+        onClick={toggleSimulation}
+        size="xs"
+        variant={simulating ? "secondary" : "outline"}
+      >
+        <WorkflowIcon />
+        Simulate
+      </Button>
+      <Button onClick={() => setRunOpen(true)} size="xs" variant="outline">
+        <PlayIcon />
+        Run
+      </Button>
+      <Button disabled={!dirty || saving} onClick={() => void save()} size="xs">
+        <SaveIcon />
+        Save
+      </Button>
+    </div>
+  );
+
   const header = (
     <div className="flex min-w-0 flex-1 items-center gap-2">
       {backLink}
       <Input
         aria-label="Pipeline name"
-        className="w-56 min-w-0"
+        className="w-56 min-w-0 max-sm:w-32"
         onChange={(event) =>
           dispatch({
             type: "rename",
@@ -428,47 +471,14 @@ function Editor({
         value={pipeline.name}
       />
       <StatusChip checkError={checkError} onPick={pickProblem} problems={problems} />
-      <div className="ml-auto flex shrink-0 items-center gap-1.5">
-        <Menu>
-          <MenuTrigger render={<Button size="xs" variant="outline" />}>
-            <PlusIcon />
-            Add
-            <ChevronDownIcon />
-          </MenuTrigger>
-          <MenuPopup align="end">
-            {addable.map((info) => (
-              <MenuItem key={info.kind} onClick={() => addNode(info.kind)}>
-                <span className="flex flex-col">
-                  <span>{info.label}</span>
-                  <span className="text-xs text-muted-foreground">{info.description}</span>
-                </span>
-              </MenuItem>
-            ))}
-          </MenuPopup>
-        </Menu>
-        <Button
-          aria-pressed={simulating}
-          onClick={toggleSimulation}
-          size="xs"
-          variant={simulating ? "secondary" : "outline"}
-        >
-          <WorkflowIcon />
-          Simulate
-        </Button>
-        <Button onClick={() => setRunOpen(true)} size="xs" variant="outline">
-          <PlayIcon />
-          Run
-        </Button>
-        <Button disabled={!dirty || saving} onClick={() => void save()} size="xs">
-          <SaveIcon />
-          Save
-        </Button>
-      </div>
+      {stacked ? null : actions}
     </div>
   );
 
   return (
     <EditorFrame header={header}>
+      {/* The topbar has a fixed height, so on a phone the actions get a row of their own. */}
+      {stacked ? <div className="flex items-center border-t px-3 py-2">{actions}</div> : null}
       {saveError ? (
         <div className="border-t px-3 py-2">
           <Alert variant="error">
@@ -530,7 +540,7 @@ function Editor({
                   trace={trace}
                 />
               ) : null}
-              {panel === "inspect" ? (
+              {panel === "inspect" && (!simulating || selection !== null) ? (
                 <Inspector
                   key={selection === null ? "none" : `${selection.kind} ${selection.id}`}
                   kinds={kinds}
