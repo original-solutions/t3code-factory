@@ -201,7 +201,7 @@ describe("PipelineEditorPage", () => {
     using _api = setup();
     await using _screen = await mount();
     await expect.element(browser.getByRole("button", { name: "Start node" })).toBeVisible();
-    await expect.element(browser.getByRole("button", { name: "End node" })).toBeVisible();
+    await expect.element(browser.getByRole("button", { name: "Done node" })).toBeVisible();
     await expect
       .element(browser.getByRole("button", { name: "Transition next from start to build" }))
       .toBeVisible();
@@ -360,15 +360,17 @@ describe("PipelineEditorPage", () => {
   it("deletes the selected node with Delete, and Escape clears the selection", async () => {
     using _api = setup();
     await using _screen = await mount();
-    await userEvent.click(browser.getByRole("button", { name: "End node" }));
+    await userEvent.click(browser.getByRole("button", { name: "Done node" }));
     await expect.element(browser.getByRole("button", { name: "Delete node" })).toBeVisible();
     await userEvent.keyboard("{Escape}");
     await expect
       .element(browser.getByRole("button", { name: "Delete node" }))
       .not.toBeInTheDocument();
-    await userEvent.click(browser.getByRole("button", { name: "End node" }));
+    await userEvent.click(browser.getByRole("button", { name: "Done node" }));
     await userEvent.keyboard("{Delete}");
-    await expect.element(browser.getByRole("button", { name: "End node" })).not.toBeInTheDocument();
+    await expect
+      .element(browser.getByRole("button", { name: "Done node" }))
+      .not.toBeInTheDocument();
     await expect
       .element(browser.getByRole("button", { name: "Transition done from build to done" }))
       .not.toBeInTheDocument();
@@ -394,7 +396,7 @@ describe("PipelineEditorPage", () => {
     await userEvent.click(browser.getByRole("button", { name: "Runs (1)" }));
     await userEvent.click(browser.getByRole("button", { name: /\/work\/factory/ }));
     await expect.element(browser.getByRole("list", { name: "Run events" })).toBeVisible();
-    const end = browser.getByRole("button", { name: "End node" });
+    const end = browser.getByRole("button", { name: "Done node" });
     await expect.element(end).toHaveAttribute("aria-current", "step");
     await userEvent.click(browser.getByRole("button", { name: "Inspect" }));
     await expect.element(end).not.toHaveAttribute("aria-current");
@@ -420,14 +422,18 @@ describe("PipelineEditorPage", () => {
   it("undoes and redoes an edit from the keyboard", async () => {
     using _api = setup();
     await using _screen = await mount();
-    await userEvent.click(browser.getByRole("button", { name: "End node" }));
+    await userEvent.click(browser.getByRole("button", { name: "Done node" }));
     await userEvent.keyboard("{Delete}");
-    await expect.element(browser.getByRole("button", { name: "End node" })).not.toBeInTheDocument();
+    await expect
+      .element(browser.getByRole("button", { name: "Done node" }))
+      .not.toBeInTheDocument();
     await userEvent.keyboard("{Control>}z{/Control}");
-    await expect.element(browser.getByRole("button", { name: "End node" })).toBeVisible();
+    await expect.element(browser.getByRole("button", { name: "Done node" })).toBeVisible();
     await expect.element(browser.getByRole("button", { name: "Save" })).toBeDisabled();
     await userEvent.keyboard("{Control>}{Shift>}z{/Shift}{/Control}");
-    await expect.element(browser.getByRole("button", { name: "End node" })).not.toBeInTheDocument();
+    await expect
+      .element(browser.getByRole("button", { name: "Done node" }))
+      .not.toBeInTheDocument();
   });
 
   it("asks before leaving with unsaved edits, and not when clean", async () => {
@@ -484,10 +490,10 @@ describe("PipelineEditorPage", () => {
   it("selects a node from the keyboard", async () => {
     using _api = setup();
     await using _screen = await mount();
-    browser.getByRole("button", { name: "End node" }).element().focus();
+    browser.getByRole("button", { name: "Done node" }).element().focus();
     await userEvent.keyboard("{Enter}");
     await expect
-      .element(browser.getByRole("button", { name: "End node" }))
+      .element(browser.getByRole("button", { name: "Done node" }))
       .toHaveAttribute("aria-pressed", "true");
     await expect.element(browser.getByRole("button", { name: "Delete node" })).toBeVisible();
   });

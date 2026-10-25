@@ -94,7 +94,9 @@ function PipelineRow({
       >
         {pipeline.name}
       </TouchLink>
-      <span className="font-mono text-xs text-muted-foreground">{pipeline.id}</span>
+      {pipeline.name === pipeline.id ? null : (
+        <span className="font-mono text-xs text-muted-foreground">{pipeline.id}</span>
+      )}
       {pipeline.unreadable ? null : (
         <span className="text-xs text-muted-foreground">
           {plural(pipeline.nodes, "node")} · {plural(pipeline.edges, "transition")}

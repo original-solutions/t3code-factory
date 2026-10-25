@@ -73,9 +73,18 @@ export const hasOwnLabel = (kinds: ReadonlyArray<KindInfo>, node: PipelineNode):
   node.label.trim() !== "" &&
   node.label.trim().toLowerCase() !== kindLabel(kinds, node.kind).toLowerCase();
 
-/** A node's name for people: its label, else its kind's. */
+/**
+ * A node's name for people: its label, else its kind's. An unlabelled end is named by its result,
+ * so the two ends a template starts with do not read and announce as the same "End".
+ */
 export const nodeName = (kinds: ReadonlyArray<KindInfo>, node: PipelineNode): string =>
-  hasOwnLabel(kinds, node) ? node.label!.trim() : kindLabel(kinds, node.kind);
+  hasOwnLabel(kinds, node)
+    ? node.label!.trim()
+    : node.kind === "end"
+      ? node.result === "done"
+        ? "Done"
+        : "Stuck"
+      : kindLabel(kinds, node.kind);
 
 export const portsOf = (kinds: ReadonlyArray<KindInfo>, kind: Kind): ReadonlyArray<string> =>
   kinds.find((info) => info.kind === kind)?.ports.map((port) => port.name) ?? [];

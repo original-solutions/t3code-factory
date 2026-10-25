@@ -91,10 +91,20 @@ describe("nodeName", () => {
   const end = { id: "done", kind: "end", result: "done", x: 0, y: 0 } as const;
 
   it("is the label when the node has one of its own, else the kind", () => {
+    const start = { id: "start", kind: "start", x: 0, y: 0 } as const;
+    const startKinds: ReadonlyArray<KindInfo> = [
+      { kind: "start", label: "Start", description: "", ports: [], instructions: "none" },
+    ];
     expect(nodeName(kinds, { ...end, label: "Shipped" })).toBe("Shipped");
-    expect(nodeName(kinds, end)).toBe("End");
-    expect(nodeName(kinds, { ...end, label: "end" })).toBe("End");
-    expect(nodeName(kinds, { ...end, label: "  " })).toBe("End");
+    expect(nodeName(startKinds, start)).toBe("Start");
+    expect(nodeName(startKinds, { ...start, label: "start" })).toBe("Start");
+  });
+
+  it("names an unlabelled end by its result, so two ends never share a name", () => {
+    expect(nodeName(kinds, end)).toBe("Done");
+    expect(nodeName(kinds, { ...end, id: "stuck", result: "stuck" })).toBe("Stuck");
+    expect(nodeName(kinds, { ...end, label: "end" })).toBe("Done");
+    expect(nodeName(kinds, { ...end, label: "  " })).toBe("Done");
   });
 });
 
