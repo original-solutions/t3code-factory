@@ -51,7 +51,7 @@ const findCause = <A>(error: unknown, is: (value: unknown) => value is A): A | u
   return undefined;
 };
 
-// A full disk fails the append partway through a command (#186). The command must fail with the
+// A full disk fails the append partway through a command. The command must fail with the
 // SQLite condition kept, so the failure is visible where it is logged, and nothing is committed.
 it.effect("a full database fails the command with the SQLite code kept on the append error", () =>
   Effect.gen(function* () {

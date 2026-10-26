@@ -21,7 +21,7 @@ import * as Stream from "effect/Stream";
 
 import * as AttentionService from "./attention.ts";
 import { Attention, CONFIG_ITEM_ID, type NewItem, type PassOutcome } from "./attention.ts";
-import { loadHandPause } from "./claims.ts";
+import { loadHandPause, loadPendingDeploy } from "./claims.ts";
 import {
   DEFAULT_POLL_SECONDS,
   formatConfigError,
@@ -59,11 +59,13 @@ import {
   abandonedItem,
   errorKind,
   gateQueued,
+  lastGoodCopy,
   plain,
   runPass,
   stuckItem,
   stuckLine,
   type BrokenThreadMemo,
+  type LastGood,
   type PassError,
   type PassWorld,
   type Repo,
@@ -108,6 +110,7 @@ import {
   makeGitHub,
   type GitHubError,
   type IssueSummary,
+  isNotReceived,
 } from "./tracker/github.ts";
 
 // server.ts imports this module before it builds a layer, so from here on a full disk under
@@ -167,6 +170,13 @@ const asPassError =
     message: `${prefix}${error.message}`,
   });
 
+/** The pass error of a failed tracker call, marked transient when GitHub never received it. */
+const asTrackerPassError = (error: GitHubError): PassError => ({
+  kind: "tracker",
+  message: error.message,
+  transient: isNotReceived(error),
+});
+
 const byNumber = (a: number, b: number) => a - b;
 
 /** The numbers of the issues nobody is assigned to, by number. */
@@ -219,6 +229,7 @@ const projectFromBase = Effect.fn("Factory.projectFromBase")(function* (
     Effect.mapError((error): ProjectReadError => ({
       kind: "config",
       message: `cannot read ${PROJECT_CONFIG_PATH} from GitHub: ${error.message}`,
+      transient: isNotReceived(error),
       errors: [
         {
           file: PROJECT_CONFIG_PATH,
@@ -300,11 +311,10 @@ const MOVED_WORDS: Record<Moved, string> = {
 };
 
 /**
- * The run's line when the re-gate of its `pr-open` pull request, started in the background, has
- * ended; null for a quiet one, which says nothing. A pass or a failure starts with what started the
- * re-gate: the pull request's head moved, the head and the base branch, a conflict GitHub reported,
- * a re-gate an earlier version began, or (when no pass was on record to compare with) that there
- * was none.
+ * The run's line when the background re-gate of its `pr-open` pull request has ended; null for a
+ * quiet one. A pass or failure starts with what started the re-gate: the head moved, the head and
+ * base, a reported conflict, a re-gate an earlier version began, or no pass on record to compare
+ * with.
  */
 export const regateWords = (
   run: string,
@@ -371,6 +381,8 @@ export interface LiveShared {
   readonly claimMemo: ClaimMemo;
   readonly stuckReads: Map<string, number>;
   readonly brokenThreads: BrokenThreadMemo;
+  readonly configSkips: Map<string, number>;
+  readonly lastGood: Map<string, LastGood>;
 }
 
 /**
@@ -405,11 +417,13 @@ export const liveWorld = (
   gateRemoteBase?: string,
   onProject?: (repo: string, reading: RepoConfigReading) => void,
   // Built once per process by the factory, so a reload's new world goes on from the old one's.
-  { gating, claimMemo, stuckReads, brokenThreads }: LiveShared = {
+  { gating, claimMemo, stuckReads, brokenThreads, configSkips, lastGood }: LiveShared = {
     gating: new Set(),
     claimMemo: new ClaimMemo(),
     stuckReads: new Map(),
     brokenThreads: { notFactory: new Set(), unsettled: new Map() },
+    configSkips: new Map(),
+    lastGood: new Map(),
   },
 ): Omit<PassWorld, "watchedRepos" | "freeSpace"> => {
   const load = live.readLoad ?? readLoad;
@@ -572,12 +586,23 @@ export const liveWorld = (
           Effect.sync(() => onProject?.(watched.repo, { kind: "ok", project })),
         ),
         Effect.tapError((error) =>
-          Effect.sync(() => onProject?.(watched.repo, { kind: "errors", errors: error.errors })),
+          // A transient failure with a last good copy says nothing new about the config: the
+          // pass runs on that copy and the last reading stands. Without a copy the repo is
+          // skipped, and the reading says why.
+          lastGoodCopy(lastGood, watched.repo, "project", error) !== undefined
+            ? Effect.void
+            : Effect.sync(() =>
+                onProject?.(watched.repo, { kind: "errors", errors: error.errors }),
+              ),
         ),
-        Effect.mapError((error): PassError => ({ kind: error.kind, message: error.message })),
+        Effect.mapError((error): PassError => ({
+          kind: error.kind,
+          message: error.message,
+          ...(error.transient === undefined ? {} : { transient: error.transient }),
+        })),
       ),
     trackerUser: (watched) =>
-      withProcess(githubFor(watched).login()).pipe(Effect.mapError(asPassError("tracker"))),
+      withProcess(githubFor(watched).login()).pipe(Effect.mapError(asTrackerPassError)),
     unfinishedRuns: (only) => ledger(() => listUnfinishedRuns(dataDir, only)),
     readyIssues: (repo: Repo) =>
       withProcess(githubFor(repo.watched).listIssues("ready")).pipe(
@@ -607,12 +632,10 @@ export const liveWorld = (
         })),
         Effect.mapError(asPassError("tracker")),
       ),
-    // The comment first, then the label, as a refusal does: a label call that fails leaves the
-    // issue where a later pass finds it again. The comment counts as already posted, as
-    // `alreadySaid` counts a refusal, only when it is the issue's newest factory comment and was
-    // created after the label event that began this claim; an older one explained an earlier
-    // claim. A label time that cannot be read posts the comment: at-least-once beats an
-    // unexplained move.
+    // Comment first, then label, as a refusal does: a failed label call leaves the issue where a
+    // later pass finds it again. The comment counts as already posted only when it is the issue's
+    // newest factory comment and newer than the label event that began this claim. An unreadable
+    // label time posts it: at-least-once beats an unexplained move.
     releaseClaim: (repo: Repo, issue: number, from: State) => {
       const gh = githubFor(repo.watched);
       return tracker(
@@ -682,11 +705,14 @@ export const liveWorld = (
     feedback: (repo, run, base) => feedback(gateContext(repo, runProject(repo.project, base)), run),
     recordError,
     handPause: () => loadHandPause(dataDir),
+    pendingDeploy: () => loadPendingDeploy(dataDir),
     threadsOnBrokenWorktrees: () =>
       sessions.brokenWorktrees.pipe(Effect.mapError(asPassError("t3"))),
     sessionRuns: () =>
       ledger(() => runsByThread(dataDir)).pipe(Effect.mapError(asPassError("ledger"))),
     brokenThreads,
+    configSkips,
+    lastGood,
     archiveThread: (threadId) =>
       sessions.archive(threadId).pipe(Effect.mapError(asPassError("t3"))),
     nowMs: clock,
@@ -857,6 +883,8 @@ const startFactory = Effect.fn("Factory.startFactory")(function* (options: Runti
     claimMemo: new ClaimMemo(),
     stuckReads: new Map(),
     brokenThreads: { notFactory: new Set(), unsettled: new Map() },
+    configSkips: new Map(),
+    lastGood: new Map(),
   };
   // The threads of the unfinished runs, read at start and after every pass: a pass is what
   // launches and finishes sessions, so between passes the set does not change.

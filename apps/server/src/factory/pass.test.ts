@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 import { describe } from "vite-plus/test";
 
 import type { Attention, AttentionItem } from "./attention.ts";
-import type { HandPause } from "./claims.ts";
+import type { HandPause, PendingDeploy } from "./claims.ts";
 import {
   timeLimitOnlyProjectConfig,
   type MachineConfig,
@@ -31,10 +31,12 @@ import { newRunId, runIdToString, type RunId } from "./ledger/runId.ts";
 import { useTempDirs } from "./ledger/testSupport.ts";
 import { formatTs } from "./ledger/time.ts";
 import {
+  PENDING_STALE_MS,
   STUCK_READ_EVERY_MS,
   UNSETTLED_READ_EVERY_MS,
   runPass,
   type BrokenThreadMemo,
+  type LastGood,
   type Loaded,
   type PassError,
   type GateStart,
@@ -80,6 +82,7 @@ const machine = (max: number): MachineConfig => ({
   notify: true,
   minFreeGib: 10,
   maxLoadPerCore: 1,
+  deployWaitMinutes: 120,
 });
 
 const GIB = 1024 ** 3;
@@ -122,6 +125,10 @@ const NOTHING_SENT: ForwardOutcome = {
 class Fake implements PassWorld {
   projects: Record<string, ProjectConfig | string> = {};
   trackerUsers: Record<string, string | { error: string }> = {};
+  /** Repos whose project config or tracker login failure is one GitHub never received. */
+  transient = new Set<string>();
+  /** A login failure is never transient, whatever `transient` says for the config. */
+  loginHard = false;
   runs: Array<RunInfo> = [];
   runsError = false;
   ready: Answers<Array<number>> = {};
@@ -147,6 +154,10 @@ class Fake implements PassWorld {
   /** What `takeStopRequest` answers per `"<repo>#<issue>"`; `none` otherwise. */
   stopRequests: Record<string, StopRequestOutcome | LedgerIoError> = {};
   pause: HandPause | null = null;
+  /** The build autodeploy has waiting, if any. */
+  pending: PendingDeploy | null = null;
+  /** The machine's `deploy_wait_minutes` for the passes `pass` runs. */
+  deployWaitMinutes = 120;
   /** The free bytes `freeSpace` reports; `"error"` is a probe that fails. */
   free: number | "error" = 100 * GIB;
   /** The machine's `min_free_gib` for the passes `pass` runs. */
@@ -264,7 +275,11 @@ class Fake implements PassWorld {
     this.projected.push(watched.repo);
     const found = this.projects[watched.repo];
     if (typeof found === "string") {
-      return Effect.fail<PassError>({ kind: "config", message: found });
+      return Effect.fail<PassError>({
+        kind: "config",
+        message: found,
+        transient: this.transient.has(watched.repo),
+      });
     }
     return Effect.succeed(found ?? project());
   }
@@ -273,7 +288,11 @@ class Fake implements PassWorld {
     this.calls.push("tracker_user");
     const found = this.trackerUsers[watched.repo];
     if (typeof found === "object") {
-      return Effect.fail<PassError>({ kind: "tracker", message: found.error });
+      return Effect.fail<PassError>({
+        kind: "tracker",
+        message: found.error,
+        transient: this.transient.has(watched.repo) && !this.loginHard,
+      });
     }
     return Effect.succeed(found ?? "rawphp");
   }
@@ -516,6 +535,10 @@ class Fake implements PassWorld {
     return this.pause;
   }
 
+  pendingDeploy() {
+    return this.pending;
+  }
+
   /** The live threads on a broken worktree; an archived thread leaves the list. */
   onBroken: Array<ThreadOnBrokenWorktree> = [];
   brokenFails = false;
@@ -526,6 +549,8 @@ class Fake implements PassWorld {
   /** How often `sessionRuns` read the ledger. */
   sessionReads = 0;
   brokenThreads: BrokenThreadMemo = { notFactory: new Set(), unsettled: new Map() };
+  configSkips = new Map<string, number>();
+  lastGood = new Map<string, LastGood>();
   /** Threads T3 refuses to archive. */
   archiveRefused: Array<string> = [];
   /** Each thread `archiveThread` archived, in order. */
@@ -658,7 +683,12 @@ const pass = (
     const lines: Array<string> = [];
     const report = yield* runPass(
       fake,
-      { ...machine(max), minFreeGib: fake.minFreeGib, maxLoadPerCore: fake.maxLoadPerCore },
+      {
+        ...machine(max),
+        minFreeGib: fake.minFreeGib,
+        maxLoadPerCore: fake.maxLoadPerCore,
+        deployWaitMinutes: fake.deployWaitMinutes,
+      },
       (line) => lines.push(line),
     );
     return { report, lines };
@@ -903,6 +933,403 @@ describe("claiming new issues", () => {
       );
     }),
   );
+
+  describe("a repo whose config or login could not be re-read", () => {
+    const ITEM_ID = "config-not-loaded:rawphp/softfac";
+    const items = (fake: Fake) => fake.items.filter((item) => item.id === ITEM_ID);
+    const stale = (fake: Fake) => fake.events.filter((e) => e.event === "repo_config_stale");
+    const skipped = (fake: Fake) => fake.events.filter((e) => e.event === "repo_skipped");
+    const TLS = "net/http: TLS handshake timeout";
+
+    it.effect("a transient config failure after a good load runs on the last good copy", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.ready[REPO] = [1];
+        fake.pushStart(`${REPO}#1`, started(1));
+        fake.pushStart(`${REPO}#2`, started(2));
+        yield* pass(fake, [REPO], 3);
+        fake.ready[REPO] = [2];
+        fake.projects[REPO] = TLS;
+        fake.transient.add(REPO);
+        const { lines } = yield* pass(fake, [REPO], 3);
+        // The second pass started issue 2 on the config and login of the first.
+        assert.include(starts(fake), `start ${REPO}#2`);
+        assert.deepEqual(
+          stale(fake).map((e) => e.data),
+          [{ repo: REPO, what: "config", message: TLS }],
+        );
+        assert.deepEqual(skipped(fake), []);
+        assert.ok(
+          lines.some((l) =>
+            l.includes(`${REPO}: project config could not be re-read, using the last good copy`),
+          ),
+          lines.join("\n"),
+        );
+      }),
+    );
+
+    it.effect("a transient login failure after a good load runs on the last good login", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.ready[REPO] = [1];
+        fake.pushStart(`${REPO}#1`, started(1));
+        fake.pushStart(`${REPO}#2`, started(2));
+        yield* pass(fake, [REPO], 3);
+        fake.ready[REPO] = [2];
+        fake.trackerUsers[REPO] = { error: TLS };
+        fake.transient.add(REPO);
+        const { report } = yield* pass(fake, [REPO], 3);
+        assert.equal(report.errors, 0);
+        // The second pass started issue 2 on the config and login of the first.
+        assert.include(starts(fake), `start ${REPO}#2`);
+        assert.deepEqual(
+          stale(fake).map((e) => e.data),
+          [{ repo: REPO, what: "login", message: TLS }],
+        );
+        assert.deepEqual(skipped(fake), []);
+      }),
+    );
+
+    it.effect("a failure that is not transient skips the repo", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        yield* pass(fake, [REPO], 3);
+        fake.projects[REPO] = "invalid .dw/config.yml";
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(stale(fake), []);
+        assert.equal(skipped(fake).length, 1);
+      }),
+    );
+
+    it.effect("a config that fails for real is not brought back by a later blip", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        yield* pass(fake, [REPO], 3);
+        fake.projects[REPO] = "no .dw/config.yml on main";
+        yield* pass(fake, [REPO], 3);
+        assert.equal(skipped(fake).length, 1);
+        assert.equal(skipped(fake)[0]!.data.reason, "config-not-loaded");
+        fake.ready[REPO] = [2];
+        fake.pushStart(`${REPO}#2`, started(2));
+        fake.transient.add(REPO);
+        fake.projects[REPO] = TLS;
+        yield* pass(fake, [REPO], 3);
+        assert.equal(skipped(fake).length, 2);
+        assert.deepEqual(stale(fake), []);
+        assert.notInclude(starts(fake), `start ${REPO}#2`);
+      }),
+    );
+
+    it.effect("a login that fails for real is not brought back by a later blip", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        yield* pass(fake, [REPO], 3);
+        fake.trackerUsers[REPO] = { error: "HTTP 401: Bad credentials" };
+        const second = yield* pass(fake, [REPO], 3);
+        assert.equal(second.report.errors, 1);
+        assert.equal(errorEvents(fake).length, 1);
+        fake.transient.add(REPO);
+        fake.trackerUsers[REPO] = { error: TLS };
+        const third = yield* pass(fake, [REPO], 3);
+        assert.equal(third.report.errors, 1);
+        assert.equal(errorEvents(fake).length, 2);
+        assert.deepEqual(stale(fake), []);
+      }),
+    );
+
+    it.effect("three passes on a stale login raise the item on the third", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        yield* pass(fake, [REPO], 3);
+        fake.trackerUsers[REPO] = { error: TLS };
+        fake.transient.add(REPO);
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+        const { report } = yield* pass(fake, [REPO], 3);
+        assert.equal(report.attention, 1);
+        assert.equal(stale(fake).length, 3);
+        assert.deepEqual(
+          items(fake).map((item) => item.message),
+          [
+            `${REPO}: project config or tracker login could not be re-read for 3 passes in a row, running on the last good copy; last error: ${TLS}`,
+          ],
+        );
+      }),
+    );
+
+    it.effect("a pass with both the config and the login stale counts once", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        yield* pass(fake, [REPO], 3);
+        fake.projects[REPO] = TLS;
+        fake.trackerUsers[REPO] = { error: TLS };
+        fake.transient.add(REPO);
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(
+          stale(fake).map((e) => e.data.what),
+          ["config", "login"],
+        );
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+        yield* pass(fake, [REPO], 3);
+        assert.equal(stale(fake).length, 6);
+        assert.equal(items(fake).length, 1);
+      }),
+    );
+
+    it.effect(
+      "a stale config followed by a login that fails for real still counts toward the attention item",
+      () =>
+        Effect.gen(function* () {
+          const fake = new Fake();
+          yield* pass(fake, [REPO], 3);
+          fake.projects[REPO] = TLS;
+          fake.trackerUsers[REPO] = { error: "HTTP 401: Bad credentials" };
+          fake.transient.add(REPO);
+          fake.loginHard = true;
+          for (let i = 0; i < 3; i += 1) {
+            const { report } = yield* pass(fake, [REPO], 3);
+            assert.equal(report.errors, 1);
+          }
+          assert.equal(stale(fake).length, 3);
+          assert.equal(errorEvents(fake).length, 3);
+          assert.equal(items(fake).length, 1);
+          assert.equal(
+            items(fake)[0]!.message,
+            `${REPO}: project config not loaded for 3 passes in a row, issues are not being picked up; last error: cannot read the tracker's login: HTTP 401: Bad credentials`,
+          );
+        }),
+    );
+
+    it.effect("a fresh config with a login that fails for real clears the item", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        yield* pass(fake, [REPO], 3);
+        fake.projects[REPO] = TLS;
+        fake.transient.add(REPO);
+        for (let i = 0; i < 3; i += 1) yield* pass(fake, [REPO], 3);
+        assert.equal(items(fake).length, 1);
+        delete fake.projects[REPO];
+        fake.transient.delete(REPO);
+        fake.trackerUsers[REPO] = { error: "HTTP 401: Bad credentials" };
+        const { report } = yield* pass(fake, [REPO], 3);
+        assert.equal(report.errors, 1);
+        assert.deepEqual(items(fake), []);
+      }),
+    );
+
+    it.effect("a transient failure with no earlier load skips the repo", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.projects[REPO] = TLS;
+        fake.transient.add(REPO);
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(stale(fake), []);
+        assert.equal(skipped(fake).length, 1);
+        // A login with no earlier load fails the repo as it does today.
+        const other = new Fake();
+        other.trackerUsers[REPO] = { error: TLS };
+        other.transient.add(REPO);
+        const { report } = yield* pass(other, [REPO], 3);
+        assert.equal(report.errors, 1);
+        assert.deepEqual(stale(other), []);
+      }),
+    );
+
+    it.effect("three stale passes in a row raise the item, and the next good load clears it", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        yield* pass(fake, [REPO], 3);
+        fake.projects[REPO] = TLS;
+        fake.transient.add(REPO);
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+        const { report } = yield* pass(fake, [REPO], 3);
+        assert.equal(report.attention, 1);
+        assert.equal(items(fake).length, 1);
+        assert.equal(
+          items(fake)[0]!.message,
+          `${REPO}: project config or tracker login could not be re-read for 3 passes in a row, running on the last good copy; last error: ${TLS}`,
+        );
+        delete fake.projects[REPO];
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+        // The count starts over.
+        fake.projects[REPO] = TLS;
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+      }),
+    );
+
+    it.effect("a fresh config with a stale login keeps the fresh config for later", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        yield* pass(fake, [REPO], 3);
+        const changed = project();
+        fake.projects[REPO] = changed;
+        fake.trackerUsers[REPO] = { error: TLS };
+        fake.transient.add(REPO);
+        yield* pass(fake, [REPO], 3);
+        assert.strictEqual(fake.lastGood.get(REPO)?.project, changed);
+        assert.equal(stale(fake).length, 1);
+      }),
+    );
+
+    it.effect("a repo no longer watched loses its last good copy", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        yield* pass(fake, [REPO], 3);
+        assert.ok(fake.lastGood.has(REPO));
+        yield* pass(fake, [OTHER], 3);
+        assert.ok(!fake.lastGood.has(REPO));
+      }),
+    );
+  });
+
+  describe("a repo whose config is not loaded pass after pass", () => {
+    const ITEM_ID = "config-not-loaded:rawphp/softfac";
+    const items = (fake: Fake) => fake.items.filter((item) => item.id === ITEM_ID);
+
+    it.effect("two skips in a row raise nothing; the third raises one attention item", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.projects[REPO] = "no .dw/config.yml on main";
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+        const { report } = yield* pass(fake, [REPO], 3);
+        assert.equal(report.attention, 1);
+        assert.deepEqual(items(fake), [
+          {
+            id: ITEM_ID,
+            kind: "attention",
+            repo: REPO,
+            issue: null,
+            run: null,
+            message:
+              "rawphp/softfac: project config not loaded for 3 passes in a row, issues are not being picked up; last error: no .dw/config.yml on main",
+            firstSeenMs: T0,
+          },
+        ]);
+        // Later skips keep the one item and still record each skip as before.
+        yield* pass(fake, [REPO], 3);
+        assert.equal(items(fake).length, 1);
+        assert.equal(
+          fake.events.filter(
+            (e) => e.event === "repo_skipped" && e.data.reason === "config-not-loaded",
+          ).length,
+          4,
+        );
+      }),
+    );
+
+    it.effect("a successful load clears the item and the count starts over", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.projects[REPO] = "boom";
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        assert.equal(items(fake).length, 1);
+        delete fake.projects[REPO];
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+        fake.projects[REPO] = "boom again";
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+        yield* pass(fake, [REPO], 3);
+        assert.equal(items(fake).length, 1);
+        assert.ok(items(fake)[0]!.message.endsWith("last error: boom again"));
+      }),
+    );
+
+    it.effect("a load that succeeds between two skips keeps the count from reaching three", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.projects[REPO] = "boom";
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        delete fake.projects[REPO];
+        yield* pass(fake, [REPO], 3);
+        fake.projects[REPO] = "boom";
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+      }),
+    );
+
+    it.effect("each repo is counted on its own, under its lower-cased name", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        const spelled = "RawPHP/Softfac";
+        fake.projects[spelled] = "boom";
+        yield* pass(fake, [spelled, OTHER], 3);
+        yield* pass(fake, [spelled, OTHER], 3);
+        fake.projects[OTHER] = "other boom";
+        yield* pass(fake, [spelled, OTHER], 3);
+        assert.deepEqual(
+          fake.items.map((item) => [item.id, item.repo]),
+          [[ITEM_ID, spelled]],
+        );
+      }),
+    );
+
+    it.effect("a successful load clears an item raised before this process started", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.items.push({
+          id: ITEM_ID,
+          kind: "attention",
+          repo: REPO,
+          issue: null,
+          run: null,
+          message: "stale",
+          firstSeenMs: T0 - 60_000,
+        });
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+      }),
+    );
+
+    it.effect("a pass in which two T3 projects name the repo starts its count over", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.projects[REPO] = "boom";
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        // Named twice, so skipped as ambiguous: the config is not tried.
+        yield* pass(fake, [REPO, REPO.toUpperCase()], 3);
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+        yield* pass(fake, [REPO], 3);
+        assert.equal(items(fake).length, 1);
+      }),
+    );
+
+    it.effect("a pass that does not watch the repo starts its count over", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.projects[REPO] = "boom";
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [OTHER], 3);
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+        // A listing that cannot be read says nothing about the repo, so the count stays.
+        yield* pass(fake, [REPO], 3);
+        fake.watchedFails = true;
+        yield* pass(fake, [REPO], 3);
+        fake.watchedFails = false;
+        yield* pass(fake, [REPO], 3);
+        assert.equal(items(fake).length, 1);
+      }),
+    );
+  });
 
   it.effect(
     "a repo two T3 projects name is watched from neither: one error line, one event, the rest go on",
@@ -1972,6 +2399,47 @@ describe("the limit, said out loud", () => {
   );
 });
 
+describe("a pass that has run long", () => {
+  /** A fake whose ready listing takes `ms`, so claiming starts that far into the pass. */
+  const slowListing = (ms: number) => {
+    const fake = new Fake();
+    fake.ready[REPO] = [1];
+    fake.pushStart(`${REPO}#1`, started(1));
+    const list = fake.readyIssues.bind(fake);
+    fake.readyIssues = (repo: Repo) => {
+      fake.now += ms;
+      return list(repo);
+    };
+    return fake;
+  };
+
+  it.effect("twenty minutes in, no claim is started and one line says so", () =>
+    Effect.gen(function* () {
+      const fake = slowListing(20 * 60_000);
+      const { report, lines } = yield* pass(fake, [REPO], 3);
+      assert.deepEqual(starts(fake), []);
+      assert.equal(report.claimed, 0);
+      assert.deepEqual(
+        lines.filter((l) => l.startsWith("claims stopped")),
+        ["claims stopped: the pass has run for 20m; the ready issues left wait for the next pass"],
+      );
+      assert.deepEqual(
+        fake.events.filter((e) => e.event === "claim_skipped"),
+        [{ event: "claim_skipped", data: { reason: "late" } }],
+      );
+    }),
+  );
+
+  it.effect("just short of twenty minutes, the claim is started", () =>
+    Effect.gen(function* () {
+      const fake = slowListing(20 * 60_000 - 1);
+      const { lines } = yield* pass(fake, [REPO], 3);
+      assert.deepEqual(starts(fake), [`start ${REPO}#1`]);
+      assert.ok(!lines.some((l) => l.startsWith("claims stopped")), lines.join("\n"));
+    }),
+  );
+});
+
 describe("the hand pause", () => {
   /** A person paused claims two hours before the clock of the fake. */
   const pausedByHand = (fake: Fake) => {
@@ -2041,6 +2509,186 @@ describe("the hand pause", () => {
         assert.deepEqual(claimSkippedEvents(fake), []);
         assert.equal(report.claimed, 1);
       }),
+  );
+});
+
+describe("draining for a deploy", () => {
+  const SHA = "7a70dadf1e2f3a4b5c6d7e8f901234567890abcd";
+  const waitingFor = (fake: Fake, ms: number) => {
+    fake.pending = { sinceMs: T0 - ms, commit: SHA, writtenMs: T0 };
+  };
+  const drainLines = (lines: ReadonlyArray<string>) =>
+    lines.filter((l) => l.startsWith("draining for deploy:"));
+  const drainLine = (waited: string) =>
+    `draining for deploy: build 7a70dadf1 has waited ${waited} for the runs in progress to finish; no ready issue claimed until it is installed`;
+  const waitingItems = (fake: Fake) => fake.items.filter((item) => item.id === "deploy-waiting");
+  const WAITING_MESSAGE =
+    "deploy waiting: a build has waited longer than deploy_wait_minutes 120 for the runs in progress to finish; autodeploy installs it once it can, factory runs resume on the new build and a person's thread is interrupted";
+
+  it.effect("claims nothing while a build waits, and says so once", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [1, 2];
+      fake.ready[OTHER] = [4];
+      fake.runIn(40, BUILDING, REPO, true);
+      waitingFor(fake, 10 * 60_000);
+      const { report, lines } = yield* pass(fake, [REPO, OTHER], 5);
+      assert.deepEqual(starts(fake), []);
+      assert.deepEqual(drainLines(lines), [drainLine("10m")]);
+      assert.deepEqual(
+        fake.events.filter((e) => e.event === "claim_skipped"),
+        [{ event: "claim_skipped", data: { reason: "deploy-pending" } }],
+      );
+      assert.deepEqual(waitingItems(fake), []);
+      assert.deepEqual([report.claimed, report.attention], [0, 0]);
+    }),
+  );
+
+  it.effect("names no build when the marker holds no sha", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.pending = { sinceMs: T0 - 10 * 60_000, commit: null, writtenMs: T0 };
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(drainLines(lines), [
+        "draining for deploy: a build has waited 10m for the runs in progress to finish; no ready issue claimed until it is installed",
+      ]);
+    }),
+  );
+
+  it.effect("a building run is still followed while draining", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(40, BUILDING, REPO, true);
+      waitingFor(fake, 10 * 60_000);
+      yield* pass(fake, [REPO], 5);
+      assert.ok(fake.calls.includes(`advance ${REPO}#40`), fake.calls.join("\n"));
+    }),
+  );
+
+  it.effect("an untracked claim is still resumed while draining", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.triage[REPO] = [7];
+      waitingFor(fake, 10 * 60_000);
+      yield* pass(fake, [REPO], 5);
+      assert.deepEqual(starts(fake), [`resume ${REPO}#7`]);
+    }),
+  );
+
+  it.effect("past deploy_wait_minutes one attention item is raised and kept", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [1];
+      waitingFor(fake, 3 * 60 * 60_000);
+      const { report, lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(starts(fake), []);
+      assert.deepEqual(drainLines(lines), [drainLine("3h00m")]);
+      assert.deepEqual(
+        waitingItems(fake).map(({ kind, repo, issue, run, message }) => ({
+          kind,
+          repo,
+          issue,
+          run,
+          message,
+        })),
+        [{ kind: "attention", repo: null, issue: null, run: null, message: WAITING_MESSAGE }],
+      );
+      assert.equal(report.attention, 1);
+      fake.now += 60_000;
+      yield* pass(fake, [REPO], 5);
+      assert.equal(waitingItems(fake).length, 1);
+      assert.equal(waitingItems(fake)[0]!.firstSeenMs, T0);
+    }),
+  );
+
+  it.effect("deploy_wait_minutes sets when the item is raised", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.deployWaitMinutes = 30;
+      waitingFor(fake, 29 * 60_000);
+      const under = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(drainLines(under.lines), [drainLine("29m")]);
+      assert.deepEqual(waitingItems(fake), []);
+      fake.now += 60_000;
+      yield* pass(fake, [REPO], 5);
+      assert.equal(waitingItems(fake).length, 1);
+      assert.ok(waitingItems(fake)[0]!.message.includes("deploy_wait_minutes 30 "));
+    }),
+  );
+
+  it.effect("raising the limit clears an open item while the drain goes on", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      waitingFor(fake, 3 * 60 * 60_000);
+      yield* pass(fake, [REPO], 5);
+      assert.equal(waitingItems(fake).length, 1);
+      fake.deployWaitMinutes = 240;
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(waitingItems(fake), []);
+      assert.deepEqual(drainLines(lines), [drainLine("3h00m")]);
+    }),
+  );
+
+  it.effect("a marker autodeploy stopped rewriting holds nothing back", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [1];
+      waitingFor(fake, 3 * 60 * 60_000);
+      yield* pass(fake, [REPO], 5);
+      assert.equal(waitingItems(fake).length, 1);
+      fake.pending = {
+        sinceMs: T0 - 3 * 60 * 60_000,
+        commit: SHA,
+        // Literal ages, not the constant: autodeploy.sh's pending_stale_minutes is 30 too, and a
+        // test written against the constant would follow it anywhere.
+        writtenMs: T0 - 31 * 60_000,
+      };
+      fake.pushStart(`${REPO}#1`, started(1));
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(starts(fake), [`start ${REPO}#1`]);
+      assert.deepEqual(
+        lines.filter((l) => l.startsWith("deploy-pending is stale:")),
+        [
+          "deploy-pending is stale: autodeploy last wrote it 31m ago; no build is taken to be waiting; delete it if autodeploy is off",
+        ],
+      );
+      assert.deepEqual(drainLines(lines), []);
+      assert.deepEqual(waitingItems(fake), []);
+      assert.deepEqual(fake.events.filter((e) => e.event === "claim_skipped").length, 1);
+    }),
+  );
+
+  it.effect("a marker exactly as old as the staleness limit still drains", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [1];
+      assert.equal(PENDING_STALE_MS, 30 * 60_000);
+      fake.pending = { sinceMs: T0 - 10 * 60_000, commit: SHA, writtenMs: T0 - 30 * 60_000 };
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(starts(fake), []);
+      assert.deepEqual(drainLines(lines), [drainLine("10m")]);
+      assert.deepEqual(
+        fake.events.filter((e) => e.event === "claim_skipped"),
+        [{ event: "claim_skipped", data: { reason: "deploy-pending" } }],
+      );
+    }),
+  );
+
+  it.effect("once the build is installed the item clears and claiming resumes", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [1];
+      waitingFor(fake, 3 * 60 * 60_000);
+      yield* pass(fake, [REPO], 5);
+      assert.equal(waitingItems(fake).length, 1);
+      fake.pending = null;
+      fake.pushStart(`${REPO}#1`, started(1));
+      const { report, lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(starts(fake), [`start ${REPO}#1`]);
+      assert.deepEqual(drainLines(lines), []);
+      assert.deepEqual(waitingItems(fake), []);
+      assert.equal(report.claimed, 1);
+    }),
   );
 });
 

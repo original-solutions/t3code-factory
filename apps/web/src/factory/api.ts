@@ -5,7 +5,7 @@ import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentSession } from "~/state/session";
-import { textField } from "./format";
+import { textField, type PrEnd } from "./format";
 import {
   DEFAULT_TIMEOUT_MS,
   FactoryHttpError,
@@ -55,6 +55,8 @@ export interface FactoryRunRow {
   readonly step: string | null;
   readonly status: string;
   readonly pr_url: string | null;
+  /** How the pull request ended, for a run that finished on it; absent from older servers. */
+  readonly pr_end?: PrEnd | null;
   readonly finished: boolean;
   readonly total_ms: number | null;
   readonly unreadable: boolean;

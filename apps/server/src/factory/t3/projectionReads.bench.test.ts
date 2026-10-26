@@ -37,13 +37,9 @@ import * as Sessions from "./sessions.ts";
 
 /**
  * The factory's reads over a database the size of the personal Mac's (about 2,000 threads, 300
- * runs, 50,000 turn items), against the budgets in issue #188: a read the loop or the status page
- * makes blocks the main thread under 50 ms, and the status route answers under 250 ms. The
- * payloads are the size of the Mac's (see projectionFixture.testkit.ts).
- *
- * A block is the longest gap a 1 ms timer saw while the call ran. Each call is repeated and the
- * best repetition counts: a host loaded by other work preempts the process in any single run, and
- * the gap that remains in the best run is the call's own.
+ * runs, 50,000 turn items): a read the loop or status page makes blocks the main thread under
+ * 50 ms, and the status route answers under 250 ms. A block is the longest gap a 1 ms timer saw;
+ * the best of repeated calls counts, since a loaded host preempts any single run.
  */
 const THREADS = 2_000;
 const RUNS = 300;

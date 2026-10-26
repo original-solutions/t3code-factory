@@ -1,9 +1,8 @@
 /**
- * Runs the adapter against T3's real orchestration layers: the orchestrator,
- * its stores, the effect worker, the launch service and a real git worktree,
- * with the Claude replay transcript from provider-testing standing in for the
- * provider. It answers one question on every upstream sync: does the adapter
- * still work against this upstream?
+ * Runs the adapter against T3's real orchestration layers (orchestrator, stores, effect worker,
+ * launch service, a real git worktree) with the Claude replay transcript from provider-testing as
+ * the provider. It answers one question on every upstream sync: does the adapter still work
+ * against this upstream?
  */
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";

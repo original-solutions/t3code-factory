@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Linking, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
 import { environmentEndpointUrl } from "@t3tools/client-runtime/environment";
@@ -8,6 +9,8 @@ import { AppActivityIndicator } from "../components/ui/AppActivityIndicator";
 import { EmptyState } from "../components/ui/EmptyState";
 import { ListRow } from "../components/ui/ListRow";
 import { ListSection } from "../components/ui/ListSection";
+import { ScreenScrollView } from "../components/ui/ScreenScrollView";
+import { SettingsScreen } from "../features/settings/components/SettingsScreen";
 import type { SavedRemoteConnection } from "../lib/connection";
 import { useSavedRemoteConnections } from "../state/use-remote-environment-registry";
 import {
@@ -31,7 +34,7 @@ function Message(props: {
   readonly onRetry?: () => void;
 }) {
   return (
-    <View className="flex-1 justify-center bg-screen">
+    <View className="flex-1 justify-center">
       <EmptyState
         variant="plain"
         title={props.title}
@@ -43,12 +46,21 @@ function Message(props: {
 }
 
 export function FactoryScreen() {
+  return (
+    <SettingsScreen title="Factory">
+      <FactoryBody />
+    </SettingsScreen>
+  );
+}
+
+function FactoryBody() {
+  const insets = useSafeAreaInsets();
   const { isLoadingSavedConnection, savedConnectionsById } = useSavedRemoteConnections();
   const [pickedId, setPickedId] = useState<string | null>(null);
 
   if (isLoadingSavedConnection) {
     return (
-      <View className="flex-1 items-center justify-center bg-screen">
+      <View className="flex-1 items-center justify-center">
         <AppActivityIndicator />
       </View>
     );
@@ -68,7 +80,13 @@ export function FactoryScreen() {
       const picked = choice.connections.find((c) => c.environmentId === pickedId);
       if (picked) return <FactoryWebView key={picked.environmentId} connection={picked} />;
       return (
-        <View className="flex-1 bg-screen px-5 pt-4">
+        <ScreenScrollView
+          contentInsetAdjustmentBehavior="automatic"
+          showsVerticalScrollIndicator={false}
+          className="flex-1"
+          contentContainerClassName="px-5 pt-4"
+          contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
+        >
           <ListSection title="Environment">
             {choice.connections.map((connection) => (
               <ListRow
@@ -79,7 +97,7 @@ export function FactoryScreen() {
               />
             ))}
           </ListSection>
-        </View>
+        </ScreenScrollView>
       );
     }
   }
@@ -153,7 +171,7 @@ function FactoryWebView(props: { readonly connection: SavedRemoteConnection }) {
   }
   if (phase.kind === "probing") {
     return (
-      <View className="flex-1 items-center justify-center bg-screen">
+      <View className="flex-1 items-center justify-center">
         <AppActivityIndicator />
       </View>
     );
@@ -165,6 +183,8 @@ function FactoryWebView(props: { readonly connection: SavedRemoteConnection }) {
       source={{ uri: environmentEndpointUrl(httpBaseUrl, "/factory") }}
       originWhitelist={["*"]}
       sharedCookiesEnabled
+      // The Settings header floats over content on iOS; inset the page under it like the picker.
+      contentInsetAdjustmentBehavior="automatic"
       injectedJavaScriptBeforeContentLoaded={FACTORY_BEFORE_CONTENT_LOADED_SCRIPT}
       onMessage={(event) => void onMessage(event)}
       onShouldStartLoadWithRequest={(request) => {

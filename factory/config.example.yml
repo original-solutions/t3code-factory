@@ -37,6 +37,13 @@ max_concurrent_gates: 1
 # is back; a gate that waits for it does not use up an attempt. 0 turns the check off. Defaults to 10.
 min_free_gib: 10
 
+# Minutes a build that autodeploy has waiting may hold claims back (default 120, at least 1).
+# While the build waits for the runs in progress to end, a pass claims no new issue. Below this
+# the Factory page shows nothing; past it the page shows a deploy-waiting item and autodeploy
+# installs the build with runs in progress, which resume on the new version. A thread of yours
+# with an agent at work is interrupted too; you continue it in T3.
+# deploy_wait_minutes: 120
+
 # A macOS notification when something needs a person. false keeps the list on the
 # Factory page and turns the notification off.
 notify: true

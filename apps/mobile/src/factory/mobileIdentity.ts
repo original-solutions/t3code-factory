@@ -1,6 +1,6 @@
-// The fork's hook into upstream's app.config.ts: called once on the finished
-// config, it swaps upstream's identity for the fork's (issue #146) and cuts the
-// links to upstream's Expo project and over-the-air updates.
+// The fork's hook into upstream's app.config.ts: called once on the finished config, it swaps
+// upstream's identity for the fork's and cuts the links to upstream's Expo project and
+// over-the-air updates.
 import type { ExpoConfig } from "expo/config";
 import {
   FORK_APPLE_TEAM_ID,

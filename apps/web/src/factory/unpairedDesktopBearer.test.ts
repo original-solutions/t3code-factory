@@ -1,10 +1,7 @@
-// The packaged desktop hands the web UI the factory server as its primary environment and a
-// bearer that is "" before pairing, or a stale one after the server forgets it. Both must end on
-// the pairing page, never in a retry loop or a generic error.
-//
-// A fake factory server answers over fetch, the way the real one does: `/api/auth/session`
-// says 200 `{ authenticated: false }` for a missing or unknown bearer, and the websocket-ticket
-// endpoint says 401 `EnvironmentAuthInvalidError`.
+// The packaged desktop hands the web UI the factory server as its primary environment and a bearer
+// that is "" before pairing, or stale after the server forgets it. Both must end on the pairing
+// page, never a retry loop or generic error. A fake server answers over fetch like the real one:
+// 200 `{ authenticated: false }` from `/api/auth/session`, 401 from the websocket-ticket endpoint.
 import { resolveRemoteWebSocketConnectionUrl } from "@t3tools/client-runtime/authorization";
 import {
   ConnectionBlockedError,

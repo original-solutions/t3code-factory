@@ -4,13 +4,23 @@
 # its own checkout changes. Each tick:
 #
 # - reads T3FAC_AUTODEPLOY_CLONE (a clone used for nothing else) and T3FAC_AUTODEPLOY_TOKEN (scope
-#   orchestration:read) from ~/.config/t3fac/env; with no clone set it does nothing;
+#   orchestration:read) from ~/.config/t3fac/env; with no clone set it does nothing but remove
+#   `deploy-pending`;
 # - fetches origin and stops, printing nothing, when origin/main is the commit in `current`'s
 #   `+fac.<sha>` or the commit whose deploy last failed;
 # - after a deploy or rollback by hand, records origin/main as that commit, so what the person
 #   installed stays until main moves;
+# - writes `<epoch seconds> <sha>` to `deploy-pending` in the factory data dir while origin/main
+#   has a commit it has not installed, keeping the first time across newer commits, and removes it
+#   when nothing is pending; the server stops claiming issues while the file is there. The file is
+#   rewritten every tick that reads the status and touched while a build runs, and the server takes
+#   one older than 30 minutes as nothing pending, so an autodeploy that stopped ticking holds
+#   nothing back;
 # - asks GET /api/factory/status whether a factory run is in progress or an agent is at work in
-#   any thread, and waits for the next tick when one is or when it cannot tell;
+#   any thread, and waits for the next tick when one is or when it cannot tell, logging how long
+#   the build has waited; past `deploy_wait_minutes` (machine config, default 120) it deploys
+#   whatever is in the way: factory runs resume on the new build, and a person's thread is
+#   interrupted, which the person continues in T3;
 # - checks the commit out and builds it with deploy.sh --build-only, asks again, then installs it
 #   with deploy.sh, whose health check rolls back a bad version. A build that fails or runs past
 #   its limit is tried on the next two ticks before the commit is given up on;
@@ -23,7 +33,15 @@ set -euo pipefail
 
 root="$HOME/.local/share/t3fac"
 env_file="$HOME/.config/t3fac/env"
-machine_config="$HOME/.config/t3fac/factory/config.yml"
+data_dir="$HOME/.config/t3fac/factory"
+machine_config="$data_dir/config.yml"
+# `<epoch seconds> <sha>`: the first time a build was left waiting, and the newest build waiting.
+# The server reads it (claims.ts loadPendingDeploy) to stop claiming issues.
+pending_file="$data_dir/deploy-pending"
+# Minutes a build may wait for the runs in progress; config.ts DEFAULT_DEPLOY_WAIT_MINUTES is the
+# same number, change both together.
+deploy_wait_default=120
+said_overdue=""
 logs="$HOME/Library/Logs/t3fac"
 build_log="$logs/autodeploy-build.log"
 failed_file="$root/autodeploy.failed"
@@ -38,9 +56,32 @@ job=io.github.rawphp.t3fac.autodeploy
 port=${T3FAC_PORT:-3876}
 # How long a build may take. T3FAC_BUILD_LIMIT exists only so tests can make a build time out.
 build_limit=${T3FAC_BUILD_LIMIT:-3600}
+# Seconds between touches of the pending marker while a build runs. T3FAC_PENDING_REFRESH exists
+# only so tests can shorten it.
+pending_refresh=${T3FAC_PENDING_REFRESH:-300}
+# The server's PENDING_STALE_MS in pass.ts is the same span; change both together.
+pending_stale_minutes=30
 
 say() {
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) autodeploy: $*"
+}
+
+# Seconds as 12s, 5m, 2h05m or 1d01h, as ledger/time.ts duration() writes them.
+fmt_duration() {
+  local s=$1
+  if ((s < 60)); then
+    printf '%ds' "$s"
+  elif ((s < 3600)); then
+    printf '%dm' $((s / 60))
+  elif ((s < 86400)); then
+    printf '%dh%02dm' $((s / 3600)) $((s % 3600 / 60))
+  else
+    printf '%dd%02dh' $((s / 86400)) $((s % 86400 / 3600))
+  fi
+}
+
+clear_pending() {
+  rm -f "$pending_file"
 }
 
 if [[ -f $env_file ]]; then
@@ -51,7 +92,10 @@ if [[ -f $env_file ]]; then
 fi
 clone=${T3FAC_AUTODEPLOY_CLONE:-}
 token=${T3FAC_AUTODEPLOY_TOKEN:-}
-[[ -n $clone ]] || exit 0
+if [[ -z $clone ]]; then
+  clear_pending
+  exit 0
+fi
 
 mkdir -p "$root" "$logs"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/lock.sh"
@@ -88,6 +132,7 @@ installed=${installed##*+fac.}
 hand_deployed() {
   [[ -f $hold_file ]] || return 0
   rm -f "$hold_file"
+  clear_pending
   echo "$target" > "$failed_file"
   say "not deploying $short until main moves: a deploy or rollback was run by hand"
   return 1
@@ -96,15 +141,60 @@ hand_deployed() {
 # build.sh names the version with a short sha whose length git picks, so compare by prefix.
 if [[ -n $installed && $target == "$installed"* ]]; then
   rm -f "$hold_file"
+  clear_pending
   exit 0
 fi
 hand_deployed || exit 0
-if [[ $(cat "$failed_file" 2> /dev/null || true) == "$target" ]]; then exit 0; fi
+if [[ $(cat "$failed_file" 2> /dev/null || true) == "$target" ]]; then
+  clear_pending
+  exit 0
+fi
+
+# Records that $target is waiting to be installed. The time is that of the first build left
+# waiting, so it survives main moving: the wait is measured from the oldest undeployed build. The
+# file is written on every call, so its mtime shows the last tick that read the status.
+mark_pending() {
+  local since="" sha="" tmp
+  mkdir -p "$data_dir"
+  read -r since _ 2> /dev/null < "$pending_file" || true
+  [[ $since =~ ^[0-9]+$ ]] || since=$(date +%s)
+  # A marker this old was ignored by the server, which may have claimed since: the wait starts
+  # again. A short blip keeps the first-wait time.
+  if [[ -n $(find "$pending_file" -mmin +"$pending_stale_minutes" 2> /dev/null) ]]; then
+    since=$(date +%s)
+  fi
+  tmp="$data_dir/.deploy-pending.$$"
+  echo "$since $target" > "$tmp"
+  mv -f "$tmp" "$pending_file"
+}
+
+# Sets deploy_limit (minutes) from deploy_wait_minutes in the machine config, read as keep_versions
+# is in prune_versions; deploy_limit_note says so when the key is there but cannot be read.
+read_deploy_limit() {
+  local value
+  deploy_limit=$deploy_wait_default
+  deploy_limit_note=""
+  if grep -qE '^[^#]*deploy_wait_minutes' "$machine_config" 2> /dev/null; then
+    value=$(sed -nE 's/^deploy_wait_minutes:[[:space:]]*([0-9]{1,9})[[:space:]]*(#.*)?$/\1/p' "$machine_config")
+    if [[ $value =~ ^[0-9]+$ ]] && ((10#$value > 0)); then
+      deploy_limit=$((10#$value))
+    else
+      deploy_limit_note=" (cannot read deploy_wait_minutes in $machine_config as one whole number up to 999999999; using $deploy_wait_default)"
+    fi
+  fi
+}
 
 # Returns 0 when nothing would be cut off by the restart. Otherwise prints why it is not deploying
 # and returns 1: a run that may have a session or gate at work (any unfinished run not waiting on a
 # person, including one whose file cannot be read), a pass running, a thread with an agent at
-# work, or a status it cannot read.
+# work, or a status it cannot read. The pending marker is rewritten each tick that reads the status,
+# busy or not, so the server drains through the build too. A tick that cannot ask leaves the file
+# as it is: the server ignores one that is older than 30 minutes, which covers an autodeploy that
+# cannot fetch, has no token, or is not running at all, and a blip does not lose the
+# first-wait time. Once the build has waited past the limit this returns 0 whatever is in the way,
+# a thread count T3 could not read included: the status cannot tell a person's thread from a
+# factory run's, so it cannot spare one. Factory runs resume through the pass; a person's thread
+# shows as interrupted in T3 and the person continues it.
 factory_idle() {
   local body busy
   if [[ -z $token ]]; then
@@ -118,7 +208,8 @@ factory_idle() {
     return 1
   fi
   # A server from before the thread count has no `threads`; it counts as none, so a rollback to
-  # one does not stop autodeploy for good. A count T3 could not read is null, and waits.
+  # one does not stop autodeploy for good. A count T3 could not read is null, and waits like a
+  # thread at work: until deploy_wait_minutes.
   if ! busy=$(jq -r 'if .passes.running == true or any(.runs[];
       .unreadable or ((.state // "") | IN("pr-open", "needs-info", "stuck") | not))
     then "a factory run is in progress"
@@ -127,14 +218,28 @@ factory_idle() {
     say "not deploying $short: cannot read the factory status"
     return 1
   fi
+  mark_pending
   if [[ -n $busy ]]; then
-    say "waiting to deploy $short: $busy"
+    local since="" now waited
+    read -r since _ 2> /dev/null < "$pending_file" || true
+    now=$(date +%s)
+    [[ $since =~ ^[0-9]+$ ]] || since=$now
+    waited=$((now - since))
+    read_deploy_limit
+    if ((waited >= deploy_limit * 60)); then
+      # factory_idle runs again after the build; the line is said once.
+      [[ -n $said_overdue ]] || say "deploying $short although $busy: the build has waited $(fmt_duration "$waited"), past deploy_wait_minutes $deploy_limit; factory runs in progress resume on the new build, a person's thread is interrupted$deploy_limit_note"
+      said_overdue=1
+      return 0
+    fi
+    say "waiting to deploy $short: $busy; waited $(fmt_duration "$waited") of deploy_wait_minutes $deploy_limit$deploy_limit_note"
     return 1
   fi
 }
 
 failed() {
   rm -f "$attempts_file"
+  clear_pending
   echo "$target" > "$failed_file"
   say "deploy of $short failed; ${installed:+still on $installed; }not trying it again until main moves; see $build_log"
   exit 1
@@ -157,7 +262,7 @@ build_failed() {
 # stop autodeploy for good. Returns 124 on a timeout. set -m gives each background job a process
 # group of its own, so one kill reaches every process the build started.
 build() {
-  local pid watchdog status=0 timed_out="$root/.autodeploy-timeout.$$"
+  local pid watchdog refresher status=0 timed_out="$root/.autodeploy-timeout.$$"
   rm -f "$timed_out"
   set -m
   {
@@ -171,10 +276,21 @@ build() {
     kill -TERM -- "-$pid"
   } 2> /dev/null &
   watchdog=$!
+  # The server takes a marker older than 30 minutes as nothing pending, and a build can run an
+  # hour, so the marker is touched while it runs. Its content stays; the server reads the mtime.
+  # The loop ends with this script however it ends, so a killed tick cannot keep the marker fresh.
+  {
+    while sleep "$pending_refresh" && kill -0 $$; do
+      touch -c "$pending_file"
+    done
+  } 2> /dev/null &
+  refresher=$!
   set +m
   wait "$pid" || status=$?
   kill -TERM -- "-$watchdog" 2> /dev/null || true
   wait "$watchdog" 2> /dev/null || true
+  kill -TERM -- "-$refresher" 2> /dev/null || true
+  wait "$refresher" 2> /dev/null || true
   if [[ -e $timed_out ]]; then
     rm -f "$timed_out"
     return 124
@@ -250,5 +366,6 @@ export T3FAC_DEPLOY_LOCK=$$
 
 (cd "$clone" && factory/scripts/deploy.sh) >> "$build_log" 2>&1 || failed
 rm -f "$attempts_file"
+clear_pending
 say "deployed $short"
 prune_versions

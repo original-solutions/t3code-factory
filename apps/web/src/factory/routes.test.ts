@@ -33,6 +33,14 @@ describe("factory routes", () => {
     expect(tree).toMatch(/'\/factory_\/\$runId': \{[^}]*fullPath: '\/factory\/\$runId'/);
   });
 
+  it("keeps the Factory settings page under the settings layout, where the scope provider is", () => {
+    const update = /const \w+ =\s*ChatSettingsFactoryRouteImport\.update\(\{[\s\S]*?as any\)/.exec(
+      tree,
+    );
+    expect(update?.[0]).toContain("getParentRoute: () => ChatSettingsRoute");
+    expect(tree).toMatch(/'\/_chat\/settings\/factory': \{[^}]*fullPath: '\/settings\/factory'/);
+  });
+
   it("sends an old /factory/<runId> link to the runs list", () => {
     let thrown: unknown;
     try {

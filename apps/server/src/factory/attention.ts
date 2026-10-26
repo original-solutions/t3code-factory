@@ -51,10 +51,9 @@ export type PassOutcome = { readonly ok: true } | { readonly ok: false; readonly
 
 /**
  * The open attention items: what the factory needs a person for. An item is raised when its
- * condition starts and cleared when the condition ends; a new item posts one macOS notification,
- * and one that stays open is never notified again, because the open items are kept in
- * `<factory dir>/attention.json` and read back at start. A person can dismiss an item; it leaves
- * the list but is kept, dismissed, until its condition clears.
+ * condition starts and cleared when it ends. A new item posts one macOS notification; open items
+ * persist in `<factory dir>/attention.json`, so one is never notified twice. A dismissed item
+ * leaves the list but is kept until its condition clears.
  */
 export class Attention extends Context.Service<
   Attention,

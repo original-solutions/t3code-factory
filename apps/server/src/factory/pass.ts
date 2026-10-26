@@ -1,18 +1,14 @@
 /**
- * One pass of the factory: the watched repos (T3's projects that opt in), the project config and
- * tracker login of each, every
- * unfinished run, the claims that have no run, then new issues. Ported from softfac's `tick.rs`
- * (`run_keeping`, `load_repos`, `runs`, `untracked_claims`, `unassigned_claims` and `claim`) up
- * to the claim; the steps that follow a run (issues #16 to #20) and the dry run are not here.
- *
- * Pure over `PassWorld`: every read and write goes through it, so the tests script a world and
- * `index.ts` builds the live one. Every line goes to `out` as it is decided. Each pass writes
- * `pass_started` first and `pass_finished` last to the machine log.
+ * One pass of the factory: watched repos (T3 projects that opt in), their config and tracker
+ * login, unfinished runs, claims with no run, then new issues. Ported from softfac's `tick.rs`
+ * up to the claim. Pure over `PassWorld`, so tests script a world; `pass_started` and
+ * `pass_finished` bracket the pass in the machine log.
  */
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 
 import type { Attention, NewItem } from "./attention.ts";
-import type { HandPause } from "./claims.ts";
+import type { HandPause, PendingDeploy } from "./claims.ts";
 import {
   ambiguousMessage,
   ambiguousRepos,
@@ -27,6 +23,7 @@ import { overload, type Load, type Overload } from "./load.ts";
 import type { LedgerError } from "./ledger/errors.ts";
 import type { CauseStep, ErrorKind, MachineEvent } from "./ledger/events.ts";
 import { holdsSlot, type RunInfo } from "./ledger/listRuns.ts";
+import { PASS_TIMEOUT } from "./loop.ts";
 import { asciiLower, runIdToString, type RunId } from "./ledger/runId.ts";
 import { duration, formatTs } from "./ledger/time.ts";
 import type {
@@ -57,7 +54,27 @@ import {
 export interface PassError {
   readonly kind: ErrorKind;
   readonly message: string;
+  /** True when the failure was one GitHub never received, so a later read may well succeed. */
+  readonly transient?: boolean;
 }
+
+/** The project config and tracker login a repo last loaded. */
+export interface LastGood {
+  readonly project?: ProjectConfig | undefined;
+  readonly trackerUser?: string | undefined;
+}
+
+/**
+ * What a failed read of `what` falls back on: the last good copy when GitHub never received the
+ * call and an earlier pass loaded one that no failure since has dropped, else nothing.
+ */
+export const lastGoodCopy = <K extends keyof LastGood>(
+  lastGood: ReadonlyMap<string, LastGood>,
+  repo: string,
+  what: K,
+  error: { readonly transient?: boolean | undefined },
+): LastGood[K] | undefined =>
+  error.transient === true ? lastGood.get(asciiLower(repo))?.[what] : undefined;
 
 /** A watched repo with its project config and the login its tracker knows the factory by. */
 export interface Repo {
@@ -239,6 +256,8 @@ export interface PassWorld {
   ) => Effect.Effect<void, LedgerError>;
   /** The claims pause a person made, when there is one. */
   readonly handPause: () => HandPause | null;
+  /** The build autodeploy has waiting for the runs in progress to end, when there is one. */
+  readonly pendingDeploy: () => PendingDeploy | null;
   /**
    * The free space of the fuller of the volumes that hold the sessions' worktrees and the gate's
    * checkouts; not read when `min_free_gib` is 0.
@@ -256,6 +275,16 @@ export interface PassWorld {
   /** Archives the thread: `archive` on the sessions. */
   readonly archiveThread: (threadId: string) => Effect.Effect<void, PassError>;
   readonly brokenThreads: BrokenThreadMemo;
+  /**
+   * How many passes in a row each repo's project config has not loaded, by lower-cased
+   * `owner/name`; kept from pass to pass, and from scratch after a restart.
+   */
+  readonly configSkips: Map<string, number>;
+  /**
+   * The project config and tracker login each repo last loaded, by lower-cased `owner/name`: what
+   * a pass runs on when a re-read fails in a way that says GitHub never received the call.
+   */
+  readonly lastGood: Map<string, LastGood>;
   readonly nowMs: () => number;
   /** Writes one event to the machine log. */
   readonly record: (event: MachineEvent) => Effect.Effect<void, LedgerError>;
@@ -334,11 +363,9 @@ interface NoteError {
   /** What went wrong, before it is cleaned for the ledger. */
   readonly message: string;
   /**
-   * T3's session layer did not answer (a `FactorySessionsError`): the error also goes to the
-   * machine log, where `t3Trouble` reads the sign that sessions ending badly were an interruption.
-   * softfac has such a sign from its own T3 check of each repo, a server call; this factory's
-   * project lookup is in-process and cannot fail when T3 is down, so the calls that do fail are
-   * the sign.
+   * T3's session layer did not answer (a `FactorySessionsError`); the error also goes to the
+   * machine log, where `t3Trouble` reads it as the sign that sessions ended badly by interruption.
+   * The project lookup is in-process and cannot fail when T3 is down, so these calls are the sign.
    */
   readonly t3Down?: boolean;
 }
@@ -449,6 +476,12 @@ const prepareText = (text: string): string => {
   return sanitize(cut, true);
 };
 
+/**
+ * A pass this far in starts no more claims: `PASS_TIMEOUT` stops a pass wherever it is, and a
+ * claim cut short goes stuck. The margin covers one claim whose GitHub calls all retry.
+ */
+const CLAIM_CUTOFF_MS = Duration.toMillis(PASS_TIMEOUT) - 10 * 60_000;
+
 /** A pass in flight: the counts, the lines, and whether the machine log has failed once. */
 class Pass {
   readonly report: Report = { runs: 0, claimed: 0, errors: 0, attention: 0 };
@@ -456,6 +489,9 @@ class Pass {
   lowDisk = false;
   /** The load is above `max_load_per_core`: nothing is claimed. */
   highLoad = false;
+  /** A build autodeploy has waiting: nothing is claimed until it is installed. */
+  draining = false;
+  readonly startedMs: number;
   private logFailed = false;
   private readonly world: PassWorld;
   private readonly out: (line: string) => void;
@@ -463,6 +499,7 @@ class Pass {
   constructor(world: PassWorld, out: (line: string) => void) {
     this.world = world;
     this.out = out;
+    this.startedMs = world.nowMs();
   }
 
   line(text: string): void {
@@ -512,11 +549,9 @@ class Pass {
   }
 
   /**
-   * Prints `error` as an error line and records it: as an `error` line in the ledger of `run`
-   * when there is one that can take it, in the machine log otherwise (with the run's id when a
-   * run's ledger could not take it). A run's error that says a T3 call failed (`t3Down`) goes to
-   * both, so the machine log holds the T3 trouble of this pass for the next one to read.
-   * `unreadable` is a run whose own ledger cannot be read.
+   * Prints `error` as an error line and records it: in the ledger of `run` when it can take it,
+   * else in the machine log. A `t3Down` error goes to both, so the machine log holds this pass's
+   * T3 trouble. `unreadable` is a run whose own ledger cannot be read.
    */
   fail(run: RunId | null, error: NoteError, unreadable = false): Effect.Effect<void> {
     this.error(error.line);
@@ -619,6 +654,16 @@ export const runPass = Effect.fn("Pass.runPass")(function* (
     yield* world.attention.clear(
       (item) => item.repo !== null && listing.departed.some((repo) => sameRepo(repo, item.repo!)),
     );
+    // The config skips are counted in a row: a repo not in this pass's list, whether it left or
+    // its checkout could not be settled this time, starts over. Only a list that could not be
+    // read at all says nothing about any repo, so then every count stays.
+    const watchedKeys = new Set(watched.map((repo) => asciiLower(repo.repo)));
+    for (const key of world.configSkips.keys()) {
+      if (!watchedKeys.has(key)) world.configSkips.delete(key);
+    }
+    for (const key of world.lastGood.keys()) {
+      if (!watchedKeys.has(key)) world.lastGood.delete(key);
+    }
     if (listing.unresolved.length > 0) {
       pass.line(
         `watched: ${listing.unresolved.length} project(s) could not be settled this pass (${listing.unresolved.map(plain).join(", ")})`,
@@ -628,6 +673,7 @@ export const runPass = Effect.fn("Pass.runPass")(function* (
   const repos = yield* loadRepos(world, watched, pass);
   pass.lowDisk = yield* lowDisk(world, machine, pass);
   pass.highLoad = yield* highLoad(world, machine, pass);
+  pass.draining = yield* drainingForDeploy(world, machine, pass);
   yield* brokenWorktrees(world, pass);
   // Without the ledger there is no telling how many runs are active, so nothing is claimed.
   const infos = yield* runs(world, pass);
@@ -668,11 +714,10 @@ export const runPass = Effect.fn("Pass.runPass")(function* (
 export const STUCK_READ_EVERY_MS = 10 * 60 * 1000;
 
 /**
- * Clears the item of a stuck run whose issue GitHub has closed: a person is done with it, or its
- * pull request merged and closed it. Only stuck items of the repos loaded this pass are asked
- * about, each at most once every `STUCK_READ_EVERY_MS`. An item whose issue cannot be read stays,
- * with a line that is not an error: an issue that can never be read again (deleted, transferred)
- * must not fail every pass.
+ * Clears the item of a stuck run whose issue GitHub has closed. Only stuck items of repos loaded
+ * this pass are asked about, each at most once every `STUCK_READ_EVERY_MS`. An issue that cannot
+ * be read leaves the item with a non-error line: one that can never be read again (deleted,
+ * transferred) must not fail every pass.
  */
 const closedStuck = Effect.fn("Pass.closedStuck")(function* (
   world: PassWorld,
@@ -711,13 +756,10 @@ const LOW_DISK_ITEM_ID = "low-disk";
 const GIB = 1024 ** 3;
 
 /**
- * Whether the volume of the worktrees or of the gate's checkouts has less free than
- * `min_free_gib`. A run that writes to a
- * full disk fails partway, and its gate fails for reasons that are not the code, so while it is
- * low the pass claims nothing and starts no gate: one line, one `claim_skipped` event and one
- * attention item, which clears on the first pass that finds the space back. A space that cannot
- * be read is an error line and holds nothing back. 0 turns the check off. Session relaunches of
- * runs already claimed are not held back.
+ * Whether the worktrees' or gate checkouts' volume has less free than `min_free_gib`. A full disk
+ * fails runs and gates for reasons that are not the code, so the pass claims nothing and starts no
+ * gate: one line, one `claim_skipped` event and one attention item that clears when space returns.
+ * An unreadable space is an error line and holds nothing back. 0 turns it off.
  */
 const lowDisk = Effect.fn("Pass.lowDisk")(function* (
   world: PassWorld,
@@ -764,11 +806,9 @@ const lowDisk = Effect.fn("Pass.lowDisk")(function* (
 
 /**
  * Whether the 1-minute load is above `max_load_per_core` times the cores. Gates on an overloaded
- * machine fail on timeouts the code did not cause, so while it is the pass claims nothing: one
- * line and one `claim_skipped` event. No attention item: the load drops without a person, and an
- * item would notify each time it flaps. The world's gate holds a second gate by the same rule
- * (`Factory.startGate`). 0 turns the check off. Session relaunches of runs already claimed are
- * not held back.
+ * machine fail on timeouts the code did not cause, so the pass claims nothing, with no attention
+ * item: load drops without a person. `Factory.startGate` holds a second gate by the same rule.
+ * 0 turns it off; relaunches of claimed runs are not held back.
  */
 const highLoad = Effect.fn("Pass.highLoad")(function* (
   world: PassWorld,
@@ -784,22 +824,71 @@ const highLoad = Effect.fn("Pass.highLoad")(function* (
   return true;
 });
 
+/**
+ * Three ticks of the 10-minute autodeploy job: a marker not rewritten in that long belongs to an
+ * autodeploy that is not asking about runs, so it holds nothing back.
+ */
+export const PENDING_STALE_MS = 30 * 60_000;
+
+/** The machine's attention item while a build has waited past `deploy_wait_minutes`. */
+const DEPLOY_WAITING_ITEM_ID = "deploy-waiting";
+
+/**
+ * Whether autodeploy has a build waiting, which a steady queue would starve: the pass claims
+ * nothing until it is installed. Past `deploy_wait_minutes` autodeploy installs over the runs in
+ * progress and an attention item says so. A marker older than {@link PENDING_STALE_MS} is nothing
+ * pending. Relaunches of claimed runs are not held back.
+ */
+const drainingForDeploy = Effect.fn("Pass.drainingForDeploy")(function* (
+  world: PassWorld,
+  machine: MachineConfig,
+  pass: Pass,
+) {
+  const clear = world.attention.clear((item) => item.id === DEPLOY_WAITING_ITEM_ID);
+  const pending = world.pendingDeploy();
+  if (pending === null) {
+    yield* clear;
+    return false;
+  }
+  const age = world.nowMs() - pending.writtenMs;
+  if (age > PENDING_STALE_MS) {
+    pass.line(
+      `deploy-pending is stale: autodeploy last wrote it ${duration(age)} ago; no build is taken to be waiting; delete it if autodeploy is off`,
+    );
+    yield* clear;
+    return false;
+  }
+  const waited = Math.max(0, world.nowMs() - pending.sinceMs);
+  const build = pending.commit === null ? "a build" : `build ${pending.commit.slice(0, 9)}`;
+  pass.line(
+    `draining for deploy: ${build} has waited ${duration(waited)} for the runs in progress to finish; no ready issue claimed until it is installed`,
+  );
+  yield* pass.record({ event: "claim_skipped", data: { reason: "deploy-pending" } });
+  if (waited < machine.deployWaitMinutes * 60_000) {
+    yield* clear;
+    return true;
+  }
+  pass.report.attention += 1;
+  yield* world.attention.raise({
+    id: DEPLOY_WAITING_ITEM_ID,
+    kind: "attention",
+    repo: null,
+    issue: null,
+    run: null,
+    // No figures: an open item is not raised again, so they would go stale.
+    message: `deploy waiting: a build has waited longer than deploy_wait_minutes ${machine.deployWaitMinutes} for the runs in progress to finish; autodeploy installs it once it can, factory runs resume on the new build and a person's thread is interrupted`,
+  });
+  return true;
+});
+
 /** How often a pass reads the whole ledger again for threads on a broken worktree it could not settle. */
 export const UNSETTLED_READ_EVERY_MS = 5 * 60 * 1000;
 
 /**
- * Archives the live threads left on a stopped session's worktree that is gone or no longer a git
- * checkout: subagents sharing the session's checkout, which archiving the session did not stop,
- * or threads on a folder a removal left half done. T3's pull request lookup and settlement run git
- * there every minute and fail every time; an archived thread is out of both. Only threads on the
- * worktree of a run's session are the factory's, and only once that session is stopped: until
- * then the run's own stop archives what is on its worktree. The ledger is read only while T3 has
- * such a thread not ruled out before, and for a thread it could not settle, at most every
- * `UNSETTLED_READ_EVERY_MS`. A thread the factory archived on any path is not found again until
- * the server restarts, so a person who unarchives it keeps it until then. Each worktree gets one
- * line and one attention item, and is not found again once its threads are archived. The item
- * names the run in its text, not in `run`, so it stays after the run finished, which it nearly
- * always has.
+ * Archives live threads on a stopped session's worktree that is gone or no longer a git checkout,
+ * where T3's pull request lookup runs git every minute and fails. Only a stopped session's worktree
+ * is the factory's: until then the run's own stop archives it. The attention item names the run in
+ * its text, not in `run`, so it stays after the run finished.
  */
 const brokenWorktrees = Effect.fn("Pass.brokenWorktrees")(function* (world: PassWorld, pass: Pass) {
   const cannotCheck = (failure: PassError) =>
@@ -870,10 +959,16 @@ const brokenWorktrees = Effect.fn("Pass.brokenWorktrees")(function* (world: Pass
   }
 });
 
+/** After this many passes in a row without a repo's config, a person is told. */
+const CONFIG_SKIPS_BEFORE_ATTENTION = 3;
+
+const configNotLoadedId = (key: string): string => `config-not-loaded:${key}`;
+
 /**
- * The project config and tracker login of every watched repo. A repo whose config cannot be
- * loaded is reported and its issues are left alone; so is one whose tracker login cannot be read,
- * and one that two T3 projects name (`ambiguousRepos`).
+ * The project config and tracker login of every watched repo. A repo whose config or login cannot
+ * be read, or that two T3 projects name (`ambiguousRepos`), is reported and its issues left
+ * alone. A config failing {@link CONFIG_SKIPS_BEFORE_ATTENTION} passes in a row raises an
+ * attention item that the next successful load clears.
  */
 const loadRepos = Effect.fn("Pass.loadRepos")(function* (
   world: PassWorld,
@@ -883,6 +978,34 @@ const loadRepos = Effect.fn("Pass.loadRepos")(function* (
   const repos: Array<Loaded> = [];
   const ambiguous = ambiguousRepos(watchedRepos);
   const said = new Set<string>();
+  const countMiss = Effect.fn("Pass.countMiss")(function* (
+    key: string,
+    watched: WatchedRepo,
+    message: string,
+    stale: boolean,
+  ) {
+    const skips = (world.configSkips.get(key) ?? 0) + 1;
+    world.configSkips.set(key, skips);
+    if (skips < CONFIG_SKIPS_BEFORE_ATTENTION) return;
+    pass.report.attention += 1;
+    yield* world.attention.raise({
+      id: configNotLoadedId(key),
+      kind: "attention",
+      repo: watched.repo,
+      issue: null,
+      run: null,
+      message: plain(
+        stale
+          ? `${watched.repo}: project config or tracker login could not be re-read for ${CONFIG_SKIPS_BEFORE_ATTENTION} passes in a row, running on the last good copy; last error: ${message}`
+          : `${watched.repo}: project config not loaded for ${CONFIG_SKIPS_BEFORE_ATTENTION} passes in a row, issues are not being picked up; last error: ${message}`,
+      ),
+    });
+  });
+  const clearMiss = Effect.fn("Pass.clearMiss")(function* (key: string) {
+    world.configSkips.delete(key);
+    // Cleared whether or not this process counted the skips: the item outlives a restart.
+    yield* world.attention.clear((item) => item.id === configNotLoadedId(key));
+  });
   for (const watched of watchedRepos) {
     const key = asciiLower(watched.repo);
     const paths = ambiguous.get(key);
@@ -902,37 +1025,95 @@ const loadRepos = Effect.fn("Pass.loadRepos")(function* (
         });
         repos.push({ kind: "broken", name: watched.repo });
       }
+      // Not tried, so not a skip in a row.
+      world.configSkips.delete(key);
       continue;
     }
-    const project = yield* Effect.result(world.project(watched));
-    if (project._tag === "Failure") {
-      const message = project.failure.message;
-      pass.error(
-        `${plain(watched.repo)}: project config not loaded, repo skipped: ${plain(message)}`,
-      );
-      yield* pass.record({
-        event: "repo_skipped",
-        data: { repo: watched.repo, reason: "config-not-loaded", message: prepareText(message) },
-      });
-      repos.push({ kind: "broken", name: watched.repo });
-      continue;
-    }
-    const user = yield* Effect.result(world.trackerUser(watched));
-    if (user._tag === "Failure") {
-      yield* pass.fail(
-        null,
-        passError(
-          user.failure.kind,
-          `${watched.repo}: cannot read the tracker's login: `,
-          user.failure.message,
+    // The first failure this pass fell back on a last good copy for, if any.
+    let staleMessage: string | null = null;
+    const useStale = Effect.fn("Pass.useStale")(function* (
+      what: "config" | "login",
+      message: string,
+    ) {
+      const text = prepareText(message);
+      pass.line(
+        plain(
+          `${watched.repo}: ${what === "config" ? "project config" : "tracker login"} could not be re-read, using the last good copy: ${text}`,
         ),
       );
-      repos.push({ kind: "broken", name: watched.repo });
-      continue;
+      yield* pass.record({
+        event: "repo_config_stale",
+        data: { repo: watched.repo, what, message: text },
+      });
+      staleMessage ??= message;
+    });
+    const loaded = yield* Effect.result(world.project(watched));
+    let projectNow: ProjectConfig;
+    if (loaded._tag === "Failure") {
+      const failure = loaded.failure;
+      const message = failure.message;
+      const copy = lastGoodCopy(world.lastGood, watched.repo, "project", failure);
+      if (copy !== undefined) {
+        projectNow = copy;
+        yield* useStale("config", message);
+      } else {
+        // A config removed or broken on purpose must not come back on a later blip.
+        world.lastGood.set(key, { ...world.lastGood.get(key), project: undefined });
+        pass.error(
+          `${plain(watched.repo)}: project config not loaded, repo skipped: ${plain(message)}`,
+        );
+        yield* pass.record({
+          event: "repo_skipped",
+          data: { repo: watched.repo, reason: "config-not-loaded", message: prepareText(message) },
+        });
+        yield* countMiss(key, watched, message, false);
+        repos.push({ kind: "broken", name: watched.repo });
+        continue;
+      }
+    } else {
+      projectNow = loaded.success;
+      world.lastGood.set(key, { ...world.lastGood.get(key), project: projectNow });
     }
+    const loginResult = yield* Effect.result(world.trackerUser(watched));
+    let userNow: string;
+    if (loginResult._tag === "Failure") {
+      const failure = loginResult.failure;
+      const copy = lastGoodCopy(world.lastGood, watched.repo, "trackerUser", failure);
+      if (copy !== undefined) {
+        userNow = copy;
+        yield* useStale("login", failure.message);
+      } else {
+        world.lastGood.set(key, { ...world.lastGood.get(key), trackerUser: undefined });
+        // A fresh config clears the count whatever became of the login, as it always has.
+        if (staleMessage === null) yield* clearMiss(key);
+        else
+          yield* countMiss(
+            key,
+            watched,
+            `cannot read the tracker's login: ${failure.message}`,
+            false,
+          );
+        yield* pass.fail(
+          null,
+          passError(
+            failure.kind,
+            `${watched.repo}: cannot read the tracker's login: `,
+            failure.message,
+          ),
+        );
+        repos.push({ kind: "broken", name: watched.repo });
+        continue;
+      }
+    } else {
+      userNow = loginResult.success;
+      world.lastGood.set(key, { ...world.lastGood.get(key), trackerUser: userNow });
+    }
+    // Counted like a skip when stale, so a read that keeps failing is still told to a person.
+    if (staleMessage === null) yield* clearMiss(key);
+    else yield* countMiss(key, watched, staleMessage, true);
     repos.push({
       kind: "ready",
-      repo: { watched, project: project.success, trackerUser: user.success },
+      repo: { watched, project: projectNow, trackerUser: userNow },
     });
   }
   return repos;
@@ -969,18 +1150,10 @@ const runs = Effect.fn("Pass.runs")(function* (world: PassWorld, pass: Pass) {
 });
 
 /**
- * Works each confirmed run: a stop request an operator left for it is taken into its ledger, then
- * the time limit, for every state (the runner decides which runs it applies to). A run in `triage` (or with no state yet) is gone on with by `resume`, from
- * its ledger, so a run cut short after the launch was sent is finished and its session never runs
- * on untracked. A building run has its text watched and its session's result read by `advance`
- * on every pass, as softfac's `building` does, also once its session has reported its pull
- * request: `advance` puts a pull request someone took out of draft back to draft and judges the
- * session's latest run, and only when it says `ready-for-gate` is the gate started, in the
- * background (softfac's `softfac gate` child). A run left in `needs-info` or `stuck` (an end cut short) is finished by `advance`, so its
- * thread is archived and its slot freed. A run in `pr-open` is not worked here: `prOpenRuns`
- * gates it again at the end. A run of a repo that is not loaded is left alone. None of it is a new
- * claim, so none is counted as one. An issue put back to `ready` is left to the claim step, which
- * finishes its run when it claims the issue.
+ * Works each confirmed run: a stop request is taken into its ledger, then the time limit applies.
+ * `resume` continues `triage` runs; `advance` watches building runs and starts the gate on
+ * `ready-for-gate`, and finishes `needs-info` and `stuck` runs; `prOpenRuns` gates `pr-open`
+ * runs. Runs of unloaded repos are left alone. None of it is a new claim.
  */
 const workRuns = Effect.fn("Pass.workRuns")(function* (
   world: PassWorld,
@@ -1033,11 +1206,10 @@ const endedAs = (what: BadEnd): string =>
   what === "thread-gone" ? "the T3 thread is gone" : `session ended as ${what}`;
 
 /**
- * Decides, for the sessions `advance` found ended badly in this pass, whether each is an
- * interruption or a stop (`interrupted` in `runner/building.ts`). The evidence is the same for all
- * of them: the newest T3 trouble in the machine log, and how many sessions ended badly. The log
- * is read once, and not at all when none did. A log that cannot be read is an error line, and then
- * only two or more sessions that ended badly are decided; a lone one waits for the next pass.
+ * Decides whether each session `advance` found ended badly this pass was an interruption or a
+ * stop (`interrupted` in `runner/building.ts`), from the newest T3 trouble in the machine log and
+ * the count of such sessions. The log is read once, and not at all when none did. If it cannot be
+ * read, only two or more bad endings are decided; a lone one waits for the next pass.
  */
 const decideInterruptions = Effect.fn("Pass.decideInterruptions")(function* (
   world: PassWorld,
@@ -1134,13 +1306,10 @@ const relaunched = Effect.fn("Pass.relaunched")(function* (
 });
 
 /**
- * The gate started for every run whose issue is `pr-open`, once each, after the claims (softfac's
- * `pr_open_runs`), unless its head did not move since its last pass (see `unchanged`): such a run costs
- * no process and no gate slot, and the pass says nothing of it. A stop request left for the run
- * is dropped first, and the pass says so. The gate (`regate`) deals with a merged or closed pull request, a re-gate under
- * way, a relaunch not yet recorded, a run whose worktree line is not written yet, a checkout an
- * earlier gate left on disk, and a read that fails. A run of a repo that is not loaded is left
- * alone.
+ * The gate started once for every `pr-open` run, after the claims, unless its head did not move
+ * since its last pass (see `unchanged`): such a run costs no process or gate slot and is not
+ * mentioned. A stop request left for the run is dropped first. `regate` handles the rest: merged
+ * or closed pull requests, a re-gate under way, a relaunch not yet recorded, leftovers on disk.
  */
 const prOpenRuns = Effect.fn("Pass.prOpenRuns")(function* (
   world: PassWorld,
@@ -1177,12 +1346,10 @@ const prOpenRuns = Effect.fn("Pass.prOpenRuns")(function* (
 });
 
 /**
- * Calls the feedback step for a `pr-open` run and says what it did. True when it did anything,
- * which is when the run is not gated in this pass; false for a run with no new feedback, for which
- * nothing was written and nothing is said. A step that fails is said, and then the run is treated
- * as one with no feedback: a read that fails every pass must not keep a moved head from
- * being gated, or a merged pull request from being ended. The step does not take a gate lock:
- * gates run as fibers of this process and `gateRunning` was asked first.
+ * Calls the feedback step for a `pr-open` run. True when it did anything, so the run is not gated
+ * this pass. A failing step is said, then the run is treated as having no feedback, so a read
+ * that fails every pass cannot keep a moved head from the gate or a merge from ending the run.
+ * No gate lock is taken: gates are fibers of this process and `gateRunning` was asked first.
  */
 const actedOnFeedback = Effect.fn("Pass.actedOnFeedback")(function* (
   world: PassWorld,
@@ -1220,12 +1387,10 @@ const actedOnFeedback = Effect.fn("Pass.actedOnFeedback")(function* (
 });
 
 /**
- * Whether `regate` would find the run's pull request at the head its last pass ran on, by the
- * read it makes before it answers `unchanged`. The base branch is not read: a pass stays valid
- * while the base moves. A run it would do more for (one whose pull request GitHub says conflicts
- * is one), or a read that fails, is not unchanged: the gate deals with it, and says what failed.
- * `failed` holds the repos whose pull request read failed this pass, by lowercase repo name: the
- * other runs on one go to the gate without a read that could wait for its timeout again.
+ * Whether `regate` would find the run's pull request at the head its last pass ran on. The base
+ * is not read: a pass stays valid while it moves. A conflicted pull request, or a failed read, is
+ * not unchanged. `failed` holds the lowercase repos whose read failed this pass, so other runs on
+ * one go to the gate without a read that could time out again.
  */
 const unchanged = Effect.fn("Pass.unchanged")(function* (
   world: PassWorld,
@@ -1346,11 +1511,10 @@ const resumeRun = Effect.fn("Pass.resumeRun")(function* (
 const GATE_WAITS = "the gate waits for the next pass because a comment was sent";
 
 /**
- * The watch, then `forward`, then `advance`, for a building run: what the session did, in a line.
- * A forward that failed may have sent something before it did, so it counts as having sent; a
- * pass where something was sent does not start the gate, since the message starts a new run
- * that the gate would judge too early. A forward that cannot write the ledger leaves the run
- * alone for the pass.
+ * The watch, then `forward`, then `advance`, for a building run. A forward that failed may have
+ * sent something, so it counts as sent; a pass where something was sent does not start the gate,
+ * since the message starts a new run the gate would judge too early. A forward that cannot write
+ * the ledger leaves the run alone for the pass.
  */
 const followBuilding = Effect.fn("Pass.followBuilding")(function* (
   world: PassWorld,
@@ -1494,11 +1658,10 @@ const advanceRun = Effect.fn("Pass.advanceRun")(function* (
 });
 
 /**
- * The run's issue was closed by a person, so the run is over and its session stopped. Says so,
- * and asks for a person to look: that the issue was closed on purpose is their call to check.
- * `mayHaveSession` names the runs that sent a launch and never got a thread, whose session this
- * could not archive; each is raised with the command id to look for. `error` is why `start` could
- * not end a later run of the issue, which the next pass tries again.
+ * The run's issue was closed by a person, so the run is over and its session stopped. Asks a
+ * person to look. `mayHaveSession` names runs that sent a launch and never got a thread, with the
+ * command id to look for. `error` is why `start` could not end a later run of the issue; the next
+ * pass tries again.
  */
 const abandoned = Effect.fn("Pass.abandoned")(function* (
   pass: Pass,
@@ -1611,11 +1774,10 @@ class Known {
 }
 
 /**
- * Claims `start` began that left no run it can go on from: the issue is `factory:triage` and
- * assigned to the factory's login alone, and no unfinished run for it is confirmed (`RunInfo`).
- * `resume` finishes such an issue (the design sends it to `stuck`), in the run it left when there
- * is one, so a stuck path cut short is tried again on every pass. They are claims already made,
- * so the limit on new claims does not apply to them.
+ * Claims `start` began that left no run it can go on from: the issue is `factory:triage`,
+ * assigned to the factory's login alone, with no confirmed unfinished run (`RunInfo`). `resume`
+ * finishes such an issue every pass until it is done. They are claims already made, so the limit
+ * on new claims does not apply.
  */
 const untrackedClaims = Effect.fn("Pass.untrackedClaims")(function* (
   world: PassWorld,
@@ -1812,10 +1974,8 @@ const count = (known: Known, queues: ReadonlyArray<Queue>): number => {
 
 /**
  * Claims `factory:ready` issues with `start` while fewer than `max_concurrent_runs` runs are
- * active on the machine. Each claim goes to the repo with the fewest runs holding a slot among
- * the repos that still have a ready issue to try, the one listed first by T3 on
- * a tie, and the runs are counted again after every claim, so free slots spread across the
- * repos. Within a repo the issues go by number, which is the order they were opened in.
+ * active. Each claim goes to the repo with the fewest slot-holding runs (T3's listing order on a
+ * tie), recounted after every claim so slots spread across repos. Within a repo, by issue number.
  */
 const claim = Effect.fn("Pass.claim")(function* (
   world: PassWorld,
@@ -1830,6 +1990,8 @@ const claim = Effect.fn("Pass.claim")(function* (
   if (pass.lowDisk) return;
   // Said once by `highLoad`: a run claimed now would gate on a machine too busy to pass it.
   if (pass.highLoad) return;
+  // Said once by `drainingForDeploy`: a build is waiting for the runs in progress to end.
+  if (pass.draining) return;
   const paused = world.handPause();
   // Ready issues that were not tried because the limit was reached. Every repo is still
   // listed, so the count is the whole machine's.
@@ -1853,6 +2015,7 @@ const claim = Effect.fn("Pass.claim")(function* (
     queues.push({ repo, issues, held: 0 });
   }
   let active = count(known, queues);
+  let late = false;
   // A blocked issue takes no slot, so its repo stays the one with the fewest and its next
   // issue is tried.
   for (;;) {
@@ -1860,6 +2023,10 @@ const claim = Effect.fn("Pass.claim")(function* (
       .filter((q) => q.issues.length > 0)
       .reduce<Queue | null>((best, q) => (best === null || q.held < best.held ? q : best), null);
     if (queue === null) break;
+    if (world.nowMs() - pass.startedMs >= CLAIM_CUTOFF_MS) {
+      late = true;
+      break;
+    }
     const repo = queue.repo;
     const name = repo.watched.repo;
     const issue = queue.issues.shift()!;
@@ -1875,10 +2042,9 @@ const claim = Effect.fn("Pass.claim")(function* (
     // Checked before the blockers: a person paused claims, so no claim is started. The pause is
     // the machine's, said once after the loop.
     if (paused !== null) continue;
-    // Before the blockers: with no slot free nothing is claimed, so they are not read. Every
-    // issue left is counted as left over, blocked or not. The issue's own triage runs end with
-    // this claim (`finishOlderRuns`). One with no session leaves nothing running, so its slot is
-    // the claim's; one whose session may be running keeps its slot, so no second session
+    // Before the blockers: with no slot free nothing is claimed, so they are not read. The
+    // issue's own triage runs end with this claim (`finishOlderRuns`). One with no session leaves
+    // its slot to the claim; one whose session may be running keeps it, so no second session
     // starts past the limit.
     const own = known.of(name, issue).filter(inTriage);
     const freed = own.filter((run) => !run.session).length;
@@ -1951,6 +2117,12 @@ const claim = Effect.fn("Pass.claim")(function* (
       `claims paused: by hand since ${formatTs(paused.sinceMs)}, for ${duration(Math.max(0, world.nowMs() - paused.sinceMs))}; no ready issue claimed`,
     );
     yield* pass.record({ event: "claim_skipped", data: { reason: "paused" } });
+  }
+  if (late) {
+    pass.line(
+      `claims stopped: the pass has run for ${duration(world.nowMs() - pass.startedMs)}; the ready issues left wait for the next pass`,
+    );
+    yield* pass.record({ event: "claim_skipped", data: { reason: "late" } });
   }
   if (left > 0) {
     pass.line(

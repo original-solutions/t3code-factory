@@ -172,13 +172,10 @@ export class Ledger {
   }
 
   /**
-   * Append one event as one line, with why it was written: a single write of the whole line,
-   * then a sync, so a crash loses at most the event in flight. A `finished` event has its
-   * `total_ms` and `gate_attempts` replaced with the ledger's own count, taken from the file;
-   * use `finish`. Throws `UnknownEvent`, writing nothing, for an event name that ledger.md does
-   * not list, and `AlreadyFinished` after a `finished` line, whichever handle wrote it. A line
-   * cut off at the end of the file is ended before that check, as a reopen would, so a
-   * `finished` line that only lacked its newline counts; the refusal writes nothing else.
+   * Append one event as one line: a single write, then a sync, so a crash loses at most the
+   * event in flight. A `finished` event gets the ledger's own `total_ms` and `gate_attempts`;
+   * use `finish`. Throws `UnknownEvent` for an event ledger.md does not list, and
+   * `AlreadyFinished` after a `finished` line; a cut-off last line is ended before that check.
    */
   append(event: RunEvent, cause: Cause): void {
     if (!Object.hasOwn(RUN_EVENT_FIELDS, event.event)) {

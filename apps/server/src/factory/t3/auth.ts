@@ -7,13 +7,10 @@ import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 import * as AuthHttp from "../../auth/http.ts";
 
 /**
- * The factory's routes behind T3's authentication. The factory does not parse tokens or
- * cookies: T3 does, through `EnvironmentAuth.authenticateHttpRequest`, the same call the
- * middleware of its own HTTP API makes (`AuthHttp.layerAuthenticatedAuth`), so paired, relay and
- * tunnel sessions are accepted or refused exactly as there. That middleware is typed against
- * HttpApi endpoints and cannot wrap a plain router route, so this does what upstream's own plain
- * OTLP proxy route does (`authenticateRawRouteWithScope` in `http.ts`). The contract error classes render themselves, so a failing route
- * answers 401, 403 or 500 JSON without a handler.
+ * The factory's routes behind T3's authentication: T3 parses tokens and cookies with the call its
+ * HTTP API middleware makes (`EnvironmentAuth.authenticateHttpRequest`), so paired, relay and
+ * tunnel sessions fare exactly as there. That middleware cannot wrap a plain route, so this follows
+ * upstream's OTLP proxy route. Contract errors render themselves as 401, 403 or 500 JSON.
  */
 
 /**

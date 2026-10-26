@@ -61,7 +61,7 @@ describe("check-seams.sh", () => {
     write("apps/mobile/src/factory/mobileIdentity.ts", "x\n");
     write(".dw/config.yml", "x: 1\n");
     write("apps/web/src/routes/factory.tsx", "x\n");
-    write("apps/web/src/routes/settings.factory.tsx", "x\n");
+    write("apps/web/src/routes/_chat.settings.factory.tsx", "x\n");
     write(".github/workflows/factory-ci.yml", "x: 1\n");
     commit("allowed changes");
 
@@ -74,14 +74,16 @@ describe("check-seams.sh", () => {
     write("apps/server/src/server.ts", "changed again\n");
     write("apps/server/src/ws.ts", "changed\n");
     write("apps/web/src/routes/settings.other.tsx", "x\n");
+    write("apps/web/src/routes/settings.factory.tsx", "x\n");
     commit("unlisted change");
 
     const { status, output } = runScript();
     expect(status).toBe(1);
     expect(output).toContain("apps/server/src/ws.ts");
     expect(output).toContain("apps/web/src/routes/settings.other.tsx");
+    expect(output).toContain("apps/web/src/routes/settings.factory.tsx");
     expect(output).not.toContain("apps/server/src/server.ts");
-    expect(output).not.toContain("settings.factory.tsx");
+    expect(output).not.toContain("_chat.settings.factory.tsx");
   });
 
   it("names an upstream file renamed into an allowed path", () => {

@@ -173,10 +173,8 @@ const TAIL_BYTES = 8192;
 
 /**
  * Whether the last complete line of a run file is a valid `finished` event, read from at most
- * `TAIL_BYTES` at the end of the file. `finish` writes that line last, so a run for which this is
- * true is over without parsing the rest. Answers false for anything it cannot be sure of: a cut-off
- * last line, a last line that is not a valid entry, or one longer than the tail. Never fails on
- * content; IO errors map as `readRun` maps them.
+ * `TAIL_BYTES` at the end; `finish` writes it last, so true means the run is over. False for
+ * anything it cannot be sure of: a cut-off or invalid last line, or one longer than the tail.
  */
 export const lastLineIsFinished = (path: string): boolean => {
   requireRegularFile(path);
@@ -263,12 +261,10 @@ export const withRunFile = <A>(path: string, use: (fd: number) => A): A => {
 const FIRST_CHUNK_BYTES = 64 * 1024;
 
 /**
- * Calls `visit` with the lines of an open JSONL file (each without its newline), newest first,
- * until it answers `"stop"` or the start of the file is reached, and returns how many bytes it
- * read. The file is read backwards in chunks (the first is `firstChunk` bytes, each after it
- * twice the one before), and a line cut by a chunk edge is completed by the next one. The bytes
- * after the last newline come first, as a line; a caller that reads only complete lines skips
- * them.
+ * Calls `visit` with the lines of an open JSONL file, newest first, until it answers `"stop"`,
+ * and returns how many bytes it read. Read backwards in chunks (each twice the one before);
+ * a line cut by a chunk edge is completed by the next. The bytes after the last newline
+ * come first, as a line; a caller that wants only complete lines skips them.
  */
 export const scanLinesBack = (
   fd: number,

@@ -1,13 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - the time of the last read is a two-line file in the data dir that a failed write must not fail the step over.
 /**
  * Instructor feedback on a `pr-open` run, ported from softfac's `runner/feedback.rs`: a review or
- * a comment on the pull request, or a comment on the issue, starts a new session on the pull
- * request's branch, and the issue goes straight from `pr-open` to `building`. The session pushes
- * to the same branch, so the same pull request is updated, and the gate runs again when the
- * session's first run ends.
- *
- * Each call reads the ledger first and does only what it does not record, so calling it again
- * resumes whatever an earlier call left half done.
+ * comment on the pull request, or on the issue, starts a new session on the pull request's
+ * branch and the issue goes from `pr-open` to `building`. Each call reads the ledger first and
+ * does only what it does not record, so calling again resumes whatever was left half done.
  */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -88,34 +84,10 @@ export type FeedbackStep =
 const NONE: FeedbackStep = { kind: "none" };
 
 /**
- * Acts on the feedback instructors left on a `pr-open` run since its pull request last passed the
- * gate. Call it for a run on every pass, before anything is gated.
- *
- * Three kinds of feedback count, each from a person in `factory.instructors` and never with the
- * factory's marker: a review of the pull request, a comment in its conversation, and a comment on
- * the issue. They are read from one second before the pass that first took the run to `pr-open`
- * since its last feedback relaunch, and an item that a `feedback_relaunching` or
- * `feedback_forwarding` line names (by its GitHub id, which an edit does not change) is never sent
- * again. With none left, nothing is written and `none` is the answer.
- *
- * The feedback of a run is read at most once every `ctx.feedbackSeconds`. The time of the last
- * read is kept in `feedbackReadFile` and is written before the read is made, so a read that fails
- * waits too. A read that succeeds and finds nothing new also keeps the time it started, as the
- * file's second line, and the next read pages back through the reviews only to that time (see
- * `newFeedback`). A time that is missing or unreadable, or later than the clock, means the read is
- * due, and so is one that cannot be written. A call that is not due reads and writes nothing. A
- * relaunch that an earlier call decided is finished on every call, whatever the time of the last
- * read (see `finishDecided`).
- *
- * Otherwise all of it goes into one new session. The pull request is read first: one that is
- * merged or closed ends the run, and a closed issue abandons it, with nothing sent. The issue text
- * is checked as `watch` checks it, and a change sends the run `stuck`. Then the old session is
- * stopped if it still has a worktree, and the ledger gets `feedback_relaunching`, the decision
- * with the branch, the ids and the block the session is sent, before any launch call. The session
- * is launched under `softfac:<run>:feedback:<n>` (see `relaunchSession`), and then the pull
- * request goes back to draft, the issue is assigned to the machine and labelled `building` and the
- * status comment is updated; the `state_changed` line is last. No gate attempt is used and no new
- * run is made.
+ * Acts on feedback from `factory.instructors` on a `pr-open` run since its pull request last
+ * passed the gate; call it every pass, before gating. Reads are at most every
+ * `ctx.feedbackSeconds`, the time written first so a failing read waits too. An item the ledger
+ * names by GitHub id (an edit keeps it) is never resent; the rest goes into one new session.
  */
 export const feedback = (
   ctx: FeedbackContext,
@@ -201,14 +173,10 @@ export const feedback = (
   );
 
 /**
- * Finishes a feedback relaunch that an earlier call decided, before anything else is looked at:
- * the ledger has its `feedback_relaunching` line and no `session_launched` after it, so the launch
- * is sent again under the same command id, which T3 answers with the thread it made, or makes now;
- * or it has the new session and not the state change, so only the transition is left. The feedback
- * is not read again and the pull request and the issue are not judged: the feedback is decided,
- * and a merge, a closed issue or a changed text is judged by the next pass on a run that now
- * tracks the new thread, which archives it. A failing T3 call is an error with nothing written.
- * `null` when the ledger holds no such relaunch.
+ * Finishes a feedback relaunch an earlier call decided, before anything else: the launch is
+ * resent under the same command id, or only the state change is left. The feedback is not read
+ * again nor the pull request and issue judged; the next pass does that. A failing T3 call is an
+ * error with nothing written. `null` when the ledger holds no such relaunch.
  */
 const finishDecided = Effect.fn("RunnerFeedback.finishDecided")(function* (
   ctx: FeedbackContext,
@@ -315,16 +283,10 @@ const keepCleanRead = (ctx: FeedbackContext, run: RunId, started: number): void 
 const secondBefore = (ms: number): string => `${formatTs(Math.max(0, ms - 1_000)).slice(0, 19)}Z`;
 
 /**
- * The feedback that is new since `sinceMs` (the moment the run reached `pr-open`): the
- * instructors' reviews and conversation comments on the pull request and their comments on the
- * issue, less what a `feedback_relaunching` or `feedback_forwarding` line already names, an issue
- * comment that was forwarded into the building session, and one the issue was told could not be.
- * Oldest first. The read starts one second early, so that something written in the pass's own
- * second is not missed: the ledger keeps what is sent from being sent twice.
- *
- * A read that found nothing judged every review submitted after its own floor up to its start, so
- * the next one need only page back to that start less a margin, however many reviews arrived
- * since the run reached `pr-open`. A clean read from an earlier `pr-open` period is no help.
+ * The instructors' feedback new since `sinceMs` (when the run reached `pr-open`), less what the
+ * ledger already names as relaunched, forwarded or dropped. Oldest first; the read starts one
+ * second early so the pass's own second is not missed. A read that found nothing judged every
+ * review after its floor, so the next one pages back only to its start, less a margin.
  */
 const newFeedback = Effect.fn("RunnerFeedback.newFeedback")(function* (
   ctx: FeedbackContext,

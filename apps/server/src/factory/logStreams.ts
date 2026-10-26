@@ -1,11 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - stdout and stderr are written through their file descriptors once their streams break.
 /**
- * Keeps a failed write to stdout or stderr from ending the server. A stream that fails a write
- * emits `error`, and with no listener that is an uncaught exception: under launchd stdout is the
- * log file, so a full disk took the whole server down with ENOSPC (#186). Once a stream has
- * failed, Node never writes to it again, so later lines go straight to its file descriptor, which
- * works again as soon as there is space. Lines that cannot be written are dropped and counted, and
- * the first write that succeeds again is preceded by one `N log lines dropped (<code>)` line.
+ * Keeps a failed write to stdout or stderr from ending the server. A failed stream emits `error`,
+ * which with no listener is an uncaught exception (under launchd a full disk killed the server).
+ * Node never writes to a failed stream again, so later lines go straight to its file descriptor.
+ * Dropped lines are counted and reported in one `N log lines dropped (<code>)` line on recovery.
  */
 import * as NodeFS from "node:fs";
 import type * as NodeStream from "node:stream";

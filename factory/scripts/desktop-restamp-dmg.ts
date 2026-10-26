@@ -1,11 +1,7 @@
 #!/usr/bin/env node
-// Brings a mac update manifest and the dmg's blockmap back in line with a dmg that
-// changed after electron-builder wrote them, as stapling a notarization ticket does.
-// Rebuilds <dmg>.blockmap with electron-builder's own blockmap code, then rewrites
-// the sha512 and size of the manifest entry whose url is the dmg's file name. It
-// serializes with upstream's manifest code, which drops the top-level path and
-// sha512 as upstream's own mac manifests do; electron-updater reads them only when
-// files is empty. The dmg itself is not touched.
+// Re-syncs a mac update manifest and the dmg's blockmap with a dmg changed after electron-builder
+// wrote them (stapling a notarization ticket), leaving the dmg alone. Like upstream's manifests,
+// it drops the top-level path and sha512, which electron-updater reads only when files is empty.
 //
 //   node factory/scripts/desktop-restamp-dmg.ts <dmg> <manifest.yml>
 import * as NodeFS from "node:fs";

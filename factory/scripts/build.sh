@@ -2,7 +2,8 @@
 # Builds the fork with upstream's own build scripts, smoke-tests the archive and only then
 # moves it to release/t3fac-<version>-darwin-arm64.tar.gz. Refuses a tree with uncommitted
 # changes, so the version always names exactly what was built. `build.sh --print-version`
-# only prints the version. T3FAC_SMOKE_TIMEOUT sets the smoke test's deadline in seconds (60).
+# only prints the version and `build.sh --print-node-version` only the Node version the SEA
+# build uses. T3FAC_SMOKE_TIMEOUT sets the smoke test's deadline in seconds (60).
 set -euo pipefail
 
 root=${T3FAC_REPO_ROOT:-$(git rev-parse --show-toplevel)}
@@ -18,6 +19,22 @@ version="${upstream}+fac.$(git rev-parse --short HEAD)"
 
 if [[ ${1:-} == --print-version ]]; then
   echo "$version"
+  exit 0
+fi
+
+# The SEA build needs the Node version upstream pins: root package.json engines.node, which
+# the server's vite config reads, or the SEA_NODE_VERSION constant older upstreams kept there.
+sea_node=$(node -p 'String((require("./package.json").engines || {}).node || "")' || true)
+if [[ -z $sea_node ]]; then
+  sea_node=$(sed -n 's/^const SEA_NODE_VERSION = "\([^"]*\)";.*/\1/p' apps/server/vite.config.ts 2>/dev/null || true)
+fi
+if [[ -z $sea_node ]]; then
+  echo "could not read the SEA Node version: no engines.node in package.json and no SEA_NODE_VERSION in apps/server/vite.config.ts" >&2
+  exit 1
+fi
+
+if [[ ${1:-} == --print-node-version ]]; then
+  echo "$sea_node"
   exit 0
 fi
 
@@ -50,13 +67,6 @@ cleanup() {
   [[ -z $stage ]] || rm -rf "$stage"
 }
 trap cleanup EXIT
-
-# The SEA build needs the Node version upstream pins in the server's vite config.
-sea_node=$(sed -n 's/^const SEA_NODE_VERSION = "\([^"]*\)";.*/\1/p' apps/server/vite.config.ts)
-if [[ -z $sea_node ]]; then
-  echo "could not read SEA_NODE_VERSION from apps/server/vite.config.ts" >&2
-  exit 1
-fi
 
 echo "build: version $version (SEA node $sea_node)"
 

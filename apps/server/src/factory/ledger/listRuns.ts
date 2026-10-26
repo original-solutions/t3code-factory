@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import { isState, type State } from "../domain/lifecycle.ts";
 import { readProgress, type Seen } from "../runner/progress.ts";
 import { errnoCode, LedgerIoError, LedgerNotFoundError } from "./errors.ts";
+import type { PrEnd } from "./events.ts";
 import {
   dataField,
   dataText,
@@ -51,11 +52,9 @@ export interface RunInfo {
 }
 
 /**
- * Whether a run holds one of the machine's `max_concurrent_runs` slots: it is not finished, it is
- * not waiting on a pull request, and it is confirmed. A run in `pr-open`, or one whose session
- * reported its pull request and waits for the gate, has no session at work, and an unconfirmed
- * run never gets one, so all three are left out. A run whose file cannot be read counts. The
- * caller has already left out finished runs.
+ * Whether a run holds one of the machine's `max_concurrent_runs` slots: it is confirmed, not
+ * finished and not waiting on a pull request (`pr-open`, or reported and waiting for the gate).
+ * A run whose file cannot be read counts. The caller has already left out finished runs.
  */
 export const holdsSlot = (run: RunInfo): boolean =>
   run.unreadable || (run.confirmed && run.state !== "pr-open" && !run.prReported);
@@ -140,11 +139,9 @@ const readWhole = (dataDir: string, id: RunId): FileRead<WholeRead> => {
 };
 
 /**
- * Reads the runs directory once for every caller: the files named like a run that are regular
- * files (a symlink or directory with such a name is not a run, as in softfac), each read by
- * `read`, oldest first. A regular file that cannot be read is still a row, with nothing read, so
- * one bad file does not hide the others. `skip` is asked about a file before it is read, with its
- * mtime, and a file it answers true for is left out. A missing runs directory is an empty list.
+ * Reads the runs directory once for every caller: regular files named like a run (a symlink or
+ * directory is not a run), each read by `read`, oldest first. An unreadable file is still a row,
+ * with nothing read. A file `skip` answers true for, asked with its mtime, is not read.
  */
 const scanRuns = <T>(
   dataDir: string,
@@ -190,13 +187,10 @@ const scanRuns = <T>(
 };
 
 /**
- * Every run under `<dir>/runs/` that is not finished (a file whose last line is `finished` is
- * skipped by reading only its tail), oldest first by the first line's time; with
- * `only`, the runs of that one issue, and no other file is read. Files that are not named like a
- * run, and anything that is not a regular file, are ignored, and a missing runs directory is an
- * empty list. A run file that cannot be read is still listed, flagged `unreadable`, so one bad
- * file does not hide the others. A run with no readable line sorts after the started ones, and
- * unreadable runs sort last; ties go as {@link readRuns} has them.
+ * Every run under `<dir>/runs/` that is not finished, oldest first by the first line's time; with
+ * `only`, just that issue's runs. A finished file is skipped by reading only its tail. An
+ * unreadable run is still listed, flagged `unreadable`, and sorts last; runs with no readable line
+ * sort after the started ones; ties go as {@link readRuns} has them.
  */
 export const listUnfinishedRuns = (
   dataDir: string,
@@ -226,6 +220,8 @@ export interface RunSummary {
   readonly step: string | null;
   /** The `finished` line's pull request URL, else the last `pr_opened` URL. */
   readonly prUrl: string | null;
+  /** How the run's pull request ended, from the `finished` line; its last state predates that. */
+  readonly prEnd: PrEnd | null;
   readonly finished: boolean;
   readonly totalMs: number | null;
   /** The file could not be read; every other field is empty. */
@@ -247,6 +243,7 @@ const unreadableSummary = (id: RunId): RunSummary => ({
   state: null,
   step: null,
   prUrl: null,
+  prEnd: null,
   finished: false,
   totalMs: null,
   unreadable: true,
@@ -256,6 +253,12 @@ const unreadableSummary = (id: RunId): RunSummary => ({
 const totalMsOf = (end: Entry | undefined): number | null => {
   const total = dataField(end?.data, "total_ms");
   return typeof total === "number" ? total : null;
+};
+
+/** The `pr_end` of a `finished` line, when it is one this build knows. */
+const prEndOf = (end: Entry | undefined): PrEnd | null => {
+  const prEnd = dataField(end?.data, "pr_end");
+  return prEnd === "merged" || prEnd === "closed" ? prEnd : null;
 };
 
 /** The summary of a run read whole: its progress, plus what the progress does not carry. */
@@ -270,6 +273,7 @@ const summarise = (id: RunId, { record, seen }: WholeRead): RunSummary => {
       ? null
       : dataText(record.entries.findLast((entry) => entry.event === "step_changed")?.data, "step"),
     prUrl: (end === undefined ? null : dataText(end.data, "pr_url")) ?? seen.lastPr?.url ?? null,
+    prEnd: prEndOf(end),
     finished: seen.finished,
     totalMs: totalMsOf(end),
     unreadable: false,
@@ -277,12 +281,9 @@ const summarise = (id: RunId, { record, seen }: WholeRead): RunSummary => {
 };
 
 /**
- * The summary of a finished run file (its last line is `finished`, see `lastLineIsFinished`)
- * without reading it whole, equal to {@link summarise} of the whole read. A finished file is never
- * appended to, so its ends say everything the summary needs: the first line its start, and a scan
- * back from the end the `finished` line, the last `state_changed` and, when the `finished` line has
- * no pull request URL (a stuck run's never has), the last `pr_opened`. The scan stops once it has
- * them, so only a finished run that never opened a pull request is read to its start.
+ * The summary of a finished run file without reading it whole, equal to {@link summarise} of the
+ * whole read. A finished file is never appended to, so the first line, the `finished` line, the
+ * last `state_changed` and (if `finished` has no PR URL) the last `pr_opened` say everything.
  */
 const summariseFinished = (id: RunId, path: string): FileRead<RunSummary> =>
   withRunFile(path, (fd) => {
@@ -314,6 +315,7 @@ const summariseFinished = (id: RunId, path: string): FileRead<RunSummary> =>
         state: state ?? null,
         step: null,
         prUrl,
+        prEnd: prEndOf(end),
         finished: true,
         totalMs: totalMsOf(end),
         unreadable: false,
@@ -322,14 +324,10 @@ const summariseFinished = (id: RunId, path: string): FileRead<RunSummary> =>
   });
 
 /**
- * Every run under `<dir>/runs/`, finished ones included, oldest first by the first line's time and
- * in the order {@link listUnfinishedRuns} uses. A run file that cannot be read is still listed,
- * flagged `unreadable`, with no record. Files that are not named like a run, and anything that is
- * not a regular file, are ignored, and a missing runs directory is an empty list. The whole of
- * every file is read, except with `skipFinishedBefore` (Unix epoch ms): a file last written
- * before it whose last line is `finished` is neither read nor returned. A finished file is never
- * appended to after that line, so an old mtime means none of its lines is inside a window that
- * starts at the cutoff. A recent file, or an unfinished one however old, is read in full.
+ * Every run under `<dir>/runs/`, finished ones included, oldest first, in the order of
+ * {@link listUnfinishedRuns}. An unreadable file is still listed, flagged `unreadable`. With
+ * `skipFinishedBefore` (Unix epoch ms), a finished file last written before it is neither read nor
+ * returned: a finished file is never appended to, so an old mtime means no line is in the window.
  */
 export const readRuns = (
   dataDir: string,
@@ -351,12 +349,9 @@ const finishedBefore = (cutoffMs: number | undefined) =>
     : (path: string, mtimeMs: number) => mtimeMs < cutoffMs && lastLineIsFinished(path);
 
 /**
- * `softfac runs list`: every run under `<dir>/runs/`, one summary each, in the order of
- * {@link readRuns}. A finished file is summarised from its ends (see `summariseFinished`) and is
- * never read whole; an unfinished one, one of the few active runs, is read whole. With
- * `skipFinishedBefore` (Unix epoch ms) a finished file last written before it is neither read nor
- * returned, as in {@link readRuns}, so a page that shows recent runs does not read the ends of
- * every file the factory ever made.
+ * `softfac runs list`: one summary per run under `<dir>/runs/`, in the order of {@link readRuns}.
+ * A finished file is summarised from its ends and never read whole. `skipFinishedBefore` (Unix
+ * epoch ms) works as in {@link readRuns}.
  */
 export const listRuns = (
   dataDir: string,
@@ -372,11 +367,9 @@ export const listRuns = (
   }).map((run) => run.read ?? unreadableSummary(run.id));
 
 /**
- * The run each session thread was launched for, and whether that session is stopped: the run is
- * finished, a later session replaced it, or its worktree step (`worktree_removed` or
- * `worktree_remove_failed`) is written. `complete` is false when a run file could not be read, so a
- * thread missing from the map may still be a session's. Every run file is read whole, so it is for
- * the rare pass that found a thread on a broken worktree.
+ * The run each session thread was launched for, and whether that session is stopped: its run is
+ * finished, a later session replaced it, or its worktree step is written. `complete` is false when
+ * a run file could not be read, so a thread missing from the map may still be a session's.
  */
 export const runsByThread = (
   dataDir: string,

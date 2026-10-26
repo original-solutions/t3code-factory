@@ -13,20 +13,10 @@ const MIDDLE = "v0.0.10-nightly.20261014.2950";
 const NEWEST = "v0.0.10-nightly.20261015.3145";
 const ROUTE_TREE = "apps/web/src/routeTree.gen.ts";
 
-// Every stub appends its invocation to $SYNC_TEST_LOG and whether GH_TOKEN
-// reached it to $SYNC_TEST_LOG.env; `gh` also appends the GH_REPO it ran with
-// to $SYNC_TEST_LOG.repo. `gh` answers the calls sync.sh reads from:
-// `pr create` prints a URL, `pr list` prints $SYNC_TEST_PR_URL (the open pull
-// request its --jq asks for), and `issue list` prints every issue in
-// $SYNC_TEST_ISSUES as the `number<TAB>title<TAB>labels` rows the script's --jq
-// asks for (labels comma-joined), so the script's own title match is what the
-// test exercises. `workflow run` appends origin's main as it sees it to
-// $SYNC_TEST_LOG.main, and fails for the workflow file in $SYNC_TEST_DISPATCH_FAIL.
-// `vp` fails with
-// $SYNC_TEST_VP_FAIL as its output, the generator with $SYNC_TEST_REGENERATE_FAIL,
-// and `check.sh` with the file $SYNC_TEST_CHECK_OUTPUT, when each is set.
-// `check.sh` also pushes $SYNC_TEST_MOVE_MAIN's HEAD to origin's main when set,
-// as if another pull request landed while the checks ran.
+// Each stub appends its invocation to $SYNC_TEST_LOG (plus .env, .repo and .main siblings for
+// GH_TOKEN, GH_REPO and origin's main). `gh` answers the reads sync.sh makes from SYNC_TEST_*
+// variables, `vp`, the generator and `check.sh` fail on request, and `check.sh` can push
+// $SYNC_TEST_MOVE_MAIN's HEAD to origin's main as if another pull request landed.
 const ghStub = `#!/usr/bin/env bash
 echo "gh $*" >> "$SYNC_TEST_LOG"
 echo "gh \${GH_TOKEN-unset}" >> "$SYNC_TEST_LOG.env"

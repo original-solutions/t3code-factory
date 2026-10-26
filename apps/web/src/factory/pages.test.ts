@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { isSidebarUtilityPage } from "~/components/sidebar/mainAppLocation";
+
 import { isFactoryPage } from "./pages";
 
 describe("isFactoryPage", () => {
@@ -11,5 +13,13 @@ describe("isFactoryPage", () => {
   it("does not match routes that only share the prefix", () => {
     expect(isFactoryPage("/factory-floor")).toBe(false);
     expect(isFactoryPage("/")).toBe(false);
+  });
+});
+
+describe("isSidebarUtilityPage", () => {
+  it("keeps Factory pages out of the main app's back target", () => {
+    expect(isSidebarUtilityPage("/factory")).toBe(true);
+    expect(isSidebarUtilityPage("/factory/run-123")).toBe(true);
+    expect(isSidebarUtilityPage("/")).toBe(false);
   });
 });

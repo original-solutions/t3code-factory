@@ -50,7 +50,7 @@ stateDiagram-v2
 
 ## The session's launch message
 
-The factory starts a T3 thread on the project's default model, full access, in a new worktree from `base`. Its first message is:
+The factory starts a T3 thread on the project's default model, full access, in a new worktree from `base`, or from the branch of the earlier work it continues: the issue's open pull request, or the branch of a run that passed its time limit or lost its session. Its first message is:
 
 ```text
 /factory <owner/repo>#<n>
@@ -59,20 +59,20 @@ The factory daemon launched this session unattended, ...
 You act on GitHub as <login>. ...
 ```
 
-The session must check `gh api user --jq .login` first and must not change `GH_CONFIG_DIR`, `GH_TOKEN` or `GH_HOST`.
+The session must check `gh api user --jq .login` first and must not change `GH_CONFIG_DIR`, `GH_TOKEN` or `GH_HOST`. A launch that continues earlier work adds a paragraph that says what it continues, tells the session to push with `git push origin HEAD:<branch>`, and says not to open another pull request.
 
 ## Result line
 
 The whole last non-empty line of the session's last message:
 
-| Last line                                                                            | Requires                                                                            | Result                                                    |
-| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| `FACTORY-DONE: https://github.com/<owner>/<repo>/pull/<n>`                           | Exactly that URL form; repo matches (case-insensitive); PR on the session's branch. | PR set to draft if needed; gate runs.                     |
-| `FACTORY-STOP: needs-info`                                                           | Non-empty text above it: the numbered questions.                                    | Questions posted; `needs-info`. Empty text: `stuck`.      |
-| `FACTORY-STOP: stuck`                                                                | Text above it explains why.                                                         | `stuck`, with the text quoted as unverified session text. |
-| `FACTORY-STOP: stuck` with first line `the session's gh account is <x>, not <login>` |                                                                                     | `stuck`: wrong GitHub account.                            |
-| `FACTORY-DONE:` with a malformed URL, or a PR on another repo                        |                                                                                     | `stuck` at once, no reminder.                             |
-| no result line, or no message                                                        |                                                                                     | One reminder message; then `stuck`.                       |
+| Last line                                                                            | Requires                                                                                                                                                                                                                                         | Result                                                    |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- |
+| `FACTORY-DONE: https://github.com/<owner>/<repo>/pull/<n>`                           | Exactly that URL form; repo matches (case-insensitive); not a fork; onto the run's base; on the session's branch, its launch or resumed-from branch, or a branch an earlier attempt of the issue worked on, or a PR an earlier attempt recorded. | PR set to draft if needed; gate runs.                     |
+| `FACTORY-STOP: needs-info`                                                           | Non-empty text above it: the numbered questions.                                                                                                                                                                                                 | Questions posted; `needs-info`. Empty text: `stuck`.      |
+| `FACTORY-STOP: stuck`                                                                | Text above it explains why.                                                                                                                                                                                                                      | `stuck`, with the text quoted as unverified session text. |
+| `FACTORY-STOP: stuck` with first line `the session's gh account is <x>, not <login>` |                                                                                                                                                                                                                                                  | `stuck`: wrong GitHub account.                            |
+| `FACTORY-DONE:` with a malformed URL, or a PR on another repo                        |                                                                                                                                                                                                                                                  | `stuck` at once, no reminder.                             |
+| no result line, or no message                                                        |                                                                                                                                                                                                                                                  | One reminder message; then `stuck`.                       |
 
 ```mermaid
 sequenceDiagram
@@ -128,14 +128,20 @@ Unauthenticated: 401.
 
 ## Attention items
 
-| Kind                               | Raised when                                                                                                         | Clears when                                      |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| `stuck`                            | A run ends `stuck`.                                                                                                 | The issue is claimed again.                      |
-| `needs-info`                       | A run ends `needs-info`.                                                                                            | The issue is claimed again.                      |
-| `attention`                        | Issue closed under a building run; a run holds a slot with nothing to move it; a thread may need archiving by hand. | The run finishes, or the issue is claimed again. |
-| `attention` (id `worktree:<path>`) | A pass archived the live threads left on a stopped session's worktree that is gone or has no `.git`.                | The issue is claimed again.                      |
-| `attention` (id `low-disk`)        | Free space is below `min_free_gib`; no run.                                                                         | A pass finds it at or above, or reads none.      |
-| `config`                           | The machine config fails to load.                                                                                   | It loads.                                        |
-| `pass-errors`                      | 3 passes in a row fail.                                                                                             | A pass succeeds.                                 |
+| Kind                                              | Raised when                                                                                                         | Clears when                                                                        |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `stuck`                                           | A run ends `stuck`.                                                                                                 | The issue is claimed again.                                                        |
+| `needs-info`                                      | A run ends `needs-info`.                                                                                            | The issue is claimed again.                                                        |
+| `attention`                                       | Issue closed under a building run; a run holds a slot with nothing to move it; a thread may need archiving by hand. | The run finishes, or the issue is claimed again.                                   |
+| `attention` (id `worktree:<path>`)                | A pass archived the live threads left on a stopped session's worktree that is gone or has no `.git`.                | The issue is claimed again.                                                        |
+| `attention` (id `low-disk`)                       | Free space is below `min_free_gib`; no run.                                                                         | A pass finds it at or above, or reads none.                                        |
+| `attention` (id `deploy-waiting`)                 | autodeploy has had a build waiting longer than `deploy_wait_minutes`; no run.                                       | The `deploy-pending` marker is gone or stale, or the wait is under a raised limit. |
+| `attention` (id `config-not-loaded:<owner/name>`) | A repo's project config has not loaded, or its config or login could not be re-read (stale), for 3 passes in a row. | A pass reads the config fresh and does not fall back on the last good login.       |
+| `config`                                          | The machine config fails to load.                                                                                   | It loads.                                                                          |
+| `pass-errors`                                     | 3 passes in a row fail.                                                                                             | A pass succeeds.                                                                   |
 
 Dismissed items stay hidden until they clear and are raised again.
+
+### Calls GitHub never received
+
+A `gh` call that fails because GitHub never received it (a TLS handshake or a dial that failed) is tried up to 5 times, waiting 2, 5, 15 and 30 s plus up to a second of jitter. If a repo's config or login read still fails that way and an earlier pass loaded one, the pass runs on that last good copy and records `repo_config_stale` (`repo`, `what`: `config` or `login`, `message`). A failure that is not transient drops the copy, so a config removed or broken on purpose does not come back on a later blip. A stale config replaces `repo_skipped`; a stale login replaces the tracker `error` event. A login failure with no fallback is still that `error` event, and a 404, a parse error, or a config with no earlier copy still skips the repo. Each stale pass, and each pass that falls back on the config but cannot read the login, counts toward the `config-not-loaded` item above. The gate's fetch uses HTTP/1.1 and is tried up to 3 times (5 s, then 15 s, plus jitter) when git reports a network error. These waits make a pass longer, and the loop stops a pass at 30 minutes, which leaves a claim it cuts short `stuck`; so a pass that has run 20 minutes claims nothing more, prints one `claims stopped:` line and writes `claim_skipped` with reason `late`. The next pass lists the ready issues again.

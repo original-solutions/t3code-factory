@@ -443,11 +443,12 @@ describe("machine config", () => {
       notify: true,
       minFreeGib: 10,
       maxLoadPerCore: 1,
+      deployWaitMinutes: 120,
     });
     expect(machineLoaded(MACHINE).warnings).toEqual([]);
   });
 
-  // #106 retired the key: the factory watches the T3 projects of its environment instead.
+  // The key is retired: the factory watches the T3 projects of its environment instead.
   it("machine repos is no longer read, and is one warning naming repos", () => {
     const t = edit(MACHINE, (tree) => {
       tree.repos = [{ repo: "rawphp/softfac", path: "/Users/me/EA/projects/softfac" }];
@@ -482,7 +483,7 @@ describe("machine config", () => {
     expect(loaded.warnings.map((w) => w.field)).toEqual(["model_instance", "model", "repos"]);
   });
 
-  // The keys were retired by #93: the model now comes from the T3 project, then the T3 settings.
+  // The keys were retired: the model now comes from the T3 project, then the T3 settings.
   // A file written before that must keep loading, so the factory that builds the upgrade stays up.
   it("machine model_instance and model are no longer read, and each is one warning", () => {
     const t = edit(MACHINE, (tree) => {
@@ -526,6 +527,23 @@ describe("machine config", () => {
     for (const bad of ['"ten"', "-1", "1.5"]) {
       const errs = machineErr(edit(MACHINE, (t) => set(t, "min_free_gib", bad)));
       assertOne(errs, "min_free_gib", MFILE);
+    }
+  });
+
+  it("machine deploy_wait_minutes defaults to 120 and takes any whole number of at least one", () => {
+    expect(machine(MACHINE).deployWaitMinutes).toBe(120);
+    for (const given of [1, 240]) {
+      expect(
+        machine(edit(MACHINE, (t) => set(t, "deploy_wait_minutes", String(given))))
+          .deployWaitMinutes,
+      ).toBe(given);
+    }
+  });
+
+  it("machine deploy_wait_minutes must be an integer of at least one", () => {
+    for (const bad of ["0", "-1", "1.5", '"two"']) {
+      const errs = machineErr(edit(MACHINE, (t) => set(t, "deploy_wait_minutes", bad)));
+      assertOne(errs, "deploy_wait_minutes", MFILE);
     }
   });
 
@@ -785,6 +803,7 @@ describe("loaders", () => {
             notify: true,
             minFreeGib: 10,
             maxLoadPerCore: 1,
+            deployWaitMinutes: 120,
           },
         }),
       );

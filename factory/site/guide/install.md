@@ -31,10 +31,10 @@ The install waits up to 90 seconds for the server to answer on port 3876 and to 
 
 ### Tools the server can see
 
-launchd gives the server only the `PATH` its plist sets, which covers Homebrew, `/usr/bin` and `vp`. Gates and sessions often need more, such as `claude`, `cargo`, `php` or `composer`. Put those in `~/.config/t3fac/env`, which the job sources before it starts the server:
+launchd starts the server with the `PATH` its plist sets, which covers Homebrew, `/usr/bin` and `vp`. At startup the server also reads your login shell's `PATH` and adds it, so agent sessions see the tools your shell does. Every command the factory runs itself, provision and gate included, gets the plist's `PATH`, with `~/.config/t3fac/env` applied, first, and the login shell's entries after it, so a tool in the env file's `PATH` wins over the login shell's. The plist's own directories, `/usr/bin` included, also come before the login shell's, so a version manager's shims (pyenv, mise, asdf) reach those commands only when the env file prepends them. Put tools gates need there, such as `claude`, `cargo`, `php` or `composer`; the job sources the file before it starts the server. Append a directory to add a tool. Prepend it to shadow one the plist's `PATH` already has, such as the `python3` in `/usr/bin`:
 
 ```sh
-PATH="$PATH:$HOME/.cargo/bin"
+PATH="/opt/homebrew/opt/python@3.13/libexec/bin:$PATH:$HOME/.cargo/bin"
 export PATH
 ```
 
@@ -43,6 +43,8 @@ Check what the running job has with `launchctl print gui/$(id -u)/io.github.rawp
 ## Follow main
 
 Once it is on, the server follows `main` on its own. Every 10 minutes the autodeploy job fetches a clone kept for it, and when `origin/main` is not the installed commit it builds and installs that commit with `deploy.sh`, health check and rollback included. Each deploy restarts the server, so it waits while an agent is at work in any thread, yours or the factory's, while a factory run has a gate at work, or while a pass is running, and tries again on the next tick. A thread waiting on your answer doesn't hold it up.
+
+While a build waits, the factory claims no new issue, so the runs in progress can finish, and each `waiting to deploy` line in `autodeploy.log` says how long the build has waited. After `deploy_wait_minutes` in the [machine config](/guide/machine-config) (default 120) the job installs anyway: factory runs in progress resume on the new version, and a thread of yours with an agent at work is interrupted, which you continue in T3. If autodeploy stops running, the server ignores its marker after 30 minutes and claims again.
 
 A build that fails, or is still going after an hour, is tried again on the next two ticks; after the third failure that commit is left until `main` moves. A commit that fails its health check is left at once.
 
@@ -69,7 +71,7 @@ When the token expires, the log says it cannot read the status and nothing deplo
 
 A deploy or rollback you run by hand stays until `main` moves: the next tick leaves it in place and logs that it is doing so.
 
-To turn it off, remove `T3FAC_AUTODEPLOY_CLONE` from `~/.config/t3fac/env`. To stop the job until the next install or rollback, run `launchctl bootout gui/$(id -u)/io.github.rawphp.t3fac.autodeploy`. To remove it, run that, then delete `~/Library/LaunchAgents/io.github.rawphp.t3fac.autodeploy.plist` and `~/.local/share/t3fac/autodeploy.sh`; a later install puts them back.
+To turn it off, remove `T3FAC_AUTODEPLOY_CLONE` from `~/.config/t3fac/env`. To stop the job until the next install or rollback, run `launchctl bootout gui/$(id -u)/io.github.rawphp.t3fac.autodeploy`. To remove it, run that, then delete `~/Library/LaunchAgents/io.github.rawphp.t3fac.autodeploy.plist` and `~/.local/share/t3fac/autodeploy.sh`; a later install puts them back. If a build was waiting when you stopped the job, also delete `~/.config/t3fac/factory/deploy-pending`, or every pass logs it as stale.
 
 ## Install the desktop app
 

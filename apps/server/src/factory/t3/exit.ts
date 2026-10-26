@@ -5,11 +5,9 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
 /**
- * The restart behind `POST /api/factory/restart` (`http.ts`): `request` begins it once and answers
- * `pending` to every later call, because this process is on its way out and never resets. The
- * route maps the result to 202 or 409 and nothing else. `make` takes the exit that ends the
- * process, so the route's tests count the calls instead of exiting vitest; `layer` is the real one,
- * provided to the routes by FactoryLayer (`../index.ts`).
+ * The restart behind `POST /api/factory/restart` (`http.ts`): `request` begins it once and
+ * answers `pending` to every later call, because this process is on its way out. `make` takes
+ * the exit that ends the process, so the route's tests count calls instead of exiting vitest.
  */
 export class ServerExit extends Context.Service<
   ServerExit,
@@ -51,15 +49,10 @@ export const make = (
 };
 
 /**
- * Ends the process the way `t3 serve` already handles a stop: SIGTERM to itself, which
- * `NodeRuntime.runMain` turns into an interrupt of the main fiber, so the server closes its scope
- * (listeners, provider children, a running gate) as it does for `launchctl stop`. runMain's
- * teardown then exits 130 for an interrupt; the `exit` listener makes that one code 0, because a
- * requested restart is a clean exit to launchd (which restarts on any code) and to a shell alike.
- * Any other code is left alone, so a teardown that failed still shows as a failure. A shutdown
- * that hangs is cut short by `process.exit(0)` after `fallbackMs`, with a line on stderr so the
- * launchd log shows the shutdown did not finish on its own; the timer is unref'd so it never keeps
- * a finished process alive.
+ * Ends the process the way `t3 serve` handles a stop: SIGTERM to itself, which `runMain` turns
+ * into an interrupt, so the scope closes as for `launchctl stop`. The `exit` listener turns
+ * runMain's 130 into 0 (a requested restart is clean to launchd) and leaves other codes alone. A
+ * hung shutdown is cut short by `process.exit(0)` after `fallbackMs`, with a line on stderr.
  */
 export const exitProcess = (fallbackMs = EXIT_FALLBACK_MS): void => {
   process.once("exit", (code) => {

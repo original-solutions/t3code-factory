@@ -1,8 +1,7 @@
 /**
- * What every step that stops or finishes a run shares, ported from softfac's `runner.rs`: the
- * stuck path with its session stop, the move to `factory:building`, and the three ways a run ends
- * without a gate: its pull request was merged or closed (`endRun`), its issue was closed
- * (`abandon`), or an operator stopped it by hand (the stuck path). Each step passes its own
+ * What every step that stops or finishes a run shares: the stuck path with its session stop, the
+ * move to `factory:building`, and the three ways a run ends without a gate (its pull request was
+ * merged or closed, its issue was closed, or an operator stopped it). Each step passes its own
  * `Progress.step`, which names it in the ledger's causes.
  */
 import * as Effect from "effect/Effect";
@@ -88,10 +87,9 @@ export interface ForwardPayload {
 
 /**
  * What the gate's and the forwards' actions carry that the ledger does not: the results comment
- * `post-gate-results` posts, and the send `send-gate-failure` makes, under a command id so a
- * retry is the same command, with the attempt and session run ordinal it then records as sent
- * back; and the message a forward sends. An action whose part is missing is an
- * `InvalidTransition`.
+ * and the failure send (under a command id so a retry is the same command, with the attempt and
+ * run ordinal recorded as sent back), and a forward's message. An action whose part is missing is
+ * an `InvalidTransition`.
  */
 export interface ActionPayload {
   /** What `forward-comment` and `forward-body-edit` send. */
@@ -148,18 +146,10 @@ export const finishBuilding = Effect.fn("RunnerRun.finishBuilding")(function* (
 });
 
 /**
- * Carries out the actions a transition asks for, in order, as softfac's `apply` does. The label,
- * the release and the status comment are repeated safely; the two comments are posted once, as
- * `at.seen` says (the questions, and the stuck decision, which `at.stop` words). The
- * `state_changed` line is written last, after every action, so a ledger that still shows the old
- * state means the transition may be unfinished and is run again. `cause` is the cause of every
- * line written. The gate's actions: marking the pull request ready is repeated safely, its
- * results comment (`payload.comment`) is posted once (`at.gateResultsPosted`, the
- * `gate-results-posted` step), and a failure is sent under `payload.send.commandId` and then
- * recorded as sent back for that attempt and run. A forwarded comment or body edit is sent under
- * `payload.forward.commandId` and then recorded (`comment_forwarded`, or the step
- * `payload.forward.step`). Actions that belong to later steps, and gate or forward actions with no
- * payload, are an `InvalidTransition`.
+ * Carries out the actions a transition asks for, in order. The label, release and status comment
+ * are repeated safely; the two comments are posted once, as `at.seen` says. `state_changed` is
+ * written last, so a ledger showing the old state means the transition may be unfinished and
+ * runs again. Gate and forward actions without their payload are an `InvalidTransition`.
  */
 export const applyActions = Effect.fn("RunnerRun.applyActions")(function* (
   ctx: RunContext,
@@ -310,10 +300,9 @@ export const applyActions = Effect.fn("RunnerRun.applyActions")(function* (
 
 /**
  * Stops the session before the run goes stuck: archives the thread, then removes its worktree
- * unless the ledger says that is done. An archive or a read of the thread that fails fails the
- * start with nothing written, and the next pass archives again; so does a removal that could not
- * archive the other threads on the worktree, which fails before git runs. A worktree git cannot
- * remove is written down and does not stop the run.
+ * unless the ledger says that is done. A failed archive or thread read fails the start with
+ * nothing written and the next pass archives again, as does a removal that could not archive the
+ * other threads on the worktree. A worktree git cannot remove is written down, not fatal.
  */
 export const stopSession = Effect.fn("RunnerRun.stopSession")(function* (
   ctx: RunContext,
@@ -358,10 +347,9 @@ export const stopSession = Effect.fn("RunnerRun.stopSession")(function* (
 const isThreadNotFound = Schema.is(ThreadNotFoundError);
 
 /**
- * Why a run goes stuck. `reason` is the public one: one of the factory's own fixed lines, the only
- * text that goes in the comment's `Reason:`. `detail`, when there is one, holds what the public
- * must not read (a T3 error, a branch name) and stays in the ledger and the caller's reason.
- * `sessionText` is what the session said and `branch` where its work is, both already through
+ * Why a run goes stuck. `reason` is the public one: a fixed factory line, the only text that goes
+ * in the comment's `Reason:`. `detail` holds what the public must not read (a T3 error, a branch
+ * name) and stays in the ledger. `sessionText` and `branch` are already through
  * `prepareSessionText` and left out when empty.
  */
 export interface Stop {
@@ -377,14 +365,10 @@ export const recordedReason = (stop: Stop): string =>
   (stop.detail ?? stop.reason) + (stop.sessionText === undefined ? "" : `\n\n${stop.sessionText}`);
 
 /**
- * The stuck path. The session is stopped first (see `stopSession`), so a failure of that leaves
- * the issue as it was and the next pass tries again. Then the actions `lifecycle.transition`
- * asks for on a failure, in order, then the `state_changed` line and the summary line. The
- * comment says `stop.reason`, quotes `stop.sessionText` and names `stop.branch`; the ledger's
- * `stuck` line says `stop.detail` when there is one, then the session text, and the branch. A
- * comment is skipped when the ledger already records it; the label, the release and the status
- * comment are repeated safely. A pull request that was ready (the issue is `pr-open`) goes back to
- * draft first. `code` is the reason of every line it writes.
+ * The stuck path. The session is stopped first (see `stopSession`), so a failure leaves the issue
+ * as it was and the next pass retries. Then `afterStop`, the actions `lifecycle.transition` asks
+ * for, `state_changed` and the summary line. A comment the ledger already records is skipped, a
+ * ready pull request goes back to draft first, and `code` is the reason of every line written.
  */
 export const goStuck = Effect.fn("RunnerRun.goStuck")(function* (
   ctx: RunContext,
@@ -393,6 +377,7 @@ export const goStuck = Effect.fn("RunnerRun.goStuck")(function* (
   at: Progress,
   code: string,
   stop: Stop,
+  afterStop: Effect.Effect<void, RunError> = Effect.void,
 ) {
   const cause = makeCause(at.step, code);
   if (at.state === "stuck") {
@@ -400,6 +385,7 @@ export const goStuck = Effect.fn("RunnerRun.goStuck")(function* (
     return;
   }
   yield* stopSession(ctx, out, at);
+  yield* afterStop;
   // A pull request that was ready for review is not left looking ready: the factory no longer
   // vouches for it. Safe to repeat.
   if (at.state === "pr-open" && at.pr !== null) yield* ctx.tracker.markPrDraft(at.pr);
@@ -412,13 +398,10 @@ export const goStuck = Effect.fn("RunnerRun.goStuck")(function* (
 });
 
 /**
- * Ends a run whose pull request was merged or closed, from `pr-open` or, for the session's own
- * pull request that a person ended before the gate could mark it ready, from `building`. Nothing
- * will use its session again, so the thread is archived first (an error other than T3 not having
- * the thread is returned with nothing written, and the next call archives again; a run whose
- * ledger never got a thread has nothing to archive); then the summary line, the only write,
- * caused by `step`. Nothing is posted on GitHub. A pull request that is gone, or closed without a
- * merge, was closed.
+ * Ends a run whose pull request was merged or closed, from `pr-open` or from `building` (a person
+ * ended it before the gate marked it ready). The thread is archived first (an error other than T3
+ * lacking it returns with nothing written, and the next call archives again); then the summary
+ * line, the only write, caused by `step`. Nothing is posted. A gone or unmerged one is closed.
  */
 export const endRun = Effect.fn("RunnerRun.endRun")(function* (
   ctx: RunContext,
@@ -447,13 +430,10 @@ export type Closing =
 const OPEN: Closing = { kind: "open" };
 
 /**
- * Whether a closed issue is a person's move for this run, or the run's own finish. It is the run's
- * own when a pull request the run reported (`pr_opened` lines) is merged, whether or not the gate
- * had passed: with a pass recorded the gate completes it without writing on the pull request;
- * before one, the step that finds it ends the run with `pr_end: merged` at once. A pull request
- * the run has not reported yet cannot be known here, so a merge before the first `advance` after
- * the session's report still reads as a person's move. `closed` is what GitHub says about the
- * issue. A read that fails is an error, never an answer.
+ * Whether a closed issue is a person's move for this run, or the run's own finish: the latter when
+ * a pull request the run reported (`pr_opened` lines) is merged, gate passed or not. A merge before
+ * the first `advance` after the session's report still reads as a person's move. `closed` is what
+ * GitHub says about the issue. A failed read is an error, never an answer.
  */
 export const movedOnByClosing = Effect.fn("RunnerRun.movedOnByClosing")(function* (
   ctx: RunContext,
@@ -485,16 +465,10 @@ export const closedIssue = Effect.fn("RunnerRun.closedIssue")(function* (
 });
 
 /**
- * Finishes a run whose issue a person closed: the session's thread is archived first (an archive
- * error other than T3 not having the thread is an error with nothing written, so the next call
- * decides again), then the ledger is finished, as `needs-info` for a run that was left in that
- * state and as `stuck` for any other. Nothing is written on GitHub: the person owns the issue now.
- *
- * The summary line says which step noticed, with the login of the person who closed the issue
- * when GitHub says whose it was. The login is a courtesy: a read that fails ends the run the same.
- *
- * True when a session may exist that this could not archive: a launch was sent and the ledger
- * never got its thread, so the caller says so (the launch command id is `softfac:<run>:launch`).
+ * Finishes a run whose issue a person closed: archives the session's thread first (an error other
+ * than T3 lacking it is an error with nothing written), then finishes the ledger as `needs-info`
+ * for a run left in that state and `stuck` otherwise. Nothing is written on GitHub. Returns true
+ * when a session may exist that this could not archive: a launch was sent but no thread recorded.
  */
 export const abandon = Effect.fn("RunnerRun.abandon")(function* (
   ctx: RunContext,

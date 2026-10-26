@@ -1,46 +1,8 @@
 /**
- * The factory's HTTP routes, each behind T3's own authentication (`route`). server.ts merges
- * `FactoryRoutes` into `layerMakeRoutes`.
- *
- * Reads need `orchestration:read` and answer what softfac prints:
- * - `GET /api/factory/status`: the `status --json` report, with the open attention items.
- * - `GET /api/factory/runs`: `runs list`, one row per run: every unfinished run and the finished
- *   runs of the last `RECENT_FINISHED_MS`, or every run with `?all=1`. A finished run is summarised
- *   from the ends of its file, and one older than the window is not read at all, so the many old
- *   runs cost a stat and a tail read each; only the unfinished ones are read whole.
- * - `GET /api/factory/runs/:id`: `runs show`, every entry of one run.
- *
- * - `GET /api/factory/config`: the machine config file as the settings page shows it (values, or
- *   the defaults with no file, or the errors of a file that does not load), with the watched T3
- *   projects and what the loop last read of each one's project config, the opted-in checkouts the
- *   reader could not settle, and why the projects could not be listed when they could not.
- *
- * Settings need `settings:write`:
- * - `POST /api/factory/config`: applies the keys of the JSON body to the machine config file,
- *   keeping its comments and the keys the page does not edit, and writes it only when
- *   `parseMachineConfig` accepts the result (else 422 `invalid_config` with the errors, file
- *   untouched; a body that is not a JSON object is 400 `invalid_body`). It then reloads the loop
- *   and answers the new report.
- *
- * Control needs `orchestration:operate`:
- * - `POST /api/factory/runs/:id/stop`: `runs stop`; leaves a stop request for the next pass, as
- *   `stop-run.sh` does, and wakes the loop. The pass archives the thread and removes the worktree.
- * - `POST /api/factory/claims/pause` and `.../resume`: `claims pause` and `claims resume`.
- * - `POST /api/factory/attention/dismiss`: dismisses the open attention items whose ids the body's
- *   `ids` lists, and answers `{ dismissed }`, the ids it dismissed; an id that is not open is
- *   ignored. A body without an `ids` array of strings is 400 `invalid_body`.
- *
- * Restart needs `environment:maintain`, the scope T3 gives its own process control
- * (`server.signalProcess`, `server.updateServer`), so an MCP client holding only operate cannot
- * end the server:
- * - `POST /api/factory/restart`: `ServerExit.request` (`exit.ts`); answers 202, then the service
- *   logs `factory restart requested` and ends the process; under the LaunchAgent, launchd starts
- *   it again. A second request while one is pending answers 409 `restart_pending`.
- *
- * Each handler decodes its input, calls one function (`control.ts`, `status.ts`, `exit.ts`, the
- * ledger reads) and maps the result to a status and a body. A run id is parsed before anything is
- * read, so no id reaches the file system as a path. A ledger error or a failed read or write
- * answers 500 `factory_error`, mapped once for every route by `factoryRoute`.
+ * The factory's HTTP routes, each behind T3's own authentication (`route`). Reads need
+ * `orchestration:read`, config writes `settings:write`, control `orchestration:operate`, and `POST
+ * /api/factory/restart` needs `environment:maintain`, so an operate-only MCP client cannot end the
+ * server. A run id is parsed before anything is read, so none reaches the file system as a path.
  */
 import {
   AuthEnvironmentMaintainScope,
@@ -191,6 +153,7 @@ const runsRoute = factoryRoute(
         step: run.step,
         status: statusWord(run),
         pr_url: run.prUrl,
+        pr_end: run.prEnd,
         finished: run.finished,
         total_ms: run.totalMs,
         unreadable: run.unreadable,

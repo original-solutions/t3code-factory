@@ -18,7 +18,7 @@ bad=0
 while IFS= read -r path; do
   [[ -n $path ]] || continue
   case "$path" in
-    apps/server/src/factory/*|apps/web/src/factory/*|apps/desktop/src/factory/*|apps/mobile/src/factory/*|factory/*|.dw/*|apps/web/src/routes/factory*|apps/web/src/routes/settings.factory*|.github/workflows/factory-*)
+    apps/server/src/factory/*|apps/web/src/factory/*|apps/desktop/src/factory/*|apps/mobile/src/factory/*|factory/*|.dw/*|apps/web/src/routes/factory*|apps/web/src/routes/_chat.settings.factory*|.github/workflows/factory-*)
       continue ;;
   esac
   if grep -qxF -- "$path" "$root/factory/SEAMS"; then

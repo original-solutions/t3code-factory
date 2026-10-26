@@ -19,14 +19,22 @@ import { FactoryFrame } from "./FactoryFrame";
 import { FactoryError, FactoryLoading } from "./FactoryNotices";
 import {
   currentStep,
+  issueRef,
   labelForState,
   lastGateOutput,
   messageOf,
+  parseRunId,
+  prEndOf,
+  prRef,
+  prUrlOf,
   runIsFinished,
   runState,
+  shownState,
   stateBadgeVariant,
   threadIdOf,
+  whyStopped,
 } from "./format";
+import { Ref } from "./Ref";
 import { TouchLink } from "./TouchLink";
 import { useFactoryEnvironmentLabel, useFactoryRun } from "./useFactoryData";
 
@@ -44,7 +52,7 @@ function keyed<T>(items: ReadonlyArray<T>, base: (item: T) => string): Array<[st
 function GateOutput({ entries }: { entries: ReadonlyArray<FactoryEntry> }) {
   const stacked = useMediaQuery("max-sm");
   const gate = lastGateOutput(entries);
-  const empty = gate.commands.length === 0 && gate.message === null && gate.stuckReason === null;
+  const empty = gate.commands.length === 0 && gate.message === null;
   return (
     <section className="flex flex-col gap-2">
       <h2 className="text-sm font-medium">Last gate output</h2>
@@ -98,9 +106,6 @@ function GateOutput({ entries }: { entries: ReadonlyArray<FactoryEntry> }) {
         <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border bg-card p-3 font-mono text-xs">
           {gate.message}
         </pre>
-      ) : null}
-      {gate.stuckReason !== null ? (
-        <p className="text-sm text-muted-foreground">Stuck: {gate.stuckReason}</p>
       ) : null}
     </section>
   );
@@ -203,9 +208,15 @@ export function FactoryRunPage({
 
   const entries = run.data?.entries ?? [];
   const state = runState(entries);
+  const shown = shownState(state, prEndOf(entries));
   const canStop = run.data !== null && state === "building" && !runIsFinished(entries);
-  const step = currentStep(entries);
+  // A finished run's last step is over; the runs list says finished too.
+  const step = runIsFinished(entries) ? "finished" : currentStep(entries);
   const threadId = threadIdOf(entries);
+  const parsed = parseRunId(runId);
+  const issue = parsed ? issueRef(`${parsed.owner}/${parsed.repo}`, parsed.issue) : null;
+  const pr = prRef(prUrlOf(entries));
+  const why = whyStopped(entries);
 
   let body;
   if (run.status === "error" && run.data === null) {
@@ -224,7 +235,7 @@ export function FactoryRunPage({
     body = (
       <>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-          <Badge variant={stateBadgeVariant(state)}>{labelForState(state)}</Badge>
+          <Badge variant={stateBadgeVariant(shown)}>{labelForState(shown)}</Badge>
           <span className="min-w-0 break-words text-muted-foreground">Step: {step ?? "-"}</span>
           {threadId ? (
             <TouchLink
@@ -235,6 +246,8 @@ export function FactoryRunPage({
           ) : (
             <span className="text-muted-foreground">no thread yet</span>
           )}
+          {issue ? <Ref {...issue} touch /> : null}
+          {pr ? <Ref {...pr} touch /> : null}
           <Button
             className="ml-auto"
             disabled={!canStop || busy}
@@ -249,6 +262,15 @@ export function FactoryRunPage({
           <p className="break-words text-sm text-muted-foreground" role="status">
             {note}
           </p>
+        ) : null}
+        {why ? (
+          <section className="flex flex-col gap-2">
+            <h2 className="text-sm font-medium">{why.title}</h2>
+            {/* The session's own words: plain text, never markdown or HTML. */}
+            <p className="whitespace-pre-wrap break-words rounded-lg border bg-card p-3 text-sm">
+              {why.text}
+            </p>
+          </section>
         ) : null}
         <GateOutput entries={entries} />
         <Ledger entries={entries} skipped={run.data.skipped} truncated={run.data.truncated} />

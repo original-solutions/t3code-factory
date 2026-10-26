@@ -33,19 +33,10 @@ export interface RunUpdate {
 }
 
 /**
- * The thread ids from `updates` each time that thread's latest run changes
- * status.
- *
- * A run's first status arrives in `run.created`, later ones in `run.updated`.
- * T3 writes `run.updated` for more than status (a checkpoint id, a queue
- * position), so an update that leaves the latest run and its status as they
- * were emits nothing. The latest run is chosen as `status` does, because a
- * queued run cancelled before it started must not hide the completion of the
- * run that is working.
- *
- * State belongs to one run of the returned stream, so each run starts empty:
- * the first update it sees for a thread already in flight emits once, as a
- * wake that costs the consumer one status read.
+ * The thread ids from `updates` each time that thread's latest run changes status. T3 writes
+ * `run.updated` for more than status, so an update that leaves the latest run and its status as
+ * they were emits nothing. The latest run is chosen as `status` does, so a cancelled queued run
+ * cannot hide the working one. Each run of the stream starts empty: a thread in flight emits once.
  */
 export const latestRunStatusChanges = <E, R>(
   updates: Stream.Stream<RunUpdate, E, R>,

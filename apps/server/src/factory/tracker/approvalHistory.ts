@@ -166,19 +166,10 @@ export const textChangesSince = (
 };
 
 /**
- * Whether the factory may build the issue: an instructor applied the `ready` label that is in
- * force now, and every edit of the body and every rename of the title at or after that moment
- * was an instructor's.
- *
- * The timeline events (label changes and renames, oldest first) are walked so that the walk
- * keeps the last `ready` event that no later removal cancelled. Label names are matched
- * exactly. Only the newest page of events is read; the one in force among them is enough,
- * because every later event, a rename included, is on the page too. A full page of a longer
- * history without it is `label-history-incomplete`.
- *
- * An edit or rename before the label's time is ignored: the instructor approved the text as it
- * stood. One in the label's own second counts as after it. Timestamps are compared as strings.
- * Only a `User` can be an instructor: a deleted account or a bot never is.
+ * Whether the factory may build the issue: an instructor (only ever a `User`) applied the `ready`
+ * label in force now, and every body edit and title rename from that second on was an instructor's.
+ * Only the newest timeline page is read: it holds the label in force and all after it, and a full
+ * page without it is `label-history-incomplete`. Label names match exactly; times compare as text.
  */
 export const judgeApproval = (
   issue: ApprovalIssue,

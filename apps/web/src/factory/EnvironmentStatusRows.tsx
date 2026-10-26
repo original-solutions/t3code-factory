@@ -1,14 +1,16 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import { Link } from "@tanstack/react-router";
 
 import { Button } from "~/components/ui/button";
 import { Skeleton } from "~/components/ui/skeleton";
 
 import { FactoryReadFailure } from "./FactoryNotices";
 import { formatAge, messageOf } from "./format";
+import { TouchLink } from "./TouchLink";
 import type { FactoryEnvironment } from "./useFactoryData";
 
 function Row({
-  environment: { label, status },
+  environment: { environmentId, label, status },
   busy,
   nowMs,
   onTogglePause,
@@ -46,6 +48,12 @@ function Row({
                 : "Idle"
               : "Running"}
           </span>
+          {/* The factory idles only for want of a machine config that loads. */}
+          {report.state === "idle" ? (
+            <TouchLink render={<Link search={{ machine: environmentId }} to="/settings/factory" />}>
+              Factory settings
+            </TouchLink>
+          ) : null}
           {paused ? (
             <span className="text-muted-foreground">
               Claims paused since {formatAge(Date.parse(paused.since), nowMs)}

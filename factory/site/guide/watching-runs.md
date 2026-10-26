@@ -6,19 +6,19 @@ The pages work in a phone's browser too, paired over your tailnet as described i
 
 ## The Factory page
 
-<img class="screenshot light-only" src="/screenshots/factory-page-light.png" alt="The Factory page: two Needs attention items above the runs table, with one run each building, needs-info, pr-open and stuck, and a finished run, each with its step, age and pull request" />
-<img class="screenshot dark-only" src="/screenshots/factory-page-dark.png" alt="The Factory page: two Needs attention items above the runs table, with one run each building, needs-info, pr-open and stuck, and a finished run, each with its step, age and pull request" />
+<img class="screenshot light-only" src="/screenshots/factory-page-light.png" alt="The Factory page: two Needs attention items above the runs table, with one run each building, needs-info, pr-open and stuck, and a merged run, each with its step, age and pull request" />
+<img class="screenshot dark-only" src="/screenshots/factory-page-dark.png" alt="The Factory page: two Needs attention items above the runs table, with one run each building, needs-info, pr-open and stuck, and a merged run, each with its step, age and pull request" />
 
-Use it to see what the factory is doing now. It lists every unfinished run and the runs that finished in the last week, newest first, with each run's repo, issue, state, current step, age and pull request. Show all runs to read the full history. It refreshes every 30 seconds. With several environments or repos, narrow the page to one with the Environment and Repo selects in its header; the choice is in the URL, so a reload or a shared link keeps it.
+Use it to see what the factory is doing now. It lists every unfinished run and the runs that finished in the last week, newest first, with each run's repo, issue, state, current step, age and pull request. A run that ended because its pull request was merged or closed shows `merged` or `closed` as its state. Show all runs to read the full history. It refreshes every 30 seconds. With several environments or repos, narrow the page to one with the Environment and Repo selects in its header; the choice is in the URL, so a reload or a shared link keeps it.
 
-It also says when the factory is idle and why (no machine config, or one that failed to load), and lets you pause claims. While claims are paused the factory takes no new `factory:ready` issues in any repo. Runs already under way carry on: sessions, gates and feedback all continue. Resume to start claiming again.
+It also says when the factory is idle and why (no machine config, or one that failed to load), with a link to Settings → Factory, and lets you pause claims. While claims are paused the factory takes no new `factory:ready` issues in any repo. Runs already under way carry on: sessions, gates and feedback all continue. Resume to start claiming again.
 
 ## A run's page
 
-<img class="screenshot light-only" src="/screenshots/run-page-light.png" alt="A pr-open run's page: its state and step, the Thread link, the last gate's commands with exit code 0, and the ledger, where gate attempt 1 failed and was sent back before attempt 2 passed" />
-<img class="screenshot dark-only" src="/screenshots/run-page-dark.png" alt="A pr-open run's page: its state and step, the Thread link, the last gate's commands with exit code 0, and the ledger, where gate attempt 1 failed and was sent back before attempt 2 passed" />
+<img class="screenshot light-only" src="/screenshots/run-page-light.png" alt="A pr-open run's page: its state and step, the links to its thread, issue and pull request, the last gate's commands with exit code 0, and the ledger, where gate attempt 1 failed and was sent back before attempt 2 passed" />
+<img class="screenshot dark-only" src="/screenshots/run-page-dark.png" alt="A pr-open run's page: its state and step, the links to its thread, issue and pull request, the last gate's commands with exit code 0, and the ledger, where gate attempt 1 failed and was sent back before attempt 2 passed" />
 
-Open a run from the list to see why it is where it is. The page shows the run's state and step, links to its T3 thread so you can read the session, and shows the last gate: each command with its exit code and duration, and the failure output the factory sent back to the session. Below that is the run's ledger, every event the factory recorded for it, in order.
+Open a run from the list to see why it is where it is. The page shows the run's state and step, and links to its issue, its pull request and its T3 thread, where you can read the session. A stuck run's page gives the reason it stopped, and a needs-info run's page the questions it posted on the issue. Below that is the last gate: each command with its exit code and duration, and the failure output the factory sent back to the session. Last comes the run's ledger, every event the factory recorded for it, in order.
 
 A run in `factory:building` can be stopped from here. See [Stopping a run by hand](/guide/when-a-run-stops#stopping-a-run-by-hand).
 
@@ -33,6 +33,7 @@ Below the status rows, the Factory page lists what needs a person, and the sideb
 - a run is holding a slot but nothing will move it, for example its label was changed by hand,
 - the machine config failed to load,
 - free disk space is below `min_free_gib`, so nothing is claimed or gated until there is room,
+- a build autodeploy has waiting has waited longer than `deploy_wait_minutes`, while the factory claims nothing; it clears once the build is installed,
 - three passes in a row failed,
 - a stopped session's worktree was deleted or is no longer a git checkout, so the factory archived the threads still on it.
 

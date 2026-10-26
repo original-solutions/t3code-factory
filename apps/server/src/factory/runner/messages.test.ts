@@ -94,8 +94,13 @@ describe("launchMessage: a resumed run", () => {
     branch: "t3code/abc",
     after,
   });
+  const PREFIX =
+    "/factory acme/widgets#42\n\nThe factory daemon launched this session unattended, in a worktree it created for you. Nobody is in the chat. The daemon owns the issue's labels and comments and runs its own gate after your draft PR.\n\n";
+  const PUSH_WORDS =
+    "Push your commits to that branch with `git push origin HEAD:t3code/abc`. If a pull request for this issue is already open on it, that pull request is updated. Do not open another pull request.";
 
-  it("adds the time-limit paragraph, without the branch", () => {
+  // Each `after` has its own fixed words: a changed paragraph is a changed test.
+  it("adds the time-limit paragraph, which names the branch to push to", () => {
     const message = launchMessage(
       "acme/widgets",
       42,
@@ -103,16 +108,13 @@ describe("launchMessage: a resumed run", () => {
       "/gh/rawphp",
       resumed("time-limit"),
     );
-    assert.ok(
-      message.includes(
-        "\n\nA previous attempt of this issue (acme__widgets__42__1) stopped at its time limit. The worktree already holds its commits: continue from them, do not start over.",
-      ),
+    assert.strictEqual(
       message,
+      `${PREFIX}A previous attempt of this issue (acme__widgets__42__1) stopped at its time limit. The worktree already holds its commits: continue from them, do not start over. ${PUSH_WORDS}\n\n${IDENTITY_WORDS}`,
     );
-    assert.ok(!message.includes("t3code/abc"), message);
   });
 
-  it("adds the interruption paragraph for a relaunch", () => {
+  it("adds the interruption paragraph for a relaunch, which names the branch to push to", () => {
     const message = launchMessage(
       "acme/widgets",
       42,
@@ -120,11 +122,33 @@ describe("launchMessage: a resumed run", () => {
       "/gh/rawphp",
       resumed("interrupted"),
     );
-    assert.ok(
-      message.includes(
-        "\n\nA previous attempt of this issue (acme__widgets__42__1) was interrupted when T3 Code lost its session. The worktree already holds its commits: continue from them, do not start over.",
-      ),
+    assert.strictEqual(
       message,
+      `${PREFIX}A previous attempt of this issue (acme__widgets__42__1) was interrupted when T3 Code lost its session. The worktree already holds its commits: continue from them, do not start over. ${PUSH_WORDS}\n\n${IDENTITY_WORDS}`,
+    );
+  });
+
+  it("adds the open pull request paragraph for a resume onto an earlier attempt's pull request", () => {
+    const message = launchMessage("acme/widgets", 42, "rawphp", "/gh/rawphp", {
+      after: "existing-pr",
+      branch: "t3code/abc",
+      prUrl: "https://github.com/acme/widgets/pull/50",
+    });
+    assert.strictEqual(
+      message,
+      `${PREFIX}An earlier attempt of this issue opened the pull request https://github.com/acme/widgets/pull/50, which is still open. The worktree holds that pull request's branch at its tip on origin: continue from its commits, do not start over, and push your commits to the same branch with \`git push origin HEAD:t3code/abc\`, so the same pull request is updated. Do not open another pull request.\n\n${IDENTITY_WORDS}`,
+    );
+  });
+
+  it("adds the feedback paragraph, which names the pull request and the branch", () => {
+    const message = launchMessage("acme/widgets", 42, "rawphp", "/gh/rawphp", {
+      after: "feedback",
+      branch: "t3code/abc",
+      prUrl: "https://github.com/acme/widgets/pull/50",
+    });
+    assert.strictEqual(
+      message,
+      `${PREFIX}The pull request https://github.com/acme/widgets/pull/50 of this issue passed the gate and waits for review, and an instructor left feedback on it or on the issue, below. The worktree holds that pull request's branch at its tip on origin. Address the feedback from there and push your commits to the same branch with \`git push origin HEAD:t3code/abc\`, so the same pull request is updated. Do not open another pull request.\n\n${IDENTITY_WORDS}`,
     );
   });
 

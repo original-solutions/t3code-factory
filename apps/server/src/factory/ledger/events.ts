@@ -43,13 +43,10 @@ export type CheckRead = { readonly name: string; readonly state: string };
 export type ResumedFrom = { readonly run: string; readonly branch: string };
 
 /**
- * Something that happened in a run, as `{ event, data }`. A field that softfac omits when it is
- * absent is optional here and left out of the line when `undefined`; every other field is
- * written, as `null` when softfac writes `null`. No event holds a token. Two kinds of field do
- * hold text the factory sent elsewhere, written as given, not cleaned or cut: the `questions`
- * of `questions_posted` (what was posted to the issue), and the `message` of
- * `regate_relaunching`, `feedback_relaunching` and `feedback_forwarding` (what was sent to the
- * agent session).
+ * Something that happened in a run, as `{ event, data }`. Fields softfac omits when absent are
+ * optional and left out of the line when `undefined`; the rest are written, `null` where softfac
+ * writes `null`. No event holds a token. `questions` and the `message` of `regate_relaunching`,
+ * `feedback_relaunching` and `feedback_forwarding` hold text sent elsewhere, written as given.
  */
 export type RunEvent =
   | { readonly event: "claimed"; readonly data: { machine: string; github_user: string } }
@@ -102,6 +99,7 @@ export type RunEvent =
   | { readonly event: "stop_requested"; readonly data: { by: string } }
   | { readonly event: "step_changed"; readonly data: { step: string } }
   | { readonly event: "pr_opened"; readonly data: { pr: number; url: string } }
+  | { readonly event: "pr_left"; readonly data: { pr: number; url: string } }
   | {
       readonly event: "pr_adopted";
       readonly data: { pr: number; branch: string; run: string };
@@ -120,6 +118,11 @@ export type RunEvent =
   | {
       readonly event: "gate_checkout";
       readonly data: { attempt: number; dir: string; sha: string; base_sha: string };
+    }
+  | {
+      /** The attempt ended: `total_ms` from the start of its checkout to the end of its last command, or of its aborted merge. */
+      readonly event: "gate_finished";
+      readonly data: { attempt: number; total_ms: number };
     }
   | {
       readonly event: "gate_regate";
@@ -184,7 +187,7 @@ export type RunEventName = RunEvent["event"];
 type RunDataKeys<N extends RunEventName> = keyof Extract<RunEvent, { event: N }>["data"];
 
 /**
- * The 30 event types a run file can hold, each with the names of its `data` fields in the order
+ * The 32 event types a run file can hold, each with the names of its `data` fields in the order
  * they are written.
  */
 export const RUN_EVENT_FIELDS = {
@@ -215,6 +218,7 @@ export const RUN_EVENT_FIELDS = {
   stop_requested: ["by"],
   step_changed: ["step"],
   pr_opened: ["pr", "url"],
+  pr_left: ["pr", "url"],
   pr_adopted: ["pr", "branch", "run"],
   branch_bound: ["pr", "branch"],
   pr_set_draft: ["pr"],
@@ -222,6 +226,7 @@ export const RUN_EVENT_FIELDS = {
   gate_command: ["attempt", "command", "exit_code", "duration_ms"],
   gate_sent_back: ["attempt", "run_ordinal"],
   gate_checkout: ["attempt", "dir", "sha", "base_sha"],
+  gate_finished: ["attempt", "total_ms"],
   gate_regate: ["sha", "base_sha", "previous_base_sha", "conflict"],
   regate_relaunching: ["attempt", "branch", "message"],
   feedback_relaunching: ["n", "branch", "items", "message"],
@@ -418,6 +423,11 @@ export type MachineEvent =
       readonly data: { repo: string; reason: string; message: string };
     }
   | {
+      /** A repo's config or login could not be re-read, so the pass ran on the last good copy. */
+      readonly event: "repo_config_stale";
+      readonly data: { repo: string; what: "config" | "login"; message: string };
+    }
+  | {
       readonly event: "claim_skipped";
       readonly data: { repo: string; issue: string; reason: string } | { reason: string };
     }
@@ -496,7 +506,7 @@ type MachineDataKeys<N extends MachineEventName> = KeysOfEach<
 >;
 
 /**
- * The 19 event types the machine log can hold, each with the names of its `data` fields in the
+ * The 20 event types the machine log can hold, each with the names of its `data` fields in the
  * order they are written. A type with more than one shape lists the fields of all of them: the
  * ones that are absent are left out, and the shapes share no field that is ordered differently.
  */
@@ -505,6 +515,7 @@ export const MACHINE_EVENT_FIELDS = {
   pass_finished: ["runs", "claimed", "errors", "attention"],
   preflight_failed: ["check", "why"],
   repo_skipped: ["repo", "reason", "message"],
+  repo_config_stale: ["repo", "what", "message"],
   claim_skipped: ["repo", "issue", "reason"],
   claim_repaired: ["repo", "issue", "outcome"],
   attention: [

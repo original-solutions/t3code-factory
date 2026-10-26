@@ -1,12 +1,8 @@
 /**
- * The one way the factory pages reach the server: a plain `fetch` on a connection's HTTP base that
- * carries the connection's credential itself. The factory API is not part of the typed environment
- * HTTP API (that is the point of the seam, see factory/docs/design.md), so T3's shared HTTP client
- * does not cover it. Going through the connection, not the page's own origin, is what lets the
- * pages work from a phone paired to a remote server: the session cookie when there is no bearer
- * token, `Authorization: Bearer` when there is. A relay (DPoP) connection needs a signed proof per
- * request, which the shared helper only issues for the typed API groups, so it is reported as
- * unsupported rather than sent unauthenticated.
+ * The one way the factory pages reach the server: a plain `fetch` on a connection's HTTP base with
+ * its credential (cookie, or bearer token), as the factory API is outside the typed HTTP API. Going
+ * through the connection, not the page's origin, works from a paired phone. A relay (DPoP) one is
+ * reported unsupported, not sent unauthenticated: the shared helper signs only typed calls.
  */
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 

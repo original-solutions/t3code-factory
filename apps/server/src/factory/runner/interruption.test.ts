@@ -1,12 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - the tests read the bytes of real run files.
 /**
- * Interruptions and relaunches, ported from softfac's `runner/tests/interruption.rs` and
- * `runner/tests/stop.rs`: `advance` says a session that ended `failed` or `cancelled`, or whose
- * thread is gone, ended badly and writes nothing; `interrupted` decides whether that was an
- * interruption (a resume into the same thread, or a relaunch from the run's branch) or a stop.
- * Left out, for the issue that owns them (#24): everything in `interruption.rs` that reads pull
- * request feedback into a paused thread (`paused_with_pr` and the `feedback_forwarding` and
- * owed-feedback tests after it).
+ * Interruptions and relaunches, ported from softfac's `runner/tests/interruption.rs` and `stop.rs`:
+ * `advance` says a session that ended `failed` or `cancelled`, or whose thread is gone, ended
+ * badly; `interrupted` decides whether that was an interruption (a resume or a relaunch) or a stop.
+ * Left out: everything in `interruption.rs` that reads pull request feedback into a paused thread.
  */
 import * as NodeFS from "node:fs";
 
@@ -42,6 +39,7 @@ import {
   type Comment,
   type GitHubError,
   type IssueDetail,
+  type OpenPullRequest,
   type PullRequest,
 } from "../tracker/github.ts";
 import {
@@ -78,8 +76,10 @@ const RESUME_MESSAGE =
   "The session was interrupted: your last turn was cut off, probably because T3 Code was unreachable or restarting, so the factory is not treating it as your decision. Continue from where you were. End your reply with a result line as before: FACTORY-DONE: <PR URL>, FACTORY-STOP: needs-info (after your numbered questions) or FACTORY-STOP: stuck.";
 
 /** The paragraph a relaunch adds to the first message of the next attempt. */
-const INTERRUPTED_WORDS =
-  "A previous attempt of this issue (rawphp__softfac__10__1) was interrupted when T3 Code lost its session. The worktree already holds its commits: continue from them, do not start over.";
+/** The interruption paragraph of a relaunch from `branch`, in the factory's fixed words. */
+const interruptedWords = (branch: string) =>
+  `A previous attempt of this issue (rawphp__softfac__10__1) was interrupted when T3 Code lost its session. The worktree already holds its commits: continue from them, do not start over. Push your commits to that branch with \`git push origin HEAD:${branch}\`. If a pull request for this issue is already open on it, that pull request is updated. Do not open another pull request.`;
+const INTERRUPTED_WORDS = interruptedWords("t3code/abc");
 
 const evidence = (
   t3Error: string | null,
@@ -171,10 +171,15 @@ const STOP_REQUESTED: RunEvent = { event: "stop_requested", data: { by: "operato
 const joined = (publicReason: string, text?: string) =>
   text === undefined ? publicReason : `${publicReason}\n\n${text}`;
 
-const stuckEvents = (extra: ReadonlyArray<Line>, recorded: string): Array<Line> => [
+const stuckEvents = (
+  extra: ReadonlyArray<Line>,
+  recorded: string,
+  left: ReadonlyArray<Line> = [],
+): Array<Line> => [
   ...STARTED,
   ...extra,
   worktreeRemoved("/t3/wt"),
+  ...left,
   { event: "stuck", data: { reason: recorded } },
   moved("building", "stuck"),
   FINISHED,
@@ -263,12 +268,18 @@ const statusOf = (
 interface World {
   issue: IssueDetail;
   pr: PullRequest | null;
+  /** The open pull requests GitHub lists from each branch. */
+  onHead: Record<string, Array<OpenPullRequest>>;
+  /** GitHub fails every `gh pr list --head`. */
+  onHeadFails: boolean;
   /** Read at each call, so a test can move the session on between two calls. */
   status: () => ThreadStatus | ThreadNotFoundError | SessionsError;
   thread: Thread | ThreadNotFoundError | SessionsError;
   textCheck: TextCheck;
   editedSince: boolean;
   branchTip: "found" | "missing";
+  /** Branches origin lacks whatever `branchTip` says. */
+  missingBranches: Array<string>;
   /** The comments the instructors made, for `forward`. */
   comments: Array<Comment>;
   /** The next send fails with this, once. */
@@ -363,11 +374,14 @@ const rigFor = (
   const world: World = {
     issue: issueDetail("building", ["rawphp"]),
     pr: null,
+    onHead: {},
+    onHeadFails: false,
     status: () => statusOf("completed", DONE_MESSAGE),
     thread: { worktreePath: "/t3/wt", branch: "t3code/abc", archived: false },
     textCheck: "unchanged",
     editedSince: false,
     branchTip: "found",
+    missingBranches: [],
     comments: [],
     sendFailure: null,
     sendNotFound: false,
@@ -387,6 +401,13 @@ const rigFor = (
       return Effect.succeed(world.issue);
     },
     closedBy: () => Effect.succeed(null),
+    openPullRequestsOnHead: (branch) => {
+      reads.push(`openPullRequestsOnHead ${branch}`);
+      return world.onHeadFails
+        ? Effect.fail(ghFailure())
+        : Effect.succeed(world.onHead[branch] ?? []);
+    },
+    openPullRequestsClosing: () => Effect.succeed([]),
     pullRequest: (n) => {
       gh.push(`pullRequest ${n}`);
       return Effect.succeed(world.pr);
@@ -434,7 +455,7 @@ const rigFor = (
     },
     branchTip: (branch) => {
       reads.push(`branchTip ${branch}`);
-      return world.branchTip === "found"
+      return world.branchTip === "found" && !world.missingBranches.includes(branch)
         ? Effect.succeed("a".repeat(40))
         : Effect.fail(
             new GitHubFailed({
@@ -821,6 +842,51 @@ describe("interrupted: a resume", () => {
     }),
   );
 
+  it.effect("records the pull request a session that ended badly left on its branch", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.world.onHead = {
+        "t3code/abc": [
+          {
+            number: 12,
+            url: URL12,
+            headRef: "t3code/abc",
+            baseRef: "main",
+            crossRepository: false,
+            author: "rawphp",
+          },
+        ],
+      };
+      yield* failedAndSaid(rig);
+      clearCalls(rig);
+      const outcome = yield* decide(rig, lone());
+      const reason = joined("the session run ended as failed", "it crashed");
+      assert.deepStrictEqual(outcome, { kind: "stuck", reason });
+      assert.deepStrictEqual(
+        linesOf(rig),
+        stuckEvents([], reason, [{ event: "pr_left", data: { pr: 12, url: URL12 } }]),
+      );
+    }),
+  );
+
+  it.effect(
+    "ends a session that ended badly as stuck even when GitHub cannot list its pull requests",
+    () =>
+      Effect.gen(function* () {
+        const rig = rigFor();
+        rig.world.onHeadFails = true;
+        yield* failedAndSaid(rig);
+        clearCalls(rig);
+        const outcome = yield* decide(rig, lone());
+        const reason = joined("the session run ended as failed", "it crashed");
+        assert.deepStrictEqual(outcome, { kind: "stuck", reason });
+        assert.deepStrictEqual(rig.gh, stuckCalls("the session run ended as failed", "it crashed"));
+        const events = linesOf(rig).map((line) => line.event);
+        assert.ok(!events.includes("pr_left"), events.join(" "));
+        assert.ok(events.indexOf("error") < events.indexOf("stuck"), events.join(" "));
+      }),
+  );
+
   it.effect("sends a cancelled session with T3 healthy to stuck as cancelled", () =>
     Effect.gen(function* () {
       const rig = rigFor();
@@ -962,6 +1028,52 @@ describe("interrupted: the cap", () => {
         kind: "stuck",
         reason: THREAD_GONE,
       });
+    }),
+  );
+
+  it.effect("used up records the pull request a gone thread left, by the ledger's branch", () =>
+    Effect.gen(function* () {
+      // The launch line named no branch; the stuck line of an earlier stop did.
+      const rig = rigFor([
+        ...STARTED.map((event) =>
+          event.event === "session_launched"
+            ? { event: "session_launched" as const, data: { ...event.data, branch: null } }
+            : event,
+        ),
+        {
+          event: "session_interrupted",
+          data: {
+            resumes: 1,
+            relaunch: false,
+            run_ordinal: 1,
+            branch: "t3code/left",
+            t3_error: null,
+            ended_in_pass: 2,
+          },
+        },
+        { event: "step_changed", data: { step: "interruption-sent 1" } },
+      ]);
+      withResumeLimit(rig, 1);
+      rig.world.onHead = {
+        "t3code/left": [
+          {
+            number: 12,
+            url: URL12,
+            headRef: "t3code/left",
+            baseRef: "main",
+            crossRepository: false,
+            author: "rawphp",
+          },
+        ],
+      };
+      threadGone(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      assert.deepStrictEqual(yield* decide(rig, afterOutage()), {
+        kind: "stuck",
+        reason: THREAD_GONE,
+      });
+      assert.ok(rig.reads.includes("openPullRequestsOnHead t3code/left"), rig.reads.join("\n"));
+      assert.ok(linesOf(rig).some((line) => line.event === "pr_left"));
     }),
   );
 });
@@ -1826,7 +1938,7 @@ describe("a relaunch finds the branch", () => {
       const request = rig.launches.at(-1)!;
       assert.strictEqual(request.baseRef, "t3code/from-thread");
       assert.strictEqual(request.startFromOrigin, true);
-      assert.ok(request.message.includes(INTERRUPTED_WORDS), request.message);
+      assert.ok(request.message.includes(interruptedWords("t3code/from-thread")), request.message);
     }),
   );
 
@@ -1853,7 +1965,8 @@ describe("a relaunch finds the branch", () => {
 
   it.effect("takes T3's own branch for a session that resumed from an earlier attempt's", () =>
     Effect.gen(function* () {
-      // Attempt 2 was launched from attempt 1's branch on origin; its work is on T3's branch.
+      // Attempt 2 was launched from attempt 1's branch on origin; a version before the push
+      // words left its work on T3's branch, which is on origin.
       const rig = rigFor();
       seed(
         rig.dataDir,
@@ -1865,6 +1978,30 @@ describe("a relaunch finds the branch", () => {
       assert.strictEqual((yield* decide(rig, afterOutage(), run10b)).kind, "relaunched");
       assert.strictEqual(relaunchBranchIn(rig, run10b), "t3code/own");
       assert.strictEqual(rig.launches.at(-1)!.baseRef, "t3code/own");
+    }),
+  );
+
+  it.effect("falls back to the branch it resumed from when origin lacks T3's own", () =>
+    Effect.gen(function* () {
+      // The session was told to push to attempt 1's branch, so T3's own never reached origin.
+      const rig = rigFor();
+      seed(
+        rig.dataDir,
+        run10b,
+        startedResumedFrom("t3code/own", { run: "rawphp__softfac__10__1", branch: "t3code/old" }),
+      );
+      threadGone(rig);
+      rig.world.missingBranches = ["t3code/own"];
+      assert.deepStrictEqual(yield* advanceIn(rig, run10b), endedBadly("thread-gone"));
+      assert.strictEqual((yield* decide(rig, afterOutage(), run10b)).kind, "relaunched");
+      assert.strictEqual(relaunchBranchIn(rig, run10b), "t3code/own");
+      const request = rig.launches.at(-1)!;
+      assert.strictEqual(request.baseRef, "t3code/old");
+      assert.ok(request.message.includes("git push origin HEAD:t3code/old"), request.message);
+      assert.deepStrictEqual(
+        rig.reads.filter((read) => read.startsWith("branchTip ")),
+        ["branchTip t3code/own", "branchTip t3code/old"],
+      );
     }),
   );
 

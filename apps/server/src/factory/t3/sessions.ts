@@ -10,6 +10,7 @@ import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -27,6 +28,7 @@ import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import { sourceControlDefinitions } from "../../sourceControl/sourceControlDefinitions.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import { resolveWorktreesDirectory } from "../../worktreesDirectory.ts";
 
@@ -93,6 +95,11 @@ export interface LaunchRequest {
   /** The first message, which starts the first run. */
   readonly message: string;
   readonly model: Model;
+  /**
+   * The pull request the thread continues, linked to the thread at launch. Absent for a plain
+   * start and for a resume from an earlier run that left no pull request.
+   */
+  readonly pullRequestUrl?: string;
 }
 
 /** What `launch` returns. */
@@ -134,16 +141,26 @@ export interface ThreadStatus extends Thread {
 }
 
 /**
- * Whether `branch` is the temporary `t3/<hex>` branch T3 made the worktree at
- * `worktreePath` on. T3 can rename the thread's branch after launch while the
- * session pushes the one it started on. T3 names a new worktree's folder after
- * that branch, `/` written `-`, and its record of the folder is one the
- * session cannot change, unlike the branch git has checked out there.
+ * Whether `branch` is the temporary `t3/<hex>` branch T3 made the worktree at `worktreePath`
+ * on. T3 can rename the thread's branch after launch while the session pushes the one it
+ * started on. T3 names the folder after that branch (`/` written `-`), and its record of the
+ * folder cannot be changed by the session, unlike the checked-out branch.
  */
 export const isLaunchBranch = (branch: string, worktreePath: string | null): boolean =>
   worktreePath !== null &&
   isTemporaryWorktreeBranch(branch) &&
   branch.replaceAll("/", "-") === worktreePath.split(/[\\/]/).pop();
+
+/**
+ * The temporary `t3/<hex>` branch T3 made the worktree at `worktreePath` on, read back from the
+ * folder name (the inverse of `isLaunchBranch`); null when the folder is not named after one.
+ */
+export const launchBranchOf = (worktreePath: string | null): string | null => {
+  const folder = worktreePath?.split(/[\\/]/).pop();
+  if (folder === undefined) return null;
+  const branch = folder.replace(/^t3-/, "t3/");
+  return isLaunchBranch(branch, worktreePath) ? branch : null;
+};
 
 export class ThreadNotFoundError extends Schema.TaggedError<ThreadNotFoundError>()(
   "FactoryThreadNotFoundError",
@@ -326,12 +343,10 @@ export class FactorySessions extends Context.Service<
       threadId: string,
     ) => Effect.Effect<Thread, ThreadNotFoundError | SessionsError>;
     /**
-     * Sends a follow-up message into the thread. T3 decides delivery: it starts
-     * a run when the thread is idle, steers the message into an active run
-     * when the provider supports it, and queues it otherwise. `commandId`
-     * names the message like a launch's does: sent again after a failure, T3
-     * keeps one message. A message T3 refused stays refused under its id, and
-     * fails as `MessageRejectedError`.
+     * Sends a follow-up message into the thread. T3 decides delivery: starts a run when idle,
+     * steers into an active run if the provider supports it, else queues. `commandId` names the
+     * message like a launch's: resent after a failure, T3 keeps one message. A refused message
+     * stays refused under its id, as `MessageRejectedError`.
      */
     readonly send: (
       threadId: string,
@@ -346,17 +361,10 @@ export class FactorySessions extends Context.Service<
      */
     readonly archive: (threadId: string) => Effect.Effect<void, SessionsError>;
     /**
-     * Removes a thread's worktree from disk with git and keeps its branch.
-     * Every live thread still on it, such as a subagent sharing the session's
-     * checkout, is archived first; when they cannot be read or archived, the
-     * call fails as an `archive` before git runs, so no live thread is left on
-     * a half-removed folder and the caller can try again. Any later failure is
-     * a `remove-worktree`. A
-     * worktree already gone counts as removed. `path` must be absolute. When
-     * git takes the worktree off the clone's list but cannot empty its
-     * directory, the call deletes the rest itself over about 10 s. It deletes
-     * no directory git did not just take off the list: one a stopped removal
-     * left behind (a restart mid-wait) fails, naming the path, for a person.
+     * Removes a thread's worktree with git and keeps its branch. Live threads still on it (a
+     * subagent sharing the checkout) are archived first, failing as `archive` before git runs; a
+     * later failure is `remove-worktree`. A worktree already gone is removed; `path` is absolute.
+     * A folder git just unlisted is emptied over about 10 s; any other leftover fails for a person.
      */
     readonly removeWorktree: (path: string) => Effect.Effect<void, SessionsError>;
     /**
@@ -449,6 +457,44 @@ export const make = Effect.gen(function* () {
     Effect.mapError((cause) => new SessionsError({ operation: "find-project", cause })),
   );
 
+  /**
+   * Never fails: the thread exists and the launch is recorded either way, so a link that cannot
+   * be made is logged and dropped. The command id derives from the launch's, so a launch sent
+   * again does not link twice.
+   */
+  const linkPullRequest = Effect.fn("Sessions.linkPullRequest")(
+    function* (launchCommandId: string, threadId: ThreadId, url: string) {
+      const parsed = sourceControlDefinitions.parseChangeRequestUrl(url)?.link;
+      if (parsed === undefined) {
+        return yield* Effect.logWarning("factory could not read the pull request URL to link", {
+          threadId,
+          pullRequestUrl: url,
+        });
+      }
+      const commandId = yield* decodeCommandId(`${launchCommandId}:pull-request-link`);
+      yield* management.dispatch({
+        type: "thread.pull-request.link",
+        commandId,
+        threadId,
+        host: parsed.host,
+        repository: parsed.repository,
+        number: parsed.number,
+        url,
+        source: "agent",
+      });
+    },
+    (effect, _launchCommandId, threadId, url) =>
+      Effect.catchCause(effect, (cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.failCause(cause as Cause.Cause<never>)
+          : Effect.logWarning("factory could not link the pull request to the launched thread", {
+              threadId,
+              pullRequestUrl: url,
+              cause: Cause.pretty(cause),
+            }),
+      ),
+  );
+
   const launch: FactorySessions["Service"]["launch"] = Effect.fn("Sessions.launch")(
     function* (request) {
       const commandId = yield* decodeCommandId(request.commandId);
@@ -474,6 +520,9 @@ export const make = Effect.gen(function* () {
         createdBy: "user",
         creationSource: "server",
       });
+      if (request.pullRequestUrl !== undefined) {
+        yield* linkPullRequest(request.commandId, result.threadId, request.pullRequestUrl);
+      }
       return {
         threadId: result.threadId as string,
         worktreePath: result.projection.thread.worktreePath,
@@ -709,10 +758,8 @@ export const make = Effect.gen(function* () {
 export const layer = Layer.effect(FactorySessions, make);
 
 /**
- * `layer` with the projection store it reads provided: `server.ts` has the
- * project store, the launch and management services and git in scope where
- * the factory is merged in, but not the projection store, which upstream
- * provides to each worker that reads it. It is the same layer `server.ts`
- * provides everywhere else, memoized with it.
+ * `layer` with the projection store provided: `server.ts` has everything else in scope where
+ * the factory is merged in, but upstream provides the projection store to each worker that
+ * reads it. Same layer `server.ts` provides elsewhere, memoized with it.
  */
 export const layerLive = layer.pipe(Layer.provide(ProjectionStore.layer));

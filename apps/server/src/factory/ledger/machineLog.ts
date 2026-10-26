@@ -36,10 +36,8 @@ export type MachineLogOptions = {
 
 /**
  * The machine log: `<data dir>/events.jsonl`, one line per event in the ledger's line format
- * without a cause, and with the ledger's write rules: the file and a data dir made for it are
- * private to the owner, each event is one write of the whole line followed by a sync, a line cut
- * off by a crash or a failed write is ended before the next one, and a symlink or anything else
- * that is not a regular file in its place is refused. It is appended to and never rewritten.
+ * without a cause, with the ledger's write rules (owner-private, one write plus sync per
+ * event, a cut-off line ended before the next, a non-regular file refused). Append-only.
  */
 export class MachineLog {
   private readonly out: AppendFile;
@@ -200,11 +198,9 @@ export const scanMachineLog = (dataDir: string): Array<MachineEntry> => {
 };
 
 /**
- * Calls `visit` with the lines of the machine log, newest first, until it answers `"stop"` or the
- * start of the file is reached, and returns how many bytes it read. The log is never rotated, so a
- * reader that needs only its end reads only its end: the file is read backwards in chunks
- * (`scanLinesBack`; the first is `firstChunk` bytes). The file is opened and a line skipped
- * exactly as {@link scanMachineLog} does it, so the same entries come in the opposite order.
+ * Calls `visit` with the lines of the machine log, newest first, until it answers `"stop"`, and
+ * returns how many bytes it read. The log is never rotated, so it is read backwards in chunks.
+ * Opens the file and skips lines exactly as {@link scanMachineLog} does.
  */
 export const scanMachineLogBack = (
   dataDir: string,
@@ -249,12 +245,9 @@ export const machineLogSince = (
 const T3_TROUBLE_WINDOW_MS = 10 * 60 * 1000;
 
 /**
- * The newest sign of T3 trouble in the machine log at or after `nowMs` minus ten minutes: a
- * `preflight_failed` whose check is `t3` (its `why`), or an `error` whose kind is `t3` (its
- * `message`). Only the machine log is read, never a run's ledger, and only its tail
- * (`machineLogSince`). Null for none, and for a log that does not exist yet. A restart of the
- * server is not trouble here: its `server_started` line is read by `serverStartsSince`, and
- * `interrupted` weighs it against the run's own times (`Evidence`).
+ * The newest sign of T3 trouble in the machine log within the last ten minutes: a
+ * `preflight_failed` whose check is `t3`, or an `error` whose kind is `t3`. Only the tail of
+ * the machine log is read. A server restart is not trouble here; `interrupted` weighs it.
  */
 export const t3TroubleSince = (dataDir: string, nowMs: number): string | null => {
   let newest: { readonly ms: number; readonly text: string } | null = null;
@@ -294,12 +287,10 @@ export const serverStartsSince = (dataDir: string, sinceMs: number): Array<numbe
 const STOP_SEARCH_MS = 10 * 60 * 1000;
 
 /**
- * The `stopping_at` that belongs to each `server_started` line at or after `sinceMs`: the newest
- * `server_stopping` before that start, back to the start before it, whatever its age. Oldest first.
- * A start whose stop is not reached before a line ten minutes older than the newest line before
- * it followed a crash, and has none. Read backwards (`scanMachineLogBack`) and stopped once the oldest start in the window has
- * its stop or none, so a months-old log is not decoded in full. `bytes` is how much was read, for
- * a test.
+ * The `stopping_at` of each `server_started` line at or after `sinceMs`: the newest
+ * `server_stopping` before that start, back to the previous start. Oldest first. A start whose
+ * stop is not reached before a line ten minutes older than the line before it followed a
+ * crash, and has none. Read backwards so a months-old log is not decoded in full.
  */
 export const readServerStopsForStarts = (
   dataDir: string,

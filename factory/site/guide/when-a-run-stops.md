@@ -4,8 +4,8 @@ Most runs end at `factory:pr-open`. The rest end in one of two labels, each with
 
 ## needs-info
 
-<img class="screenshot light-only" src="/screenshots/run-needs-info-light.png" alt="A needs-info run's page: no gate has run, and the ledger's questions_posted line holds the questions the session posted on the issue" />
-<img class="screenshot dark-only" src="/screenshots/run-needs-info-dark.png" alt="A needs-info run's page: no gate has run, and the ledger's questions_posted line holds the questions the session posted on the issue" />
+<img class="screenshot light-only" src="/screenshots/run-needs-info-light.png" alt="A needs-info run's page: the questions the session posted on the issue, then the gate section, where no gate has run, and the ledger" />
+<img class="screenshot dark-only" src="/screenshots/run-needs-info-dark.png" alt="A needs-info run's page: the questions the session posted on the issue, then the gate section, where no gate has run, and the ledger" />
 
 The session decided the issue can't be built as written: the outcome is unclear, two readings would give different code, or the issue holds two separate pieces of work. It ends with its questions, and the factory posts them as a comment, sets `factory:needs-info` and unassigns the issue.
 
@@ -26,7 +26,7 @@ The factory gave up. The comment gives the reason and, when the session had made
 | No model to launch with                                       | Set a default model on the T3 project or in T3's Settings.                                                                         |
 | Stopped by hand                                               | Nothing: someone stopped it.                                                                                                       |
 
-Fix the cause, then an instructor sets `factory:ready` to start a new run. A new run starts from the issue's base branch (its `## Base`, else the repo's), not from the old branch.
+Fix the cause, then an instructor sets `factory:ready` to start a new run. If an earlier run left the factory's pull request for the issue open, the new run continues that pull request on its branch, even when the issue text changed. To start over instead, close that pull request first. Otherwise a run that passed its time limit or lost its T3 session is continued from its branch, unless the issue text changed since. Any other new run starts from the issue's base branch (its `## Base`, else the repo's).
 
 ## The time limit
 

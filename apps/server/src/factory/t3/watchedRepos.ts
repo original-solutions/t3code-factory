@@ -24,34 +24,10 @@ import { FactoryPaths } from "./paths.ts";
 export const MEMORY_FILE = "watched-projects.json";
 
 /**
- * The repos the factory watches, read from this environment's T3 projects: an active project
- * that is not the scratch project, whose checkout has a `.dw/config.yml` with a `factory` block
- * (the opt-in, so a personal project is never polled), and whose repository T3 resolved to a
- * GitHub `owner/name` through the `origin` remote. T3 prefers an `upstream` remote when a clone
- * has one, so such a clone (a fork) is not watched: its identity is the parent's. Those, and a
- * project that did not opt in, are left out without a word: no error, no attention item.
- *
- * What the reader could not settle is reported in `unresolved`, for the settings page: a config
- * file that could not be read for a reason other than its absence, one that does not parse, an
- * opted-in checkout T3 could not name, and a git that would not run.
- *
- * A repo has left the factory only when the T3 project it was watched from is deleted, never
- * because its checkout reads differently: a branch without the factory block, an `upstream`
- * remote added, an unmounted volume or a git that fails all leave the project in T3. So the reader
- * remembers, in `<factory dir>/watched-projects.json`, the T3 projects each repo was last watched
- * from, and reports in `departed` the repos it watches no more whose every remembered project has
- * since been deleted. That is the only list the pass clears attention items by: `stuck` and
- * `needs-info` items are raised once. A repo nobody watched since the file began is never in it.
- * A memory that cannot be read or parsed reports nothing departed and is left as it is. Only the
- * pass's read (`listAndRemember`) writes the file, and passes do not overlap.
- *
- * The config file is read before the repository identity, so the identity is not resolved for a
- * project that did not opt in. The file is read from the checkout on disk; the loop still reads
- * the default-branch copy from GitHub for the project config itself. A git checkout whose working
- * tree has no file is read once more from the copy committed on origin's default branch (`git
- * show origin/HEAD:.dw/config.yml`), so a clone switched to an older branch is still watched;
- * that is one short git call per pass, and a directory with no `.git` spawns nothing. A repo that
- * two projects name appears once per project: the reader reports facts, and the pass decides.
+ * The repos the factory watches: active T3 projects whose checkout (or origin's default-branch
+ * copy) opts in with a `factory` block in `.dw/config.yml`, and whose `origin` is on GitHub; T3
+ * prefers `upstream`, so a fork is left out. A repo has `departed` only when every project in
+ * `<factory dir>/watched-projects.json` is deleted, never because its checkout reads differently.
  */
 
 export class WatchedReposError extends Schema.TaggedError<WatchedReposError>()(
@@ -117,11 +93,10 @@ export const make = Effect.gen(function* () {
   );
 
   /**
-   * The repos that departed. A repo's remembered projects are its remembered ones and the ones
-   * that watch it now, less those since deleted: an id goes only when its project does, so a
-   * project that merely stops opting in, or cannot be read this pass, stays one of the repo's. A
+   * The repos that departed. A repo's remembered projects are its remembered ones plus those
+   * watching it now, less those since deleted: an id goes only when its project is deleted. A
    * repo departs when none is left. With `remember`, the memory is written for the next pass;
-   * only the pass remembers, so the settings page's read changes nothing.
+   * only the pass remembers.
    */
   const departures = Effect.fn("WatchedRepos.departures")(
     function* (

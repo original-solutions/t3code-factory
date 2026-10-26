@@ -1,12 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - a stop request is a file `factory/scripts/stop-run.sh` leaves, taken the way the gate takes its locks.
 /**
- * A stop by hand, ported from softfac's `runs stop`. `factory/scripts/stop-run.sh <run id>` checks
- * that the run is building and leaves a file named for it in `<dataDir>/stop-requests/`. The pass
- * takes that file into the run's ledger as a `stop_requested` line (`takeStopRequest`), which is
- * what `advance` and the gate read: the ledger stays the one record, and only the server writes
- * it. The run goes `stuck` on the same pass. The HTTP API leaves the same file
- * (`leaveStopRequest`), so a stop asked for while the gate has the run waits for the gate's result
- * there too.
+ * A stop by hand, ported from softfac's `runs stop`. `factory/scripts/stop-run.sh <run id>`
+ * leaves a file in `<dataDir>/stop-requests/`, and the pass takes it into the run's ledger as a
+ * `stop_requested` line (`takeStopRequest`), so only the server writes the ledger. The run goes
+ * `stuck` on that pass. The HTTP API leaves the same file (`leaveStopRequest`).
  */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -46,11 +43,10 @@ export type StopRequestOutcome =
   | "not-building";
 
 /**
- * Records a stop by hand for `run`, as `takeStopRequest` does with a request it found: reads the
- * run's ledger and, when the run is building and no stop was asked for, appends the
- * `stop_requested` line. Throws the ledger's errors (`LedgerNotFoundError` for a run with no
- * file); a caller runs it through `ledgerCall`. `none` is not an outcome here: the caller asked.
- * `seen` is the progress the decision was made from.
+ * Records a stop by hand for `run`, as `takeStopRequest` does: when the run is building and no
+ * stop was asked for, appends the `stop_requested` line. Throws the ledger's errors; a caller
+ * runs it through `ledgerCall`. `none` is not an outcome here: the caller asked. `seen` is the
+ * progress the decision was made from.
  */
 export const requestStop = (
   dataDir: string,
@@ -74,15 +70,10 @@ export const requestStop = (
 };
 
 /**
- * Asks for `run` to be stopped by hand, as the API does: leaves the request `stop-run.sh` leaves,
- * for the pass to take, and never writes the ledger. The pass takes it only when the gate does not
- * have the run, and drops it once the gate passed, so the gate's own result decides the state
- * first. `finished` and `not-building` are refusals (the state is checked before the stop line, so
- * a stale line on a run that left `building` is refused, not `already-requested`);
- * `already-requested` is a request already waiting, or the line already in the ledger. Throws the
- * ledger's errors (`LedgerNotFoundError` for a run with no file), and `LedgerIoError` when the
- * request cannot be written. `seen` is the progress the decision was made from, so a refusal can
- * say why without reading the ledger again.
+ * Asks for `run` to be stopped by hand, as the API does: leaves the file `stop-run.sh` leaves and
+ * never writes the ledger. The pass takes it only when the gate does not have the run and drops it
+ * once the gate passed, so the gate's result decides first. `finished` and `not-building` are
+ * checked before the stop line; `already-requested` is a waiting request or a line in the ledger.
  */
 export const leaveStopRequest = (
   dataDir: string,

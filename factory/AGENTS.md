@@ -4,7 +4,7 @@
 
 ## Put code in fork-owned paths
 
-Factory code lives in `apps/server/src/factory/`, `apps/web/src/factory/`, `apps/desktop/src/factory/`, `apps/mobile/src/factory/`, `apps/web/src/routes/factory*`, `apps/web/src/routes/settings.factory*`, `factory/`, `.dw/` and `.github/workflows/factory-*`. New files go there, tests included: a test for a seam hook sits in `apps/web/src/factory/`, `apps/desktop/src/factory/`, `apps/mobile/src/factory/` or `apps/server/src/factory/` next to the fork code it exercises, not beside the upstream file. A new file at an upstream path becomes a seam the sync has to carry forever.
+Factory code lives in `apps/server/src/factory/`, `apps/web/src/factory/`, `apps/desktop/src/factory/`, `apps/mobile/src/factory/`, `apps/web/src/routes/factory*`, `apps/web/src/routes/_chat.settings.factory*`, `factory/`, `.dw/` and `.github/workflows/factory-*`. New files go there, tests included: a test for a seam hook sits in `apps/web/src/factory/`, `apps/desktop/src/factory/`, `apps/mobile/src/factory/` or `apps/server/src/factory/` next to the fork code it exercises, not beside the upstream file. A new file at an upstream path becomes a seam the sync has to carry forever.
 
 ## A seam is a hook, not a feature
 

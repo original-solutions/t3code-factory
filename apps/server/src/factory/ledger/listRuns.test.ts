@@ -524,6 +524,7 @@ describe("listRuns", () => {
         state: null,
         step: null,
         prUrl: null,
+        prEnd: null,
         finished: true,
         totalMs: 2000,
         unreadable: false,
@@ -535,6 +536,7 @@ describe("listRuns", () => {
         state: null,
         step: "approved 2026-10-04T10:00:00Z",
         prUrl: null,
+        prEnd: null,
         finished: false,
         totalMs: null,
         unreadable: false,
@@ -592,7 +594,7 @@ describe("listRuns", () => {
     expect(listRuns(dataDir)[0]?.prUrl).toBe("https://example.test/pull/3");
   });
 
-  it("a pr-open run reads finished once its pull request ended", () => {
+  it("a pr-open run reads finished once its pull request ended, and how it ended", () => {
     const dataDir = tempDir();
     const ledger = Ledger.create(dataDir, rid(8), { clock: ticking(T0, 1000) });
     handles.push(ledger);
@@ -604,6 +606,7 @@ describe("listRuns", () => {
         state: "pr-open",
         finished: true,
         prUrl: "https://github.com/rawphp/softfac/pull/12",
+        prEnd: "closed",
       }),
     ]);
   });
@@ -626,6 +629,7 @@ describe("listRuns", () => {
       state: null,
       step: null,
       prUrl: null,
+      prEnd: null,
       finished: false,
       totalMs: null,
       unreadable: true,
@@ -713,12 +717,14 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
     const summaries = listRuns(dataDir);
     expect(summaries).toEqual(whole);
     for (const file of files) expect(fullReads()).not.toContain(file);
-    expect(summaries.map((run) => [run.state, run.prUrl, run.finished, run.lastEvent])).toEqual([
-      ["building", null, true, "finished"],
-      ["pr-open", PR_URL, true, "finished"],
-      ["stuck", "https://example.test/pull/6", true, "finished"],
-      [null, "https://example.test/pull/7", true, "finished"],
-      [null, null, true, "finished"],
+    expect(
+      summaries.map((run) => [run.state, run.prUrl, run.prEnd, run.finished, run.lastEvent]),
+    ).toEqual([
+      ["building", null, null, true, "finished"],
+      ["pr-open", PR_URL, "merged", true, "finished"],
+      ["stuck", "https://example.test/pull/6", null, true, "finished"],
+      [null, "https://example.test/pull/7", null, true, "finished"],
+      [null, null, null, true, "finished"],
     ]);
     expect(summaries.every((run) => run.totalMs !== null && run.startedTs !== null)).toBe(true);
     expect(summaries.every((run) => run.step === null)).toBe(true);

@@ -54,15 +54,10 @@ interface Store {
 }
 
 /**
- * One store per environment and resource while anyone reads it: one answer every reader sees, and
- * a refresh from one reader (the page, after a control) updates the others (the badge). A poll
- * tick joins a read in flight, so ticks never pile up behind a slow server; a refresh a reader
- * asked for starts a new read whose answer supersedes the one in flight, so what the reader sees
- * after a control always comes from after it. With the last reader gone the store is dropped, so
- * the next reader starts at loading and an answer still in flight is thrown away. The drop waits a
- * microtask: when a subscription's deps change, React tears down every old subscription before it
- * builds the new ones in one flush, and a store dropped in between would lose its data and its
- * readers' reads to a refetch.
+ * One store per environment and resource while anyone reads it, so every reader sees one answer.
+ * A poll tick joins a read in flight; a requested refresh supersedes it. The last reader's drop
+ * waits a microtask: React tears down old subscriptions before building new ones in one flush,
+ * and an earlier drop would lose the store's data to a refetch.
  */
 const stores = new Map<string, Store>();
 
@@ -156,12 +151,10 @@ export function __resetFactoryStoresForTests(): void {
 const noUnsubscribe = () => {};
 
 /**
- * The resource of one environment: read when its first reader mounts, then on the live-refresh
- * policy (every `POLL_MS` while the window shows and the reader is about, and on coming back to the
- * window), and no more after a 404. Readers of one key share the store, whose `tick` makes their
- * timers one read per `POLL_MS`. The full runs list is read once and never polled: every run the
- * factory ever made, every half minute, is the cost the recent window exists to avoid. Without an
- * environment there is nothing to read: the loading state, and a refresh that does nothing.
+ * The resource of one environment: read when its first reader mounts, then every `POLL_MS` while
+ * the window shows, on return to the window, and no more after a 404. Readers of one key share a
+ * store whose `tick` makes their timers one read. The full runs list is read once, never polled:
+ * every run ever made, every half minute, is the cost the recent window avoids.
  */
 export function useFactoryResource<T>(
   environmentId: EnvironmentId | null,
@@ -194,11 +187,10 @@ export const useFactoryRun = (
   useFactoryResource<FactoryRunDetail>(environmentId, `run:${id}`);
 
 /**
- * The same resource of several environments, one resource each in the order of `environmentIds`.
- * One subscription covers them all, so the set may change between renders. Its snapshot is the
- * previous array while every store's state is the same object, which `useSyncExternalStore` needs
- * to not render again for nothing. One live-refresh timer ticks every key. Readers of one key
- * share the store with `useFactoryResource`.
+ * The same resource of several environments, in the order of `environmentIds`. One subscription
+ * covers them all, so the set may change between renders. The snapshot is the previous array
+ * while every store's state is the same object, so `useSyncExternalStore` does not rerender.
+ * Readers of one key share the store with `useFactoryResource`.
  */
 function useFactoryResources<T>(
   environmentIds: ReadonlyArray<EnvironmentId>,

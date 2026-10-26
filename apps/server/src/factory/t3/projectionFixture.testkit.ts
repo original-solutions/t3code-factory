@@ -1,11 +1,8 @@
 /**
- * A projection database of chosen shape for the factory's read tests and benchmark. One thread, run
- * and turn item go through the store's own `apply`, so their payloads are ones its decoders accept;
- * the rest are copies of those rows made in SQL, which is fast enough for tens of thousands.
- *
- * Payloads are padded to the sizes of the personal Mac's database (a read-only snapshot: threads
- * 1724 bytes on average, runs 1500, turn items 4913), in free-text fields the schemas accept, so
- * a read's decode costs what it does there.
+ * A projection database of chosen shape for the factory's read tests and benchmark. One thread,
+ * run and turn item go through the store's own `apply`, so their payloads decode; the rest are
+ * SQL copies. Payloads are padded to the sizes of the personal Mac's database (threads 1724
+ * bytes, runs 1500, turn items 4913) so a read's decode costs what it does there.
  */
 import {
   EventId,

@@ -55,11 +55,9 @@ const DEFAULT_INTERRUPTION_RESUMES = 2;
 export const DEFAULT_POLL_SECONDS = 60;
 export const DEFAULT_MAX_CONCURRENT_GATES = 2;
 /**
- * How often the feedback of one `pr-open` run is read at most, in seconds. Each read costs about
- * 3 GraphQL points (the pull request's reviews and comments, and the issue's activity) and the
- * pass runs every `poll_seconds`, so at 40 `pr-open` runs a 60 second poll would spend 7,200
- * points an hour of the 5,000 a login has on feedback alone. At one read in 10 minutes it is
- * about 720.
+ * How often, at most, the feedback of one `pr-open` run is read, in seconds. A read costs about 3
+ * GraphQL points and the pass runs every `poll_seconds`, so 40 runs at a 60 second poll would spend
+ * 7,200 of the 5,000 points an hour a login has. One read in 10 minutes is about 720.
  */
 export const DEFAULT_FEEDBACK_SECONDS = 600;
 /**
@@ -68,6 +66,9 @@ export const DEFAULT_FEEDBACK_SECONDS = 600;
  */
 const DEFAULT_KEEP_VERSIONS = 3;
 export const DEFAULT_MIN_FREE_GIB = 10;
+
+/** Minutes a waiting autodeploy build may hold claims back; see {@link MachineConfig.deployWaitMinutes}. */
+export const DEFAULT_DEPLOY_WAIT_MINUTES = 120;
 export const DEFAULT_MAX_LOAD_PER_CORE = 1;
 
 /** What a repo's runs are timed by when none of its project configs has loaded. */
@@ -143,11 +144,9 @@ export interface MachineConfig {
   readonly ghConfigDir: string;
   readonly pollSeconds: number;
   /**
-   * Runs that may hold a slot at once, counted over every repo: a run holds one from its claim
-   * until its session reports its pull request or the run ends; the gate and the wait for the
-   * required checks take no run slot. A session launched again for a `pr-open` run (a failed
-   * re-gate) is not held back by it: the run holds a slot again from that launch and the next
-   * claim counts it, so such relaunches can take the machine past the limit.
+   * Runs that may hold a slot at once, over every repo: from claim until the session reports its
+   * pull request or the run ends. The gate and the wait for checks take no slot. A session
+   * relaunched for a failed re-gate is not held back, so relaunches can exceed the limit.
    */
   readonly maxConcurrentRuns: number;
   readonly maxConcurrentGates: number;
@@ -165,6 +164,12 @@ export interface MachineConfig {
    * start. 0 turns the check off.
    */
   readonly maxLoadPerCore: number;
+  /**
+   * The minutes a build autodeploy has waiting may hold claims back before it installs with runs
+   * in progress. autodeploy.sh reads the key itself with its own copy of the default: change both
+   * together.
+   */
+  readonly deployWaitMinutes: number;
 }
 
 type Mapping = Record<string, unknown>;
@@ -442,15 +447,14 @@ const MACHINE_KEYS = [
   "keep_versions",
   "min_free_gib",
   "max_load_per_core",
+  "deploy_wait_minutes",
 ] as const;
 
 /**
- * Keys the factory read before and reads no more. #93 retired the model keys: the model comes
- * from the T3 project's default, then the T3 settings default. #106 retired `repos`: the factory
- * watches the T3 projects of its environment. A file written before the change still loads, with
- * a warning per key, so the factory that builds the upgrade keeps running, and a save from the
- * settings page keeps them (`settings.ts`) so a rollback to a version that requires them still
- * loads. Remove them from the file by hand once no rollback is possible.
+ * Keys the factory reads no more: the model keys (the model comes from the T3 project's default,
+ * then the T3 settings default) and `repos` (the factory watches the T3 projects). A file with
+ * them still loads with a warning per key, and a settings save keeps them (`settings.ts`) so a
+ * rollback still loads. Remove them by hand once no rollback is possible.
  */
 export const RETIRED_MACHINE_KEYS = ["model_instance", "model", "repos"] as const;
 
@@ -499,6 +503,13 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     DEFAULT_MAX_LOAD_PER_CORE,
     0,
   );
+  const deployWaitMinutes = c.optionalUint(
+    root,
+    "",
+    "deploy_wait_minutes",
+    DEFAULT_DEPLOY_WAIT_MINUTES,
+    1,
+  );
   checkUnknownKeys(c, root);
 
   if (
@@ -510,7 +521,8 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     notify === undefined ||
     keepVersions === undefined ||
     minFreeGib === undefined ||
-    maxLoadPerCore === undefined
+    maxLoadPerCore === undefined ||
+    deployWaitMinutes === undefined
   ) {
     return undefined;
   }
@@ -523,6 +535,7 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     notify,
     minFreeGib,
     maxLoadPerCore,
+    deployWaitMinutes,
   };
 };
 
@@ -537,11 +550,10 @@ export const parseProjectConfig = (
 };
 
 /**
- * Whether a checkout's `.dw/config.yml` opts the repo into the factory: `"yes"` when the root is a
- * mapping and its `factory` is a mapping, `"no"` when it parses but is not, and `"unparsed"` when
- * the text is not YAML at all (a merge conflict, a half-saved file), which is a read that did not
- * finish rather than an answer. It does not validate the block: `world.project` reads and
- * validates the GitHub copy, and a block that does not load shows up as that repo's config errors.
+ * Whether a checkout's `.dw/config.yml` opts the repo into the factory: `"yes"` when the root and
+ * its `factory` are mappings, `"no"` when it parses but they are not, `"unparsed"` when the text
+ * is not YAML (a read that did not finish, not an answer). The block is not validated here;
+ * `world.project` does that.
  */
 export const factoryOptIn = (text: string): "yes" | "no" | "unparsed" => {
   let value: unknown;

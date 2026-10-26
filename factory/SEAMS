@@ -55,4 +55,5 @@ packages/shared/src/providerAuthReturnUrl.test.ts
 packages/shared/src/providerAuthReturnUrl.ts
 scripts/build-desktop-artifact.test.ts
 scripts/build-desktop-artifact.ts
+scripts/effect-budget.json
 vite.config.ts

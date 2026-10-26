@@ -19,6 +19,7 @@ export const interruptible = (ctx: BuildingContext): InterruptContext => ({
     newestFactoryComment: notExpected("tracker.newestFactoryComment"),
     branchTip: notExpected("tracker.branchTip"),
     textEditedSince: notExpected("tracker.textEditedSince"),
+    openPullRequestsClosing: notExpected("tracker.openPullRequestsClosing"),
     ...ctx.tracker,
   },
   sessions: {

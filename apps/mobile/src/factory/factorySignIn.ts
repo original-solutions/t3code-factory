@@ -108,11 +108,9 @@ export type SignInAction = "mint" | "rejected" | "exchange-failed" | "none";
 const IDLE_NONE = { action: "none" } as const;
 
 /**
- * One sign-in per unauthenticated signal. idle -> minting -> exchanging (credential
- * injected) -> exchanged (cookie set) -> signed-in (the page's status call succeeded with
- * that cookie). Landing on /factory proves nothing, since the page loads before its cookie
- * is checked, so an unauthenticated signal while exchanged is "rejected": the server took
- * the credential but the cookie did not authenticate the WebView, and Retry replaces a loop.
+ * One sign-in per unauthenticated signal: idle -> minting -> exchanging -> exchanged -> signed-in.
+ * Landing on /factory proves nothing, since the page loads before its cookie is checked, so an
+ * unauthenticated signal while exchanged is "rejected" and Retry replaces a loop.
  * Messages count only when the WebView's top frame (eventUrl) is on the server's origin.
  */
 export function nextSignIn(

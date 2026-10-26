@@ -4,6 +4,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Random from "effect/Random";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as NodeFS from "node:fs";
@@ -19,14 +20,10 @@ import { FactoryProcess, type RunInput, type RunResult, type RunSpawnError } fro
 import { commandLine, isCommitId, sanitize, shortSha } from "./text.ts";
 
 /**
- * The gate: a fresh checkout of a pull request's head merged with the base branch tip, the
- * project's provision and gate commands run in it, and the checkout removed again. softfac's
- * `Workspace::checkout`, `gate::run` and `gating::run_in_checkout` in one module.
- *
- * The gate commands come from the caller (the project config on the default branch), never from
- * the checkout, so a pull request cannot edit its own gate. Locks are plain files: the gate runs
- * inside this server process, so a lock file exists exactly while a gate effect runs, and one a
- * dead server left behind is removed at start by `clearGateLocks`.
+ * The gate: a fresh checkout of a pull request's head merged with the base tip, with the project's
+ * provision and gate commands run in it. The commands come from the caller (default-branch config),
+ * never the checkout, so a pull request cannot edit its own gate. A lock file exists only while a
+ * gate effect runs; `clearGateLocks` removes one a dead server left.
  */
 
 const DEFAULT_REMOTE_BASE = "https://github.com";
@@ -191,6 +188,19 @@ export const regateResultsComment = (
   baseSha: string,
 ): string => resultsComment("passed again", results, attempt, headSha, baseSha);
 
+/** How many times the fetch of a checkout is tried before its failure is returned. */
+const FETCH_ATTEMPTS = 3;
+/** The wait before the second and the third fetch, in milliseconds; each gets up to a second more. */
+const FETCH_RETRY_DELAYS_MS = [5_000, 15_000] as const;
+/**
+ * What git's stderr says when the network dropped the fetch: HTTP/2 stream error, TLS handshake
+ * timeout, unresolved name, failed or timed-out connection, or a cut-off pack. Anything else
+ * (missing ref, refused login) returns at once. `RPC failed` counts only with a curl code right
+ * after it; `RPC failed; HTTP 403 curl 22` means the server answered and refused.
+ */
+const TRANSIENT_FETCH =
+  /Error in the HTTP2 framing layer|TLS handshake timeout|Could not resolve host|Failed to connect|Connection timed out|SSL_ERROR_SYSCALL|early EOF|RPC failed; curl \d+/;
+
 export interface GateOptions {
   /** Where repositories are fetched from: `<remoteBase>/<owner>/<name>.git`. Default `https://github.com`; tests pass `file:///…`. */
   readonly remoteBase?: string;
@@ -206,6 +216,8 @@ export interface GateOptions {
   readonly clock?: () => number;
   /** The most a git call may print, on stdout or on stderr. Default 1 MiB. */
   readonly gitTailBytes?: number;
+  /** Test only: the waits before the second and the third fetch, default 5 s and 15 s. */
+  readonly fetchRetryDelaysMs?: ReadonlyArray<number>;
   /** Test only: variables set on every git call after the others, so a test can give git another HOME or PATH. */
   readonly env?: Readonly<Record<string, string>>;
   /** Test only: the ledger's write and sync, so a test can fail an append. */
@@ -481,30 +493,17 @@ const lines = (text: string): ReadonlyArray<string> => {
 const unexpected = (what: string) => new WorkspaceUnexpectedError({ what });
 
 /**
- * The gate's checkout, merge and removal through `git`.
- *
- * A checkout is a repository of its own: `git init` in the directory the gate chose, a fetch of
- * the head and the base by their full ids from `<remoteBase>/<owner>/<name>.git`, and `git
- * checkout --detach`. The URL is built here and never read from any git config, so nothing a
- * session writes in its own repository (a replace ref, a sparse checkout, `info/attributes`,
- * `remote.origin.url`, `url.*.insteadOf`, `core.sshCommand`) reaches it. Every git call runs with
- * no system and no global config, no hooks, no fsmonitor, no line-ending conversion, no `ext`
- * transport, and the `file` transport only when the remote base is a `file://` URL. Only the
- * fetch gets credentials, from `gh auth git-credential`. After the checkout and after a merge,
- * `git status --porcelain --ignored` must print nothing: with no sparse checkout, nothing
- * untracked and nothing ignored, that means the files are exactly the commit's.
- *
- * Every git call gets FactoryProcess's environment allowlist (PATH, HOME, USER, LOGNAME, SHELL,
- * LANG, TMPDIR, TERM, LC_*), where softfac gave the calls other than the fetch only PATH and HOME.
- * None of the extra names changes what git does.
- *
- * Not protected: a session running as the same OS user can still read the server's own files.
+ * The gate's checkout, merge and removal through `git`, in a repository of its own. The fetch URL
+ * is built here, never read from git config, so nothing a session writes in its repository reaches
+ * it. Git runs with no system or global config, hooks, fsmonitor, eol conversion or `ext`
+ * transport; only the fetch gets credentials. A session as the same OS user can still read ours.
  */
 export const makeWorkspace = (runner: Runner, options: GateOptions = {}) => {
   const remoteBase = (options.remoteBase ?? DEFAULT_REMOTE_BASE).replace(/\/+$/, "");
   const gitTimeoutMs = options.gitTimeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
   const gitTailBytes = options.gitTailBytes ?? GIT_TAIL_BYTES;
   const checkoutTimeoutMs = options.checkoutTimeoutMs ?? DEFAULT_CHECKOUT_TIMEOUT_MS;
+  const fetchRetryDelaysMs = options.fetchRetryDelaysMs ?? FETCH_RETRY_DELAYS_MS;
   const fileTransport = remoteBase.startsWith("file://") ? "always" : "never";
   const hardening = [
     "core.fsmonitor=false",
@@ -616,8 +615,16 @@ export const makeWorkspace = (runner: Runner, options: GateOptions = {}) => {
     yield* git(dir, { args: ["init", "--quiet", "--template="], timeoutMs: checkoutTimeoutMs });
     // The commits come into the new object store and nothing else changes: no ref, no
     // FETCH_HEAD, no tags, no submodules. The URL is the gate's, not git config's.
-    yield* git(dir, {
-      pre: ["-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential"],
+    // HTTP/1.1, because the HTTP/2 framing layer is what a flaky link breaks first.
+    const fetch = git(dir, {
+      pre: [
+        "-c",
+        "credential.helper=",
+        "-c",
+        "credential.helper=!gh auth git-credential",
+        "-c",
+        "http.version=HTTP/1.1",
+      ],
       args: [
         "fetch",
         "--no-tags",
@@ -630,6 +637,26 @@ export const makeWorkspace = (runner: Runner, options: GateOptions = {}) => {
       timeoutMs: checkoutTimeoutMs,
       fetch: true,
     });
+    for (let tried = 1; ; tried += 1) {
+      const fetched = yield* Effect.result(fetch);
+      if (Result.isSuccess(fetched)) break;
+      const error = fetched.failure;
+      const reason =
+        error._tag === "WorkspaceFailedError" ? TRANSIENT_FETCH.exec(error.stderr)?.[0] : undefined;
+      if (
+        error._tag !== "WorkspaceFailedError" ||
+        reason === undefined ||
+        tried >= FETCH_ATTEMPTS
+      ) {
+        return yield* error;
+      }
+      const wait = fetchRetryDelaysMs[tried - 1] ?? 0;
+      const delayMs = wait + (yield* Random.nextIntBetween(0, Math.min(1000, wait)));
+      yield* Effect.logInfo(
+        `\`git ${error.args}\` attempt ${tried} of ${FETCH_ATTEMPTS} failed (${reason}); trying again in ${(delayMs / 1000).toFixed(1)} s`,
+      );
+      yield* Effect.sleep(delayMs);
+    }
     yield* git(dir, {
       args: ["checkout", "--quiet", "--detach", "--no-recurse-submodules", sha],
       timeoutMs: checkoutTimeoutMs,
@@ -694,11 +721,9 @@ export const makeWorkspace = (runner: Runner, options: GateOptions = {}) => {
   const remove = removeCheckout;
 
   /**
-   * Makes a standalone repository in `dir` (which should not exist yet), fetches `sha` (a pull
-   * request's head) and `base` (the tip of its base branch) of `repo` (`owner/name`) into it by
-   * their full ids, checks `sha` out detached and merges `base` into it, so `dir` holds the
-   * merged tree. A conflict is not an error: the merge is aborted and the paths are returned.
-   * On any error nothing is left behind.
+   * Makes a standalone repository in `dir` (which should not exist yet), fetches `sha` and `base`
+   * by full id, checks `sha` out detached and merges `base` into it. A conflict is not an error:
+   * the merge is aborted and the paths are returned. On any error nothing is left behind.
    */
   const checkout = Effect.fn("FactoryGate.checkout")(function* (
     repo: string,
@@ -909,6 +934,22 @@ const runGate = (runner: Runner, input: GateInput): Effect.Effect<GateResult, Ga
           return yield* record({ _tag: "pass", dir, commands, gateCount });
         });
 
+        // How long the attempt took, from the start of its checkout to the end of its last
+        // command or of its aborted merge, for the run log. The attempt is decided by then, so
+        // a line that cannot be written changes nothing: the result stands without it.
+        const recordTime = Effect.fn("FactoryGate.recordTime")(function* (startedMs: number) {
+          const endedMs = yield* Clock.currentTimeMillis;
+          yield* Effect.ignore(
+            append(
+              {
+                event: "gate_finished",
+                data: { attempt, total_ms: Math.max(0, endedMs - startedMs) },
+              },
+              makeCause("gate", "gate-finished", { attempt }),
+            ),
+          );
+        });
+
         const attemptInDir = Effect.gen(function* () {
           yield* removeLeftovers;
           // A leftover that could not be removed is in the way of this attempt: a fault of this
@@ -918,6 +959,7 @@ const runGate = (runner: Runner, input: GateInput): Effect.Effect<GateResult, Ga
               what: `${dir} is still there from an earlier call`,
             });
           }
+          const startedMs = yield* Clock.currentTimeMillis;
           const made = yield* workspace.checkout(input.repo, input.head, input.base, dir);
           return yield* Effect.gen(function* () {
             // Where the attempt runs and on which commits goes into the ledger before the
@@ -942,7 +984,10 @@ const runGate = (runner: Runner, input: GateInput): Effect.Effect<GateResult, Ga
               return { _tag: "conflict", dir, paths: made.merge.paths } satisfies GateResult;
             }
             return yield* runCommands;
-          }).pipe(Effect.ensuring(cleanup));
+          }).pipe(
+            Effect.tap(() => recordTime(startedMs)),
+            Effect.ensuring(cleanup),
+          );
         });
 
         // Only an empty root goes.

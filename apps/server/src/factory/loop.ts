@@ -1,9 +1,8 @@
 /**
- * The pass loop: one pass when the factory starts and one every `poll_seconds` after, with a
- * wake that starts the next pass now. Passes never overlap: one fiber runs them one after the
- * other, and a wake that arrives during a pass makes the next pass follow it at once, however
- * many wakes arrived. A pass that runs past `PASS_TIMEOUT` is stopped and logged, so one hung
- * call cannot stop every later pass; the next pass goes on from the ledger.
+ * The pass loop: one pass at start and one every `poll_seconds`, or sooner on a wake. Passes never
+ * overlap, and wakes that arrive during a pass make the next one follow at once, however many.
+ * A pass past `PASS_TIMEOUT` is stopped and logged so one hung call cannot stop later passes;
+ * the next pass goes on from the ledger.
  */
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";

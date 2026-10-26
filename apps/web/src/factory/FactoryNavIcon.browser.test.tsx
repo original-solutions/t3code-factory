@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
 
-import { SidebarUtilityMenu } from "~/components/sidebar/SidebarChrome";
+import { SidebarChromeFooter } from "~/components/sidebar/SidebarChrome";
 import {
   SidebarMenu,
   SidebarMenuButton,
@@ -59,7 +59,7 @@ function Footer({ active = false }: { active?: boolean }) {
 function UtilityMenu() {
   return (
     <SidebarProvider>
-      <SidebarUtilityMenu />
+      <SidebarChromeFooter />
     </SidebarProvider>
   );
 }

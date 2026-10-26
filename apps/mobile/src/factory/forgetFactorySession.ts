@@ -12,12 +12,9 @@ import {
 } from "./factorySignIn";
 
 /**
- * The way out of the Factory screen's sign-in: when the user removes an environment, its
- * Factory browser sessions are revoked on the server before the bearer goes, so the cookie the
- * WebView keeps no longer opens anything. The removal never waits for this. When the server
- * cannot be asked, or a session stays, the user is told where to revoke it by hand. Only a
- * direct (bearer) environment can have such a session: the Factory screen never opens a relay
- * one, so its removal says nothing.
+ * Revokes the Factory browser sessions of a removed environment before its bearer goes, so the
+ * WebView's cookie opens nothing. Never blocks the removal; when the server cannot be asked, the
+ * user is told where to revoke by hand. Only direct (bearer) environments can have a session.
  */
 export async function forgetFactorySession(environmentId: EnvironmentId): Promise<void> {
   const entry = appAtomRegistry.get(environmentCatalog.catalogValueAtom).entries.get(environmentId);

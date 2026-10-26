@@ -1,12 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - the tests read the bytes of real run files.
 /**
- * `forward` of a building run, ported from softfac's `runner/tests.rs` sections "forwarding: the
- * messages" (`messages.test.ts`), "forwarding: comments", "forwarding: a body edit", "forwarding:
- * guards and failures", "forwarding: waiting for the run a message starts" and "forwarding:
- * dropped comments". The gate half of the waiting section, which needs the gate's fakes, is in
- * `gating.test.ts`; the tests over the real `gh` client are in `tracker/github.test.ts`; the
- * pass's lines are in `pass.test.ts`. Left out, for the issue that owns it: the review feedback a
- * waiting run forwards.
+ * `forward` of a building run, ported from softfac's `runner/tests.rs` "forwarding" sections. The
+ * gate half of the waiting section is in `gating.test.ts`, the real `gh` client tests in
+ * `tracker/github.test.ts`, the pass's lines in `pass.test.ts`. Left out, for the issue that owns
+ * it: the review feedback a waiting run forwards.
  */
 import * as NodeFS from "node:fs";
 
@@ -298,6 +295,7 @@ const rigFor = (
       reads.push(`pullRequest ${n}`);
       return Effect.succeed(null);
     },
+    openPullRequestsOnHead: () => Effect.succeed([]),
     markPrDraft: notForward,
     markPrReady: notForward,
     commentOnPr: notForward,
@@ -883,7 +881,7 @@ describe("forward: guards and failures", () => {
     }),
   );
 
-  // Departs from softfac on purpose (#74): only a transport failure stops the call. A refusal is
+  // Departs from softfac on purpose: only a transport failure stops the call. A refusal is
   // final and is dropped instead; see "forward: a send T3 refuses".
   it.effect(
     "a failed send (transport) stops the call, and the rest is sent in order under the same ids",
@@ -922,7 +920,7 @@ describe("forward: guards and failures", () => {
       }),
   );
 
-  // Departs from softfac on purpose (#74): softfac treats a refusal as transient and resends the
+  // Departs from softfac on purpose: softfac treats a refusal as transient and resends the
   // same command id forever. T3 keeps the refusal under that id, so the item is dropped and the
   // issue told once.
   it.effect("a send T3 refuses is dropped with a notice, and the call goes on", () =>

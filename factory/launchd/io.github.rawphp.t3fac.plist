@@ -6,12 +6,14 @@
 	<key>Label</key>
 	<string>io.github.rawphp.t3fac</string>
 	<!-- ~/.config/t3fac/env, when it exists, is sourced first: the machine's own PATH and environment
-	     for the tools its repos provision and gate with. The template names no tool. -->
+	     for the tools its repos provision and gate with. The template names no tool. The PATH that
+	     results is exported as T3FAC_LAUNCH_PATH, so the factory can put it ahead of the login-shell
+	     PATH the server merges in at startup for every command it runs, provision and gate included. -->
 	<key>ProgramArguments</key>
 	<array>
 		<string>/bin/sh</string>
 		<string>-c</string>
-		<string>if [ -f "@HOME@/.config/t3fac/env" ]; then . "@HOME@/.config/t3fac/env"; fi; exec "@HOME@/.local/share/t3fac/current/t3" serve --base-dir "@HOME@/.config/t3fac" --port 3876</string>
+		<string>if [ -f "@HOME@/.config/t3fac/env" ]; then . "@HOME@/.config/t3fac/env"; fi; export T3FAC_LAUNCH_PATH="$PATH"; exec "@HOME@/.local/share/t3fac/current/t3" serve --base-dir "@HOME@/.config/t3fac" --port 3876</string>
 	</array>
 	<key>WorkingDirectory</key>
 	<string>@HOME@</string>

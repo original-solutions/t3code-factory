@@ -85,6 +85,16 @@ const samples: ReadonlyArray<{ readonly event: MachineEvent; readonly line: stri
   },
   {
     event: {
+      event: "repo_config_stale",
+      data: { repo: "rawphp/softfac", what: "config", message: "TLS handshake timeout" },
+    },
+    line: lineAtT0(
+      "repo_config_stale",
+      `{"repo":"rawphp/softfac","what":"config","message":"TLS handshake timeout"}`,
+    ),
+  },
+  {
+    event: {
       event: "claim_skipped",
       data: { repo: "rawphp/softfac", issue: "12", reason: "limit" },
     },
@@ -439,9 +449,9 @@ describe("append", () => {
       seen.add(event.event);
       expect(readText(logFile(dataDir)), event.event).toBe(expected);
     }
-    // Every one of the 19 event types has at least one exact line.
+    // Every one of the 20 event types has at least one exact line.
     expect([...seen].sort()).toEqual(Object.keys(MACHINE_EVENT_FIELDS).sort());
-    expect(seen.size).toBe(19);
+    expect(seen.size).toBe(20);
   });
 
   it("the claims paused line has a reason and nothing else", () => {

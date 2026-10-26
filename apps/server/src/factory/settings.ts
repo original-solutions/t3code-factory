@@ -1,9 +1,8 @@
 /**
- * The machine config as the settings page edits it: a report of the file, the watched projects
- * and what the loop last read of each one's project config, and an edit that changes only the
- * keys the form sends, so the comments and the keys it does not know (`notify`, `keep_versions`,
- * `min_free_gib`, `max_load_per_core`, a retired `repos`) stay as written. The edited text is
- * checked with `parseMachineConfig`, the rules the factory itself loads the file by.
+ * The machine config as the settings page edits it: a report of the file, the watched projects and
+ * what the loop last read of each one's project config, and an edit that changes only the keys the
+ * form sends, so comments and unknown keys (`notify`, `keep_versions`, a retired `repos`) stay as
+ * written. The result is checked with `parseMachineConfig`.
  */
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -61,16 +60,10 @@ export interface MachineConfigFields {
 export type MachineConfigDraft = Partial<MachineConfigFields>;
 
 /**
- * The report of the machine config file.
- * - `config`: the file's values; the defaults when there is no file; null when the file does not
- *   load.
- * - `defaults`: what a new file starts from, always present, so the form needs no copy of them.
- * - `draft`: present when the file exists and does not load. The values the file holds, read
- *   without validation so the form can show them and the person can fix one field instead of
- *   retyping the file. A top-level key of the form with a string value is copied as it is, a
- *   number as a number, and anything else is left out. A file that is not YAML has an empty
- *   draft.
- *   Values may be the wrong type for their field: the `errors` say which.
+ * The report of the machine config file. `config` is the file's values (defaults with no file, null
+ * when it does not load). `defaults` is what a new file starts from, so the form needs no copy.
+ * `draft`, when the file exists and does not load, holds the form's top-level string and number
+ * keys unvalidated, so a person fixes one field; `errors` say which have the wrong type.
  */
 export interface MachineConfigReport {
   readonly file: string;
@@ -102,16 +95,17 @@ const EDITABLE_KEYS = [
 ] as const;
 
 /**
- * The keys an edit keeps: the form's, `notify`, `keep_versions`, `min_free_gib` and
- * `max_load_per_core` (hand edits), and the retired keys (the model keys and `repos`). Those stay
- * so that a rollback to a version that still requires them loads the file; a key that is not here
- * is dropped by an edit.
+ * The keys an edit keeps: the form's, `notify`, `keep_versions`, `min_free_gib`,
+ * `max_load_per_core` and `deploy_wait_minutes` (hand edits), and the retired keys (the model keys
+ * and `repos`). Those stay so that a rollback to a version that still requires them loads the
+ * file; a key that is not here is dropped by an edit.
  */
 const KNOWN_KEYS: ReadonlySet<string> = new Set([
   ...EDITABLE_KEYS,
   "notify",
   "keep_versions",
   "min_free_gib",
+  "deploy_wait_minutes",
   "max_load_per_core",
   ...RETIRED_MACHINE_KEYS,
 ]);

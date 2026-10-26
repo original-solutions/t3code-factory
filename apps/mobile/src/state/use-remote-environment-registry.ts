@@ -38,6 +38,14 @@ const remoteEnvironmentProjections = createRemoteEnvironmentProjectionAtoms({
   serverConfigAtom: serverEnvironment.configValueAtom,
 });
 
+export const environmentConnectedAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make(
+    (get) =>
+      get(remoteEnvironmentProjections.runtimeStateAtom(environmentId))?.connectionState ===
+      "connected",
+  ).pipe(Atom.withLabel(`mobile:environment-connected:${environmentId}`)),
+);
+
 const EMPTY_SAVED_CONNECTION_ATOM = Atom.make<SavedRemoteConnection | null>(null).pipe(
   Atom.withLabel("mobile:saved-connection:empty"),
 );
@@ -178,7 +186,7 @@ export function useRemoteConnections() {
             { text: "Cancel", style: "cancel" },
             {
               text: "Open T3 Account",
-              onPress: () => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" }),
+              onPress: () => navigation.navigate("SettingsAuth"),
             },
             remove,
           ],

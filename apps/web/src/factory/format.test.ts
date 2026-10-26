@@ -4,13 +4,19 @@ import type { FactoryEntry } from "./api";
 import {
   currentStep,
   formatAge,
+  issueRef,
   labelForState,
   lastGateOutput,
   parseRunId,
+  prEndOf,
+  prRef,
+  prUrlOf,
   runIsFinished,
   runState,
+  shownState,
   stateBadgeVariant,
   threadIdOf,
+  whyStopped,
 } from "./format";
 
 let tick = 0;
@@ -106,7 +112,6 @@ describe("lastGateOutput", () => {
       attempt: null,
       commands: [],
       message: null,
-      stuckReason: null,
     });
   });
 
@@ -148,13 +153,6 @@ describe("lastGateOutput", () => {
     ]);
     expect(out.attempt).toBe(2);
     expect(out.message).toBeNull();
-  });
-
-  it("keeps a stuck reason only when it mentions the gate", () => {
-    expect(
-      lastGateOutput([entry("stuck", { reason: "the Gate failed 3 times" })]).stuckReason,
-    ).toBe("the Gate failed 3 times");
-    expect(lastGateOutput([entry("stuck", { reason: "stopped by hand" })]).stuckReason).toBeNull();
   });
 });
 
@@ -203,5 +201,89 @@ describe("runState and runIsFinished", () => {
     expect(runIsFinished([entry("claimed", {}), entry("finished", { outcome: "stuck" })])).toBe(
       true,
     );
+  });
+});
+
+describe("shownState and prEndOf", () => {
+  it("shows how a finished run's pull request ended over the label it last set", () => {
+    expect(shownState("pr-open", "merged")).toBe("merged");
+    expect(shownState("building", "closed")).toBe("closed");
+    expect(shownState("pr-open", null)).toBe("pr-open");
+    expect(shownState("stuck", undefined)).toBe("stuck");
+    expect(stateBadgeVariant(shownState("pr-open", "merged"))).toBe("secondary");
+  });
+
+  it("reads the pull request's end from the finished entry", () => {
+    const finished = (pr_end: unknown) => [
+      entry("state_changed", { from: "pr-open", to: "building" }),
+      entry("finished", { outcome: "pr-open", pr_end }),
+    ];
+    expect(prEndOf(finished("merged"))).toBe("merged");
+    expect(prEndOf(finished("closed"))).toBe("closed");
+    expect(prEndOf(finished(null))).toBeNull();
+    expect(prEndOf(finished("reopened"))).toBeNull();
+    expect(prEndOf([entry("state_changed", { from: "building", to: "pr-open" })])).toBeNull();
+  });
+});
+
+describe("whyStopped", () => {
+  it("gives a stuck run's whole reason, whatever it names", () => {
+    const reason = "the session stopped and said it was stuck\n\nThe machine is out of disk.";
+    expect(
+      whyStopped([
+        entry("stuck", { reason: "an earlier reason" }),
+        entry("stuck", { reason }),
+        entry("state_changed", { from: "building", to: "stuck" }),
+        entry("finished", { outcome: "stuck" }),
+      ]),
+    ).toEqual({ title: "Why it is stuck", text: reason });
+  });
+
+  it("gives the questions a needs-info run posted", () => {
+    expect(
+      whyStopped([
+        entry("questions_posted", { questions: "Which page?" }),
+        entry("state_changed", { from: "building", to: "needs-info" }),
+      ]),
+    ).toEqual({ title: "Questions on the issue", text: "Which page?" });
+  });
+
+  it("has nothing for a run in any other state, or with no reason recorded", () => {
+    expect(
+      whyStopped([
+        entry("stuck", { reason: "old" }),
+        entry("state_changed", { from: "stuck", to: "building" }),
+      ]),
+    ).toBeNull();
+    expect(whyStopped([entry("state_changed", { from: "building", to: "stuck" })])).toBeNull();
+  });
+});
+
+describe("issueRef, prRef and prUrlOf", () => {
+  it("links a numeric issue on GitHub, and leaves any other as text", () => {
+    expect(issueRef("acme/app", "20")).toEqual({
+      text: "#20",
+      href: "https://github.com/acme/app/issues/20",
+    });
+    expect(issueRef("acme/app", "PROJ-4")).toEqual({ text: "PROJ-4", href: null });
+  });
+
+  it("links only a github.com pull request", () => {
+    expect(prRef("https://github.com/acme/app/pull/30")).toEqual({
+      text: "#30",
+      href: "https://github.com/acme/app/pull/30",
+    });
+    expect(prRef("javascript:alert(1)")).toEqual({ text: "javascript:alert(1)", href: null });
+    expect(prRef(null)).toBeNull();
+  });
+
+  it("reads the finished line's pull request, else the last one opened", () => {
+    const opened = (pr: number) => entry("pr_opened", { pr, url: `https://x.test/pull/${pr}` });
+    expect(prUrlOf([opened(1), opened(2)])).toBe("https://x.test/pull/2");
+    expect(prUrlOf([opened(1), entry("finished", { pr_url: "https://x.test/pull/9" })])).toBe(
+      "https://x.test/pull/9",
+    );
+    expect(prUrlOf([opened(1), entry("finished", { pr_url: null })])).toBe("https://x.test/pull/1");
+    expect(prUrlOf([entry("claimed", {})])).toBeNull();
   });
 });

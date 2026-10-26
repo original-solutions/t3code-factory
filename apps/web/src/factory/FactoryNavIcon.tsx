@@ -6,11 +6,9 @@ import { useFactoryAttentionCount } from "./useFactoryData";
 
 /**
  * The sidebar's Factory glyph, with the open attention count at the top-right; hidden at zero.
- * Rendered as a fragment so the svg is the `SidebarMenuButton`'s direct child and takes the same
- * size and colour rules as its neighbours. The badge hangs off an anchor with no insets and the
- * icon's `size-4`: an absolute flex child sits where it would as the only item, which is where the
- * svg sits as the first in-flow item, centred or not, so the badge is placed from the icon alone.
- * The anchor comes first so the button's `[&>span:last-child]:truncate` misses it.
+ * A fragment, so the svg is the `SidebarMenuButton`'s direct child and gets its neighbours' size
+ * and colour rules. The badge hangs off an anchor with no insets and the icon's `size-4`, placed
+ * from the icon alone; the anchor comes first so `[&>span:last-child]:truncate` misses it.
  */
 export function FactoryNavIcon() {
   const count = useFactoryAttentionCount();

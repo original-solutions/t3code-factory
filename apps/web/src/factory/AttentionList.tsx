@@ -6,7 +6,8 @@ import { Button } from "~/components/ui/button";
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import type { FactoryAttentionItem } from "./api";
-import { formatAge } from "./format";
+import { formatAge, issueRef } from "./format";
+import { Ref } from "./Ref";
 import { TouchLink } from "./TouchLink";
 
 /** An open attention item and the environment whose factory raised it. */
@@ -36,7 +37,11 @@ function ItemLink({
     );
   }
   if (item.kind === "config") {
-    return <TouchLink render={<Link to="/settings/factory" />}>Factory settings</TouchLink>;
+    return (
+      <TouchLink render={<Link search={{ machine: environmentId }} to="/settings/factory" />}>
+        Factory settings
+      </TouchLink>
+    );
   }
   return null;
 }
@@ -78,8 +83,14 @@ export function AttentionList({
                 <Badge variant="warning">{item.kind}</Badge>
                 {item.repo ? (
                   <span className="min-w-0 break-all font-mono text-xs">
-                    {item.repo}
-                    {item.issue !== null ? `#${item.issue}` : null}
+                    {item.issue !== null ? (
+                      <Ref
+                        href={issueRef(item.repo, String(item.issue)).href}
+                        text={`${item.repo}#${item.issue}`}
+                      />
+                    ) : (
+                      item.repo
+                    )}
                   </span>
                 ) : null}
                 {showEnvironment ? (

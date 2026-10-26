@@ -1,9 +1,7 @@
 #!/usr/bin/env node
-// Starts Metro for the fork's development dev client. Upstream's dev:client scripts
-// pass --scheme t3code-dev, which the fork's dev build does not register
-// (apps/mobile/src/factory/mobileIdentity.ts), so their launch links never open it.
-// Expo reads the scheme from --scheme or the prebuilt native folders, not app.config.ts.
-// Extra arguments go to expo start, e.g. --clear.
+// Starts Metro for the fork's dev client. Upstream's dev:client scripts pass --scheme t3code-dev,
+// which the fork's dev build does not register (apps/mobile/src/factory/mobileIdentity.ts). Expo
+// reads the scheme from --scheme or the prebuilt native folders, not app.config.ts.
 //
 //   node factory/scripts/mobile-dev-client.ts [expo start args]
 import * as NodeChildProcess from "node:child_process";

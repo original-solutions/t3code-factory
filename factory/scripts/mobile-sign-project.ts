@@ -1,10 +1,7 @@
 #!/usr/bin/env node
-// Switches a prebuilt iOS project to manual signing for an App Store build. Every
-// build configuration with a bundle id gets the Apple Distribution identity and the
-// provisioning profile named for that id; Pods and the project level are left alone.
-// A signed target without a profile, or a profile without a target, fails the run
-// before xcodebuild does, naming the bundle id. Run by factory-mobile.yml after
-// expo prebuild.
+// Switches a prebuilt iOS project to manual signing for an App Store build: each bundle id's build
+// configurations get the Apple Distribution identity and its profile; Pods and the project level
+// are left alone. A target without a profile, or the reverse, fails before xcodebuild does.
 //
 //   node factory/scripts/mobile-sign-project.ts <mobile app dir> <team id> <bundle id>=<profile name>...
 import * as NodeFS from "node:fs";

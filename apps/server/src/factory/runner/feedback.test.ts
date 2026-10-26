@@ -1,11 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off - the tests read the bytes of real run files and the gate's real checkout directories.
 /**
- * Instructor feedback on a `pr-open` run, ported from softfac's `runner/tests/feedback.rs`
- * sections "the step" and the window test. Left out: the rig-level tests of #26 (required checks:
- * a failed check after a pass and a feedback relaunch), the older build's numbering
- * (`as_the_old_numbering_left_it`), the gate lock a step takes (the pass runs gates in-process and
- * `gateRunning` guards them), and the older run's archive of a pending relaunch's thread (the
- * TypeScript `start` has no such step).
+ * Instructor feedback on a `pr-open` run, ported from softfac's `runner/tests/feedback.rs`. Left
+ * out: the required-checks rig tests, the older build's numbering, the gate lock (gates run
+ * in-process) and the older archive of a pending relaunch's thread (`start` has no such step).
  */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -297,6 +294,7 @@ class FakeGh {
         ? Effect.fail(ghFailure())
         : Effect.succeed(this.closedByAnswer);
     },
+    openPullRequestsOnHead: () => Effect.succeed([]),
     pullRequest: (n) =>
       this.run(`pullRequest ${n}`, () => {}).pipe(
         Effect.map(() => {
@@ -1421,6 +1419,7 @@ describe("feedback: the step", () => {
         assert.strictEqual(req.commandId, `softfac:${RUN}:feedback:1`);
         assert.strictEqual(req.baseRef, "t3code/abc");
         assert.isTrue(req.startFromOrigin);
+        assert.strictEqual(req.pullRequestUrl, URL12);
         assert.ok(req.message.startsWith("/factory rawphp/softfac#10"), req.message);
         assert.ok(req.message.includes(URL12), req.message);
         assert.ok(req.message.includes("git push origin HEAD:t3code/abc"), req.message);

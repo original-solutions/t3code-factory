@@ -5,7 +5,12 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { EventId, ProjectId, type RepositoryIdentity } from "@t3tools/contracts";
+import {
+  EventId,
+  ProjectId,
+  type RepositoryIdentity,
+  SourceControlProviderKind,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -30,7 +35,7 @@ const github = (owner: string, name: string): RepositoryIdentity => ({
     remoteName: "origin",
     remoteUrl: `https://github.com/${owner}/${name}.git`,
   },
-  provider: "github",
+  provider: SourceControlProviderKind.make("github"),
   owner,
   name,
 });
@@ -252,7 +257,7 @@ describe("FactoryWatchedRepos.list", () => {
         identities: new Map<string, RepositoryIdentity>([
           [bare, WIDGETS],
           [noBlock, WIDGETS],
-          [gitlab, { ...WIDGETS, provider: "gitlab" }],
+          [gitlab, { ...WIDGETS, provider: SourceControlProviderKind.make("gitlab") }],
         ]),
       });
       assert.deepStrictEqual(list, { repos: [], departed: [], unresolved: [] });
@@ -325,7 +330,7 @@ describe("FactoryWatchedRepos.list", () => {
           remoteName: "origin",
           remoteUrl: "https://gitlab.com/acme/widgets.git",
         },
-        provider: "gitlab",
+        provider: SourceControlProviderKind.make("gitlab"),
         owner: "acme",
         name: "widgets",
       };

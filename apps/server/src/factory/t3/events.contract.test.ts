@@ -67,11 +67,10 @@ it.live(
             Stream.runForEach((arrival) => Queue.offer(arrivals, arrival)),
             Effect.forkScoped,
           );
-          // The forked consumer reads its start position on its first pull,
-          // which can land after a launch's first status. A probe run that
-          // fails fast (a ref the repo does not have) marks the stream live:
-          // once its id arrives, every later launch is seen from its first
-          // status. The probe's later status may still interleave with A's.
+          // The forked consumer reads its start position on its first pull, which can land after
+          // a launch's first status. A probe run that fails fast (a ref the repo lacks) marks the
+          // stream live: once its id arrives, every later launch is seen from its first status.
+          // The probe's later status may still interleave with A's.
           const probe = yield* launch("probe", "factory-events-contract-no-such-ref");
           yield* Queue.take(arrivals).pipe(
             Effect.repeat({ until: (arrival) => arrival.id === probe.threadId }),

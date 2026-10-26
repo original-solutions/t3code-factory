@@ -59,6 +59,7 @@ const machine: MachineConfig = {
   notify: true,
   minFreeGib: 0,
   maxLoadPerCore: 0,
+  deployWaitMinutes: 120,
 };
 
 const repo: Repo = {

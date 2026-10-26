@@ -1,15 +1,9 @@
 // @effect-diagnostics globalDate:off - the fake GitHub formats its stamps as GitHub does.
 /**
- * One issue through the whole loop, with nothing faked but GitHub and the provider: the real
- * factory runtime (pass, claim, start, building, gate, ledger), the real orchestration layers
- * with the Claude replay transcript standing in for the model, a real git clone with a real
- * worktree, and the gate run for real in a fresh checkout of a bare file:// remote. `gh` is an
- * in-memory GitHub that answers by argv, so the labels, comments and pull request the factory
- * writes can be read back.
- *
- * The expected labels and ledger lines are written out below from softfac's lifecycle.md
- * ("From ready to building", "The gate", "When it passes") and the runner tests, not read back
- * from the code under test.
+ * One issue through the whole loop, faking only the provider (the Claude replay transcript) and
+ * GitHub (`gh` answers by argv from memory, so what the factory writes can be read back). The
+ * runtime, orchestration, git worktree and gate are real. Expected labels and ledger lines come
+ * from softfac's lifecycle.md and runner tests, not from the code under test.
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -36,6 +30,7 @@ import { APPROVAL_QUERY } from "./tracker/approvalHistory.ts";
 import {
   ACTIVITY_QUERY,
   CLOSED_BY_QUERY,
+  CLOSING_PRS_QUERY,
   PR_FEEDBACK_QUERY,
   MARKER,
   READY_BY_QUERY,
@@ -233,6 +228,14 @@ const makeGitHub = (input: {
     }
     if (query === CLOSED_BY_QUERY) {
       return ok(json({ data: { repository: { issue: { timelineItems: { nodes: [] } } } } }));
+    }
+    if (query === CLOSING_PRS_QUERY) {
+      // No earlier attempt left a pull request in these runs.
+      return ok(
+        json({
+          data: { repository: { issue: { closedByPullRequestsReferences: { nodes: [] } } } },
+        }),
+      );
     }
     return undefined;
   };
@@ -634,6 +637,8 @@ const describe = (entry: Entry): string => {
       return `gate_checkout attempt ${String(data.attempt)}`;
     case "gate_command":
       return `gate_command attempt ${String(data.attempt)} exit ${String(data.exit_code)}: ${String(data.command)}`;
+    case "gate_finished":
+      return `gate_finished attempt ${String(data.attempt)}`;
     case "gate_sent_back":
       return `gate_sent_back attempt ${String(data.attempt)} run ${String(data.run_ordinal)}`;
     default:
@@ -732,6 +737,7 @@ it.live("takes one issue from ready to pr-open: claim, build, gate, ready for re
         ...STARTED_AND_PR_OPENED,
         "gate_checkout attempt 1",
         "gate_command attempt 1 exit 0: true",
+        "gate_finished attempt 1",
         ...passTail(result.baseSha),
       ],
       result.diagnosis(),
@@ -751,10 +757,12 @@ it.live("sends a failed gate back into the session, then passes it on the second
         ...STARTED_AND_PR_OPENED,
         "gate_checkout attempt 1",
         `gate_command attempt 1 exit 1: ${command}`,
+        "gate_finished attempt 1",
         "step_changed gate-sending 1 1",
         "gate_sent_back attempt 1 run 1",
         "gate_checkout attempt 2",
         `gate_command attempt 2 exit 0: ${command}`,
+        "gate_finished attempt 2",
         `step_changed gate-passed ${result.baseSha} 1`,
         "worktree_removed",
         "step_changed gate-results-posted",

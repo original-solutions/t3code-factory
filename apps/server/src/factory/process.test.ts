@@ -16,14 +16,18 @@ const run = (input: RunInput) =>
     return yield* factoryProcess.run(input);
   }).pipe(Effect.provide(layer));
 
+// `undefined` deletes the variable for the body, so a test can run without one the session has.
 const withEnv = <A, E, R>(
-  vars: Record<string, string>,
+  vars: Record<string, string | undefined>,
   body: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
   Effect.acquireUseRelease(
     Effect.sync(() => {
       const saved = Object.keys(vars).map((k) => [k, globalThis.process.env[k]] as const);
-      for (const [k, v] of Object.entries(vars)) globalThis.process.env[k] = v;
+      for (const [k, v] of Object.entries(vars)) {
+        if (v === undefined) delete globalThis.process.env[k];
+        else globalThis.process.env[k] = v;
+      }
       return saved;
     }),
     () => body,
@@ -91,7 +95,7 @@ it.live("does not pass variables outside the allowlist", () =>
 
 it.live("passes PATH, LC_* and the env argument through", () =>
   withEnv(
-    { LC_FACTORY_TEST: "lc" },
+    { LC_FACTORY_TEST: "lc", T3FAC_LAUNCH_PATH: undefined },
     Effect.gen(function* () {
       const path = yield* run({ command: `printf %s "$PATH"`, shell: true });
       assert.strictEqual(path.tail, globalThis.process.env.PATH ?? "");
@@ -109,6 +113,39 @@ it.live("passes PATH, LC_* and the env argument through", () =>
         env: { HOME: "/factory-test-home" },
       });
       assert.strictEqual(home.tail, "/factory-test-home");
+    }),
+  ),
+);
+
+it.live(
+  "puts the launch PATH first, then the rest of the server PATH, without duplicates or empty entries",
+  () =>
+    withEnv(
+      {
+        T3FAC_LAUNCH_PATH: "/launch/python/bin::/opt/homebrew/bin:/usr/bin:",
+        PATH: "/usr/bin:/login/bin:/opt/homebrew/bin:/usr/bin:/bin",
+      },
+      Effect.gen(function* () {
+        const path = yield* run({ command: `printf %s "$PATH"`, shell: true });
+        assert.strictEqual(
+          path.tail,
+          "/launch/python/bin:/opt/homebrew/bin:/usr/bin:/login/bin:/bin",
+        );
+        const launch = yield* run({
+          command: `printf %s "\${T3FAC_LAUNCH_PATH-unset}"`,
+          shell: true,
+        });
+        assert.strictEqual(launch.tail, "unset");
+      }),
+    ),
+);
+
+it.live("passes the server PATH unchanged when no launch PATH is set", () =>
+  withEnv(
+    { T3FAC_LAUNCH_PATH: undefined, PATH: "/usr/bin:/login/bin:/usr/bin:/bin" },
+    Effect.gen(function* () {
+      const path = yield* run({ command: `printf %s "$PATH"`, shell: true });
+      assert.strictEqual(path.tail, "/usr/bin:/login/bin:/usr/bin:/bin");
     }),
   ),
 );

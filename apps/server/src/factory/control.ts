@@ -1,10 +1,8 @@
 /**
- * What an operator can ask of the factory beyond reading its status: show one run, stop a run,
- * pause or resume claims. Plain functions over the data dir, each one call with the same inputs
- * from an HTTP route, an MCP tool or a scheduled task, so the rules (what is refused, in whose
- * words) live here and not in a handler. They answer with a value for what the caller asked
- * wrongly (`invalid`, `not-found`, `refused`); anything the ledger or the file system fails with
- * is thrown, so call them through `guarded` or `ledgerCall`.
+ * What an operator can ask of the factory beyond reading status: show a run, stop a run, pause or
+ * resume claims. Plain functions, so HTTP routes, MCP tools and scheduled tasks share one set of
+ * rules. A wrong request returns a value (`invalid`, `not-found`, `refused`); ledger or file system
+ * failures throw, so call through `guarded` or `ledgerCall`.
  */
 import { pauseClaims, resumeClaims } from "./claims.ts";
 import { isLedgerError } from "./ledger/errors.ts";
