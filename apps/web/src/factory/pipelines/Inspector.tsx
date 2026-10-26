@@ -27,7 +27,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select";
-import { Switch } from "~/components/ui/switch";
 import { Textarea } from "~/components/ui/textarea";
 import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 
@@ -291,14 +290,6 @@ function NodeFields({
             skills={skills}
             value={node.instructions}
           />
-          <div className="flex items-center justify-between gap-3">
-            <Label htmlFor="pipeline-node-fresh">Fresh thread</Label>
-            <Switch
-              checked={node.fresh}
-              id="pipeline-node-fresh"
-              onCheckedChange={(fresh) => onChange({ ...node, fresh }, "fresh")}
-            />
-          </div>
         </>
       ) : null}
       {node.kind === "learn" ? (

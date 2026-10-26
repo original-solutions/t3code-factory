@@ -266,7 +266,7 @@ describe("the pipeline routes", () => {
         [
           ["brief-and-gate", 5],
           ["build-review-ship", 8],
-          ["learning-loop", 11],
+          ["learning-loop", 10],
         ],
       );
       assert.deepStrictEqual(

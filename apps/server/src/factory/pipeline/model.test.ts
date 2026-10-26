@@ -57,7 +57,7 @@ describe("decodePipeline", () => {
     ]);
   });
 
-  it("defaults fresh to false, keeps a brief's text as written and trims names", () => {
+  it("keeps a brief's text as written and trims names", () => {
     const pipeline = decodeOk({
       id: "p",
       name: "  P  ",
@@ -84,7 +84,6 @@ describe("decodePipeline", () => {
       x: 0,
       y: 0,
       instructions: { brief: "Do it.\n\nThen stop.\n" },
-      fresh: false,
     });
     expect(pipeline.nodes[2]).toEqual({
       id: "v",

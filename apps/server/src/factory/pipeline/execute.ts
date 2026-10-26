@@ -35,6 +35,8 @@ export interface ThreadRef {
 export type PullRequestPort = "feedback" | "base-moved" | "merged" | "closed";
 
 export interface Tracker {
+  /** The branch a pull request comes from; null when it is gone or comes from a fork. */
+  readonly headBranch: (pr: number) => Effect.Effect<string | null, PortError>;
   /** Posts the agent's questions on the issue and asks a person to answer. */
   readonly postQuestions: (text: string) => Effect.Effect<void, PortError>;
   /** Waits until a person set `factory:ready` again; answers the comments since the questions. */
@@ -101,6 +103,8 @@ export const REVIEW_ENDING =
 export const NO_RESULT_TWICE = "no result line twice";
 export const NO_WORKTREE = "no worktree yet";
 export const NO_PULL_REQUEST = "no pull request was reported";
+export const notOwnPullRequest = (branch: string | null) =>
+  `no reported pull request comes from the run's branch${branch === null ? "" : ` ${branch}`}`;
 export const pastLimit = (minutes: number) => `the run passed its time limit of ${minutes} minutes`;
 
 /** How much of each outcome's detail a learner is shown. */
@@ -203,8 +207,11 @@ export const execute = Effect.fn("PipelineExecute.execute")(function* (
       return ports.record(event);
     });
 
-  /** The run's session: the thread non-fresh agent nodes continue, whose branch is the run's. */
+  /** The run's session: the thread agent nodes continue, whose branch is the run's. */
   let main: ThreadRef | null = null;
+  /** The pull requests on the run's repo that agents reported, the newest first. */
+  let reported: ReadonlyArray<number> = [];
+  /** The reported pull request that comes from the run's branch, once a `pr` node found it. */
   let pr: number | null = null;
   const markedReady = new Set<number>();
   const visits = new Map<string, number>();
@@ -216,6 +223,10 @@ export const execute = Effect.fn("PipelineExecute.execute")(function* (
     archived.add(threadId);
   });
 
+  /** Archives a thread the run is done with; a failure leaves it to `archiveLeft` at the end. */
+  const archiveQuietly = (threadId: string) =>
+    archive(threadId).pipe(Effect.catch((error) => Effect.logWarning(error.message)));
+
   /** Archives every thread the run launched and has not archived, and ignores a failure. */
   const archiveLeft = Effect.fn("PipelineExecute.archiveLeft")(function* (keepMain: boolean) {
     const ids = new Set(log.flatMap((event) => (event.event === "thread" ? [event.threadId] : [])));
@@ -225,11 +236,26 @@ export const execute = Effect.fn("PipelineExecute.execute")(function* (
     }
   });
 
-  /** The pull request on the run's repo among those a message names; another repo's is ignored. */
-  const ownPullRequest = (refs: ReadonlyArray<PullRequestRef>): number | undefined =>
+  /** The pull requests on the run's repo among those a message names; another repo's are ignored. */
+  const ownPullRequests = (refs: ReadonlyArray<PullRequestRef>): ReadonlyArray<number> =>
     run.repo === null
-      ? undefined
-      : refs.find((ref) => asciiLower(`${ref.owner}/${ref.name}`) === asciiLower(run.repo!))?.pr;
+      ? []
+      : refs
+          .filter((ref) => asciiLower(`${ref.owner}/${ref.name}`) === asciiLower(run.repo!))
+          .map((ref) => ref.pr);
+
+  /**
+   * The reported pull request that comes from the run's branch. An agent's message can name a
+   * pull request that is not its own (an earlier attempt, a sibling), so the branch decides.
+   */
+  const fromOwnBranch = Effect.fn("PipelineExecute.fromOwnBranch")(function* (tracker: Tracker) {
+    const branch = main?.branch ?? null;
+    if (branch === null) return null;
+    for (const candidate of reported) {
+      if ((yield* tracker.headBranch(candidate)) === branch) return candidate;
+    }
+    return null;
+  });
 
   // One step that a stop cannot cut in two: a stopped run archives the threads its record
   // names, so a thread that was launched must be in the record.
@@ -268,10 +294,10 @@ export const execute = Effect.fn("PipelineExecute.execute")(function* (
   ) {
     const context = contextBlock(incoming);
     let thread: ThreadRef;
-    if (main === null || node.fresh) {
+    if (main === null) {
       const message = `${instructionsText(node.instructions)}${context}\n\n${preamble(pipeline, node, run)}`;
-      thread = yield* launch(node, message, main?.branch ?? null);
-      if (!node.fresh) main = thread;
+      thread = yield* launch(node, message, null);
+      main = thread;
     } else {
       thread = main;
       yield* ports.send(
@@ -285,11 +311,12 @@ export const execute = Effect.fn("PipelineExecute.execute")(function* (
       yield* ports.send(thread.threadId, RESULT_LINE_REMINDER);
       result = readResult(yield* settle(node, thread));
     }
-    if (node.fresh) yield* archive(thread.threadId);
     switch (result.kind) {
-      case "done":
-        pr = ownPullRequest(result.pullRequests) ?? pr;
+      case "done": {
+        const named = ownPullRequests(result.pullRequests);
+        reported = [...named, ...reported.filter((n) => !named.includes(n))];
         return { port: "done", detail: result.text } as const;
+      }
       case "questions":
         return { port: "questions", detail: result.questions } as const;
       case "stop":
@@ -314,7 +341,7 @@ export const execute = Effect.fn("PipelineExecute.execute")(function* (
     const message = `${instructionsText(check)}${contextBlock(incoming)}\n\n${REVIEW_ENDING}`;
     const reviewer = yield* launch(node, message, main?.branch ?? null);
     const text = yield* settle(node, reviewer);
-    yield* archive(reviewer.threadId);
+    yield* archiveQuietly(reviewer.threadId);
     const result = readResult(text);
     return result.kind === "done"
       ? ({ port: "pass", detail: result.text } as const)
@@ -330,7 +357,7 @@ export const execute = Effect.fn("PipelineExecute.execute")(function* (
       Effect.gen(function* () {
         const learner = yield* launch(node, message, main?.branch ?? null);
         const text = yield* settle(node, learner);
-        yield* archive(learner.threadId);
+        yield* archiveQuietly(learner.threadId);
         return text;
       }),
     );
@@ -363,9 +390,11 @@ export const execute = Effect.fn("PipelineExecute.execute")(function* (
         return { port: "answered", detail: answer.text };
       }
       case "pr": {
-        if (pr === null) return { stuck: NO_PULL_REQUEST };
+        if (reported.length === 0) return { stuck: NO_PULL_REQUEST };
         if (ports.tracker === null)
           return { stuck: `${nameOf(node)} needs an issue on a watched repo` };
+        pr ??= yield* fromOwnBranch(ports.tracker);
+        if (pr === null) return { stuck: notOwnPullRequest(main?.branch ?? null) };
         if (!markedReady.has(pr)) {
           yield* ports.tracker.markReady(pr);
           markedReady.add(pr);
@@ -378,6 +407,8 @@ export const execute = Effect.fn("PipelineExecute.execute")(function* (
     }
   });
 
+  // One step, like `launch`: a stop that lands while the run ends waits for it, so the record's
+  // end and the archives are both done or neither is.
   const finish = Effect.fn("PipelineExecute.finish")(function* (
     result: RunEnd["result"],
     reason: string | null,
@@ -385,7 +416,7 @@ export const execute = Effect.fn("PipelineExecute.execute")(function* (
     yield* archiveLeft(false);
     yield* record({ event: "ended", result, reason });
     return { result, reason } satisfies RunEnd;
-  });
+  }, Effect.uninterruptible);
 
   const enter = Effect.fn("PipelineExecute.enter")(function* (id: string) {
     const visit = (visits.get(id) ?? 0) + 1;

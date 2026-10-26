@@ -5,7 +5,7 @@
  * which a prototype pipeline run does without.
  */
 import * as Clock from "effect/Clock";
-import type * as Duration from "effect/Duration";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 
@@ -34,8 +34,17 @@ const SETTLE_POLL = "10 seconds";
 const TRACKER_POLL = "60 seconds";
 /** The most command output a gate outcome carries: the end, where the error is. */
 const OUTPUT_TAIL = 8000;
-/** Failed reads in a row that a wait rides out before the run ends with the error. */
+/** Failed reads of a thread in a row that a settle rides out before the run ends with the error. */
 export const MAX_READ_FAILURES = 10;
+/**
+ * How long the waits on a person (an answer, the pull request) keep failing to read GitHub before
+ * the run ends with the error. Such a wait can last days, and an outage or an expired login of
+ * minutes must not end it, so the cap is a span of failing, not a count of polls.
+ */
+const TRACKER_PATIENCE: Duration.Input = "4 hours";
+
+/** When a poll gives up: after this many failed reads in a row, or after failing for this long. */
+type Patience = { readonly failures: number } | { readonly failingFor: Duration.Input };
 
 const portError = (error: { readonly message: string }) =>
   new PortError({ message: error.message });
@@ -51,24 +60,34 @@ const tail = (text: string): string =>
 
 /**
  * Runs `attempt` every `every` until it answers a value. A failed read is logged and tried again
- * at the next poll; {@link MAX_READ_FAILURES} in a row end the wait as a `PortError`.
+ * at the next poll, until the `patience` runs out; then the wait ends as a `PortError`.
  */
 const poll = Effect.fn("PipelineLive.poll")(function* <A, E extends { readonly message: string }>(
   what: string,
   every: Duration.Input,
   attempt: Effect.Effect<A | undefined, E>,
+  patience: Patience,
 ) {
   let failures = 0;
+  let failingSince: number | null = null;
   while (true) {
     const result = yield* Effect.result(attempt);
     if (Result.isSuccess(result)) {
       if (result.success !== undefined) return result.success;
       failures = 0;
+      failingSince = null;
     } else {
       failures += 1;
+      const now = yield* Clock.currentTimeMillis;
+      failingSince ??= now;
       const message = `${what} failed: ${result.failure.message}`;
-      if (failures >= MAX_READ_FAILURES) {
-        return yield* new PortError({ message: `${message} (${failures} times in a row)` });
+      if ("failures" in patience) {
+        if (failures >= patience.failures) {
+          return yield* new PortError({ message: `${message} (${failures} times in a row)` });
+        }
+      } else if (now - failingSince >= Duration.toMillis(patience.failingFor)) {
+        const minutes = Math.round((now - failingSince) / 60_000);
+        return yield* new PortError({ message: `${message} (for ${minutes} minutes)` });
       }
       yield* Effect.logWarning(message);
     }
@@ -111,6 +130,7 @@ export const livePorts = (input: LiveInput): Ports => {
           return newer ? ({ archived: false, status, ordinal } as const) : undefined;
         }),
       ),
+      { failures: MAX_READ_FAILURES },
     );
     if (settled.archived) {
       return yield* new PortError({ message: `thread ${threadId} was archived` });
@@ -250,6 +270,11 @@ export const liveTracker = (input: LiveTrackerInput): Tracker => {
   });
 
   return {
+    headBranch: (pr) =>
+      github.pullRequest(pr).pipe(
+        Effect.map((pull) => (pull === null || pull.crossRepository ? null : pull.headRef)),
+        Effect.mapError(portError),
+      ),
     postQuestions: Effect.fn("PipelineTracker.postQuestions")(function* (text) {
       // Before posting, so an answer quicker than the post is still read; the factory's own
       // comments are left out when the answers are read.
@@ -269,6 +294,7 @@ export const liveTracker = (input: LiveTrackerInput): Tracker => {
               approval.kind === "approved" && approval.labeledAt > since ? true : undefined,
             ),
           ),
+        { failingFor: TRACKER_PATIENCE },
       );
       const activity = yield* github.activitySince(issue, since, instructors);
       yield* github.setState(issue, "building");
@@ -292,7 +318,9 @@ export const liveTracker = (input: LiveTrackerInput): Tracker => {
         baseTip: null,
       };
       pulls.set(pr, state);
-      return yield* poll(`reading pull request #${pr}`, TRACKER_POLL, lookAt(pr, state));
+      return yield* poll(`reading pull request #${pr}`, TRACKER_POLL, lookAt(pr, state), {
+        failingFor: TRACKER_PATIENCE,
+      });
     }),
   };
 };

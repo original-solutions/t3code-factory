@@ -17,7 +17,7 @@ const PIPELINE: Pipeline = {
   name: "P",
   nodes: [
     { id: "start", kind: "start", x: 0, y: 0 },
-    { id: "build", kind: "agent", x: 0, y: 0, instructions: { brief: "" }, fresh: false },
+    { id: "build", kind: "agent", x: 0, y: 0, instructions: { brief: "" } },
   ],
   edges: [{ id: "e1", from: "start", port: "next", to: "build" }],
 };
@@ -50,9 +50,9 @@ describe("slugOf", () => {
 describe("summaryOf", () => {
   it("names the skill, the first words of a brief, or the command count", () => {
     const base = { id: "n", x: 0, y: 0 };
-    expect(
-      summaryOf({ ...base, kind: "agent", instructions: { skill: "factory" }, fresh: false }),
-    ).toBe("skill factory");
+    expect(summaryOf({ ...base, kind: "agent", instructions: { skill: "factory" } })).toBe(
+      "skill factory",
+    );
     expect(
       summaryOf({
         ...base,

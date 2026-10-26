@@ -43,7 +43,6 @@ const PIPELINE: Pipeline = {
       x: 280,
       y: 200,
       instructions: { skill: "factory" },
-      fresh: false,
     },
     { id: "done", kind: "end", result: "done", x: 520, y: 200 },
   ],
@@ -233,7 +232,6 @@ describe("PipelineEditorPage", () => {
       .element(browser.getByRole("combobox", { name: "Pick a skill" }))
       .toHaveTextContent("factory");
     await expect.element(browser.getByText("Build one issue.")).toBeVisible();
-    await expect.element(browser.getByRole("switch")).not.toBeChecked();
   });
 
   it("renames a node from the inspector and marks the pipeline unsaved", async () => {
@@ -313,7 +311,6 @@ describe("PipelineEditorPage", () => {
     expect(saved.nodes.at(-1)).toMatchObject({
       kind: "agent",
       instructions: { brief: "" },
-      fresh: false,
     });
   });
 
@@ -434,6 +431,41 @@ describe("PipelineEditorPage", () => {
     await expect
       .element(browser.getByRole("button", { name: "Done node" }))
       .not.toBeInTheDocument();
+  });
+
+  it("undo back to the loaded pipeline shows the problems it loaded with, not the edit's", async () => {
+    using _api = setup({
+      validate: vi.fn(async (_environmentId, pipeline: Pipeline) => ({
+        problems: pipeline.nodes.some((node) => node.kind === "end")
+          ? []
+          : ([{ level: "error", message: "The pipeline has no end." }] as ReadonlyArray<Problem>),
+      })),
+    });
+    await using _screen = await mount();
+    await userEvent.click(browser.getByRole("button", { name: "Done node" }));
+    await userEvent.keyboard("{Delete}");
+    await expect.element(browser.getByRole("button", { name: "Status: 1 error" })).toBeVisible();
+    await userEvent.keyboard("{Control>}z{/Control}");
+    await expect.element(browser.getByRole("button", { name: "Done node" })).toBeVisible();
+    await expect.element(browser.getByRole("button", { name: "Status: Valid" })).toBeVisible();
+  });
+
+  it("shows a failed read of the runs with a Retry that reads again", async () => {
+    let failing = true;
+    using _api = setup({
+      runs: vi.fn(async () => {
+        if (failing) throw new Error("the factory is away");
+        return { runs: [RUN] };
+      }),
+    });
+    await using _screen = await mount();
+    await userEvent.click(browser.getByRole("button", { name: "Runs" }));
+    await expect
+      .element(browser.getByText("Could not read runs: the factory is away"))
+      .toBeVisible();
+    failing = false;
+    await userEvent.click(browser.getByRole("button", { name: "Retry runs" }));
+    await expect.element(browser.getByRole("button", { name: /\/work\/factory/ })).toBeVisible();
   });
 
   it("asks before leaving with unsaved edits, and not when clean", async () => {

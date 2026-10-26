@@ -10,6 +10,7 @@ import {
   execute,
   NO_PULL_REQUEST,
   NO_RESULT_TWICE,
+  notOwnPullRequest,
   pastLimit,
   PortError,
   RESULT_LINE_REMINDER,
@@ -42,6 +43,10 @@ interface Script {
   readonly answers?: Array<string>;
   readonly pullRequest?: Array<{ port: PullRequestPort; detail: string | null }>;
   readonly tracker?: boolean;
+  /** The branch each pull request comes from; one not named comes from the run's branch. */
+  readonly heads?: Record<number, string | null>;
+  /** Threads whose next archive fails. */
+  readonly archiveFails?: Array<string>;
 }
 
 const fakePorts = (script: Script) => {
@@ -58,6 +63,7 @@ const fakePorts = (script: Script) => {
     branch: `t3/${threadId}`,
   });
   const tracker: Tracker = {
+    headBranch: (pr) => Effect.sync(() => script.heads?.[pr] ?? "t3/t1"),
     postQuestions: (text) => Effect.sync(() => void questions.push(text)),
     awaitAnswer: () => Effect.sync(() => ({ text: next("answers", script.answers ?? []) })),
     markReady: (pr) => Effect.sync(() => void ready.push(pr)),
@@ -82,7 +88,17 @@ const fakePorts = (script: Script) => {
           ? Effect.fail(reply)
           : Effect.succeed({ ...thread(threadId), text: reply });
       }),
-    archive: (threadId) => Effect.sync(() => void archived.push(threadId)),
+    archive: (threadId) =>
+      Effect.suspend(() => {
+        const failing = script.archiveFails ?? [];
+        const at = failing.indexOf(threadId);
+        if (at >= 0) {
+          failing.splice(at, 1);
+          return Effect.fail(new PortError({ message: `cannot archive ${threadId}` }));
+        }
+        archived.push(threadId);
+        return Effect.void;
+      }),
     commands: (lines, cwd) =>
       Effect.sync(() => {
         ran.push({ lines, cwd });
@@ -185,9 +201,9 @@ describe("execute", () => {
       }),
   );
 
-  it.effect("launches a fresh agent node from the run's branch and archives it", () =>
+  it.effect("a second agent node continues the run's thread with its own instructions", () =>
     Effect.gen(function* () {
-      const withReview: Pipeline = {
+      const withPolish: Pipeline = {
         ...buildAndGate,
         nodes: [
           ...buildAndGate.nodes,
@@ -198,7 +214,6 @@ describe("execute", () => {
             x: 0,
             y: 0,
             instructions: { brief: "Polish the docs." },
-            fresh: true,
           },
         ],
         edges: [
@@ -211,16 +226,67 @@ describe("execute", () => {
         replies: ["FACTORY-DONE: built", "FACTORY-DONE: polished"],
         commands: [{ ok: true, output: "ok" }],
       });
-      const end = yield* execute(withReview, fake.ports, run);
+      const end = yield* execute(withPolish, fake.ports, run);
       assert.strictEqual(end.result, "done");
-      assert.strictEqual(fake.launches.length, 2);
-      const polish = fake.launches[1]!;
-      assert.strictEqual(polish.fromBranch, "t3/t1");
-      assert.strictEqual(polish.title, "Build and gate: Polish");
-      assert.isTrue(polish.message.startsWith("Polish the docs.\n\nThe gate's output:\n\nok\n\n"));
-      // The fresh thread is archived once it answered; the main thread when the run ends.
-      assert.deepStrictEqual(fake.archived, ["t2", "t1"]);
+      assert.strictEqual(fake.launches.length, 1);
+      assert.deepStrictEqual(fake.sent, [
+        { threadId: "t1", message: "Polish the docs.\n\nThe gate's output:\n\nok" },
+      ]);
+      assert.deepStrictEqual(fake.archived, ["t1"]);
     }),
+  );
+
+  it.effect("marks ready the reported pull request that comes from the run's branch", () =>
+    Effect.gen(function* () {
+      const fake = fakePorts({
+        replies: [
+          `Fixed. See https://github.com/acme/widgets/pull/5 for the earlier attempt.\nFACTORY-DONE: ${PR_URL}`,
+          "FACTORY-DONE: lessons written",
+        ],
+        commands: [{ ok: true, output: "green" }],
+        heads: { 5: "t3/earlier" },
+        pullRequest: [{ port: "merged", detail: null }],
+      });
+      const end = yield* execute(buildAndLearn, fake.ports, run);
+      assert.deepStrictEqual(end, { result: "done", reason: null });
+      assert.deepStrictEqual(fake.ready, [42]);
+    }),
+  );
+
+  it.effect(
+    "ends stuck at a pr node when no reported pull request comes from the run's branch",
+    () =>
+      Effect.gen(function* () {
+        const fake = fakePorts({
+          replies: [`FACTORY-DONE: ${PR_URL}`],
+          commands: [{ ok: true, output: "green" }],
+          heads: { 42: "t3/someone-else" },
+        });
+        const end = yield* execute(buildAndLearn, fake.ports, run);
+        assert.deepStrictEqual(end, { result: "stuck", reason: notOwnPullRequest("t3/t1") });
+        assert.deepStrictEqual(fake.ready, []);
+      }),
+  );
+
+  it.effect(
+    "a reviewer thread that cannot be archived is archived when the run ends; the pass stands",
+    () =>
+      Effect.gen(function* () {
+        const reviewed: Pipeline = {
+          ...buildAndGate,
+          nodes: buildAndGate.nodes.map((node) =>
+            node.kind === "verify" ? { ...node, check: { brief: "Review it." } } : node,
+          ),
+        };
+        const fake = fakePorts({
+          replies: ["FACTORY-DONE: built", "Looks right.\nFACTORY-DONE: pass"],
+          archiveFails: ["t2"],
+        });
+        const end = yield* execute(reviewed, fake.ports, run);
+        assert.deepStrictEqual(end, { result: "done", reason: null });
+        assert.deepStrictEqual(fake.archived, ["t1", "t2"]);
+        assert.isFalse(fake.events.some((event) => event.event === "error"));
+      }),
   );
 
   it.effect("posts questions, waits for answers and sends them on", () =>

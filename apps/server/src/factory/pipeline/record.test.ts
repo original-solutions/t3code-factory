@@ -14,8 +14,8 @@ import {
   createRecord,
   isRunId,
   listRecords,
-  markInterrupted,
   parseRecord,
+  pipelineIdOf,
   readRecord,
   recordPath,
   runIdFor,
@@ -156,25 +156,9 @@ describe("the record on disk", () => {
     ),
   );
 
-  it.effect("ends every unfinished record as interrupted, and leaves ended ones alone", () =>
-    withTempDir((dir) =>
-      Effect.gen(function* () {
-        const open = runIdFor("a", T0, "0001");
-        const closed = runIdFor("a", T0, "0002");
-        yield* appendEvent(recordPath(dir, open), T0, started);
-        yield* appendEvent(recordPath(dir, closed), T0, started);
-        yield* appendEvent(recordPath(dir, closed), T0 + 1, {
-          event: "ended",
-          result: "done",
-          reason: null,
-        });
-        assert.deepStrictEqual(yield* markInterrupted(dir, T0 + 10), [open]);
-        const reopened = summarize(open, yield* readRecord(recordPath(dir, open)));
-        assert.strictEqual(reopened.status, "interrupted");
-        assert.strictEqual(reopened.reason, "the server restarted");
-        const kept = yield* readRecord(recordPath(dir, closed));
-        assert.strictEqual(kept.length, 2);
-      }),
-    ),
-  );
+  it("reads the pipeline id back out of a run id, whatever dashes and digits it holds", () => {
+    assert.strictEqual(pipelineIdOf(runIdFor("build-2", T0, "0a1f")), "build-2");
+    assert.strictEqual(pipelineIdOf(runIdFor("a", T0, "0001")), "a");
+    assert.strictEqual(pipelineIdOf("notes"), null);
+  });
 });

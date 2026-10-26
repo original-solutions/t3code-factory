@@ -39,7 +39,7 @@ import {
   createRecord,
   isRunId,
   listRecords,
-  markInterrupted,
+  pipelineIdOf,
   readRecord,
   recordPath,
   runIdFor,
@@ -54,6 +54,10 @@ import {
 
 export const STOPPED = "stopped by a person";
 export const SERVER_STOPPED = "the server stopped";
+/** The reason a run that was under way when the server died is given at the next start. */
+export const RESTARTED = "the server restarted";
+/** The newest runs a list answers: the page polls it while a run goes, so it reads a bounded set. */
+export const RUNS_LISTED = 50;
 /** How long a run may work, not counting its waits for a person; the factory's default limit. */
 export const RUN_LIMIT_MINUTES = 180;
 /** Run ids tried before a start gives up; four random hex digits a second rarely collide. */
@@ -68,6 +72,35 @@ const causeMessage = (cause: Cause.Cause<unknown>): string => {
   return error instanceof Error ? error.message : String(error);
 };
 
+/** The project config on the repo's default branch, which the factory's own loop reads. */
+const configOnBase = (github: BoundGitHub) =>
+  github.baseConfig().pipe(
+    Effect.map((found) =>
+      found.text === null
+        ? Option.none<ProjectConfig>()
+        : Result.match(parseProjectConfig(found.text, `${found.branch}:${PROJECT_CONFIG_PATH}`), {
+            onSuccess: Option.some,
+            onFailure: () => Option.none<ProjectConfig>(),
+          }),
+    ),
+    Effect.catch((error) => Effect.as(Effect.logWarning(error.message), Option.none())),
+  );
+
+/**
+ * The repo's factory config, whose `instructors` say whose answers and feedback a run trusts:
+ * the checkout's `.dw/config.yml`, else the default branch's read through `github`, else none.
+ */
+export const projectConfigFor = Effect.fn("PipelineRuns.projectConfigFor")(function* (
+  projectRoot: string,
+  github: BoundGitHub | null,
+) {
+  const inCheckout = yield* loadProjectConfig(NodePath.join(projectRoot, PROJECT_CONFIG_PATH)).pipe(
+    Effect.option,
+  );
+  if (Option.isSome(inCheckout) || github === null) return inCheckout;
+  return yield* configOnBase(github);
+});
+
 export const make = Effect.gen(function* () {
   const { factoryDir, machineConfigPath } = yield* FactoryPaths;
   const sessions = yield* FactorySessions;
@@ -80,11 +113,6 @@ export const make = Effect.gen(function* () {
   const runsDir = NodePath.join(factoryDir, "pipelines", "runs");
   const fibers = new Map<string, Fiber.Fiber<unknown, unknown>>();
 
-  const marked = yield* markInterrupted(runsDir, yield* Clock.currentTimeMillis).pipe(
-    Effect.catch((error) => Effect.as(Effect.logError(error.message), [])),
-  );
-  if (marked.length > 0) yield* Effect.logInfo(`pipeline runs interrupted: ${marked.join(", ")}`);
-
   const io = (error: { readonly message: string }) =>
     new PipelineRunError({ kind: "io", message: error.message });
 
@@ -95,8 +123,8 @@ export const make = Effect.gen(function* () {
 
   /**
    * Ends a run's record as `result`, unless it already ended, and archives every thread it
-   * names. The record first: archiving is cleanup, and a thread that cannot be archived is
-   * logged and left.
+   * names; answers whether it ended it. The record first: archiving is cleanup, and a thread
+   * that cannot be archived is logged and left.
    */
   const close = Effect.fn("PipelineRuns.close")(function* (
     id: string,
@@ -104,7 +132,7 @@ export const make = Effect.gen(function* () {
     reason: string,
   ) {
     const events = yield* recordOf(id);
-    if (events.some((event) => event.event === "ended")) return;
+    if (events.some((event) => event.event === "ended")) return false;
     yield* appendEvent(recordPath(runsDir, id), yield* Clock.currentTimeMillis, {
       event: "ended",
       result,
@@ -115,7 +143,24 @@ export const make = Effect.gen(function* () {
         .archive(threadId)
         .pipe(Effect.catch((error) => Effect.logWarning(error.message)));
     }
+    return true;
   });
+
+  // A record a crash left open ends as a stop would have ended it, threads included: a run is a
+  // fiber, and nothing resumes one the process lost.
+  const lost: Array<string> = [];
+  const left = yield* listRecords(runsDir).pipe(
+    Effect.catch((error) => Effect.as(Effect.logError(error.message), [])),
+  );
+  for (const id of left) {
+    const ended = yield* close(id, "interrupted", RESTARTED).pipe(
+      Effect.catch((error) =>
+        Effect.as(Effect.logError(`pipeline run ${id}: ${error.message}`), false),
+      ),
+    );
+    if (ended) lost.push(id);
+  }
+  if (lost.length > 0) yield* Effect.logInfo(`pipeline runs interrupted: ${lost.join(", ")}`);
 
   yield* Effect.addFinalizer(() =>
     Effect.forEach(
@@ -153,20 +198,6 @@ export const make = Effect.gen(function* () {
         Effect.catch(() => Effect.succeed("")),
         Effect.map((branch) => (branch === "" ? "HEAD" : branch)),
       );
-
-  /** The project config on the repo's default branch, which the factory's own loop reads. */
-  const configOnBase = (github: BoundGitHub) =>
-    github.baseConfig().pipe(
-      Effect.map((found) =>
-        found.text === null
-          ? Option.none<ProjectConfig>()
-          : Result.match(parseProjectConfig(found.text, `${found.branch}:${PROJECT_CONFIG_PATH}`), {
-              onSuccess: Option.some,
-              onFailure: () => Option.none<ProjectConfig>(),
-            }),
-      ),
-      Effect.catch((error) => Effect.as(Effect.logWarning(error.message), Option.none())),
-    );
 
   /** Writes the run's first line under a fresh id; answers the id. */
   const createRun = Effect.fn("PipelineRuns.createRun")(function* (
@@ -211,13 +242,11 @@ export const make = Effect.gen(function* () {
         repo === null || issue === null || Option.isNone(machine)
           ? null
           : bindProcess(makeGitHub({ repo, ghConfigDir: machine.value.ghConfigDir }), process);
-      const inCheckout = yield* loadProjectConfig(
-        NodePath.join(projectRoot, PROJECT_CONFIG_PATH),
-      ).pipe(Effect.option, Effect.provideService(FileSystem.FileSystem, fs));
       // A parsed config always names instructors. Without one, nobody's answers or feedback can
       // be trusted, so the run gets no tracker and its `ask` and `pr` nodes end it stuck.
-      const config =
-        Option.isNone(inCheckout) && github !== null ? yield* configOnBase(github) : inCheckout;
+      const config = yield* projectConfigFor(projectRoot, github).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+      );
       if (github !== null && Option.isNone(config)) {
         yield* Effect.logWarning(
           `pipeline run on ${repo}#${issue}: no readable ${PROJECT_CONFIG_PATH}, so no tracker`,
@@ -281,11 +310,12 @@ export const make = Effect.gen(function* () {
 
   const list: PipelineRuns["Service"]["list"] = Effect.fn("PipelineRuns.list")(
     function* (pipelineId) {
+      // The id names the pipeline, so another pipeline's record is never read.
+      const ids = (yield* listRecords(runsDir))
+        .filter((id) => pipelineId === undefined || pipelineIdOf(id) === pipelineId)
+        .slice(0, RUNS_LISTED);
       const summaries = [];
-      for (const id of yield* listRecords(runsDir)) {
-        const summary = summarize(id, yield* recordOf(id));
-        if (pipelineId === undefined || summary.pipelineId === pipelineId) summaries.push(summary);
-      }
+      for (const id of ids) summaries.push(summarize(id, yield* recordOf(id)));
       return summaries;
     },
   );

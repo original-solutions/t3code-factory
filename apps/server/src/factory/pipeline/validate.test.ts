@@ -142,7 +142,7 @@ describe("validate", () => {
       ...buildAndGate,
       nodes: buildAndGate.nodes.map((node) =>
         node.id === "build"
-          ? { ...node, kind: "agent", instructions: { brief: "  " }, fresh: false }
+          ? { ...node, kind: "agent", instructions: { brief: "  " } }
           : node.id === "gate"
             ? { ...node, kind: "verify", check: { commands: [] } }
             : node,

@@ -98,7 +98,7 @@ export const newNode = (kind: Kind, id: string, x: number, y: number): PipelineN
     case "pr":
       return { ...base, kind };
     case "agent":
-      return { ...base, kind, instructions: EMPTY_BRIEF, fresh: false };
+      return { ...base, kind, instructions: EMPTY_BRIEF };
     case "learn":
       return { ...base, kind, instructions: EMPTY_BRIEF };
     case "verify":

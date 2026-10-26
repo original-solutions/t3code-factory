@@ -6,7 +6,7 @@ import { describe } from "vite-plus/test";
 
 import type { FactoryProcess } from "../process.ts";
 import type { FactorySessions, ThreadStatus } from "../t3/sessions.ts";
-import type { BoundGitHub, Feedback, PullRequest } from "../tracker/github.ts";
+import { MARKER, type BoundGitHub, type Feedback, type PullRequest } from "../tracker/github.ts";
 import { PortError } from "./execute.ts";
 import { livePorts, liveTracker, MAX_READ_FAILURES } from "./live.ts";
 
@@ -106,6 +106,87 @@ describe("livePorts.settle", () => {
   );
 });
 
+/** Ports whose process runner answers each command from `results`, in order, recording the lines. */
+const portsRunning = (
+  results: Array<{ exitCode: number | null; timedOut: boolean; tail: string }>,
+) => {
+  const ran: Array<{ command: string; cwd: string | undefined }> = [];
+  const process = {
+    run: (request: { command: string; cwd?: string }) =>
+      Effect.sync(() => {
+        ran.push({ command: request.command, cwd: request.cwd });
+        const result = results.shift();
+        if (result === undefined) throw new Error("the command script ran out");
+        return { ...result, stderrTail: "", truncated: false };
+      }),
+  } as unknown as FactoryProcess["Service"];
+  const ports = livePorts({
+    runId: "r",
+    projectId: "p",
+    model: { instanceId: "claudeAgent", model: "m" },
+    base: "main",
+    recordPath: "/dev/null",
+    sessions: {} as FactorySessions["Service"],
+    process,
+    tracker: null,
+  });
+  return { ports, ran };
+};
+
+describe("livePorts.commands", () => {
+  it.effect("runs every line in the worktree and passes when all exit 0", () =>
+    Effect.gen(function* () {
+      const { ports, ran } = portsRunning([
+        { exitCode: 0, timedOut: false, tail: "ok\n" },
+        { exitCode: 0, timedOut: false, tail: "green\n" },
+      ]);
+      const result = yield* ports.commands(["vp i", "vp test"], "/wt/t1");
+      assert.deepStrictEqual(result, { ok: true, output: "$ vp i\nok\n$ vp test\ngreen\n" });
+      assert.deepStrictEqual(ran, [
+        { command: "vp i", cwd: "/wt/t1" },
+        { command: "vp test", cwd: "/wt/t1" },
+      ]);
+    }),
+  );
+
+  it.effect(
+    "fails at the first line that exits non-zero, times out or dies, and runs no more",
+    () =>
+      Effect.gen(function* () {
+        const failing = portsRunning([{ exitCode: 1, timedOut: false, tail: "1 failed\n" }]);
+        assert.deepStrictEqual(yield* failing.ports.commands(["vp test", "vp lint"], "/wt"), {
+          ok: false,
+          output: "$ vp test\n1 failed\n\n[exited 1]",
+        });
+        assert.strictEqual(failing.ran.length, 1);
+
+        const slow = portsRunning([{ exitCode: null, timedOut: true, tail: "" }]);
+        assert.deepStrictEqual(yield* slow.ports.commands(["sleep 1d"], "/wt"), {
+          ok: false,
+          output: "$ sleep 1d\n\n[timed out]",
+        });
+
+        const killed = portsRunning([{ exitCode: null, timedOut: false, tail: "" }]);
+        assert.deepStrictEqual(yield* killed.ports.commands(["vp test"], "/wt"), {
+          ok: false,
+          output: "$ vp test\n\n[exited by a signal]",
+        });
+      }),
+  );
+
+  it.effect("keeps the tail of long output, where the error is", () =>
+    Effect.gen(function* () {
+      const { ports } = portsRunning([
+        { exitCode: 1, timedOut: false, tail: `${"x".repeat(9000)}\nthe error` },
+      ]);
+      const result = yield* ports.commands(["vp test"], "/wt");
+      assert.isTrue(result.output.startsWith("[cut]\n"));
+      assert.isTrue(result.output.endsWith("\nthe error\n[exited 1]"));
+      assert.isAtMost(result.output.length, 8000 + "[cut]\n".length);
+    }),
+  );
+});
+
 const feedbackItem = (id: string, createdAt: string, body: string): Feedback => ({
   id,
   author: "tom",
@@ -124,9 +205,33 @@ const fakeGitHub = () => {
     feedback: [] as Array<Feedback>,
     /** Reads of the pull request that fail before one succeeds. */
     failPullReads: 0,
+    /** What `approval` answers; `labeledAt` is a GitHub time. */
+    approval: { kind: "refused" } as { kind: string; labeledAt?: string },
+    comments: [] as Array<{ id: string; author: string; createdAt: string; body: string }>,
+    posted: [] as Array<{ issue: number; body: string }>,
+    states: [] as Array<string>,
+    /** The `instructors` each read was given. */
+    askedWith: [] as Array<ReadonlyArray<string>>,
   };
   const github = {
     markPrReady: () => Effect.void,
+    postComment: (issue: number, body: string) =>
+      Effect.sync(() => void state.posted.push({ issue, body })),
+    setState: (_issue: number, next: string) => Effect.sync(() => void state.states.push(next)),
+    approval: (_issue: number, instructors: ReadonlyArray<string>) =>
+      Effect.sync(() => {
+        state.askedWith.push(instructors);
+        return state.approval;
+      }),
+    activitySince: (_issue: number, since: string, instructors: ReadonlyArray<string>) =>
+      Effect.sync(() => {
+        state.askedWith.push(instructors);
+        return {
+          comments: state.comments.filter((comment) => comment.createdAt > since),
+          bodyEdit: null,
+          dropped: [],
+        };
+      }),
     pullRequest: () =>
       Effect.suspend(() =>
         state.failPullReads-- > 0
@@ -191,17 +296,84 @@ describe("liveTracker.awaitPullRequest", () => {
     }),
   );
 
-  it.effect("rides out a failed read of the pull request", () =>
+  it.effect("rides out failed reads of the pull request for hours, and gives up after four", () =>
     Effect.gen(function* () {
       const { state, tracker } = fakeGitHub();
       yield* tracker.markReady(42);
-      state.failPullReads = 2;
+      // Ten minutes of an expired login would have ended the run under a count of ten polls.
+      state.failPullReads = 90;
       state.pull = { ...state.pull, open: false, merged: true };
       const waiting = yield* Effect.forkChild(tracker.awaitPullRequest(42), {
         startImmediately: true,
       });
-      yield* TestClock.adjust("2 minutes");
+      yield* TestClock.adjust("2 hours");
       assert.deepStrictEqual(yield* Fiber.join(waiting), { port: "merged", detail: null });
+
+      state.failPullReads = Number.POSITIVE_INFINITY;
+      const failing = yield* Effect.forkChild(Effect.flip(tracker.awaitPullRequest(42)), {
+        startImmediately: true,
+      });
+      yield* TestClock.adjust("5 hours");
+      const error = yield* Fiber.join(failing);
+      assert.include(error.message, "gh timed out");
+      assert.include(error.message, "(for 240 minutes)");
+    }),
+  );
+
+  it.effect("names the branch a pull request comes from, and none for a fork's", () =>
+    Effect.gen(function* () {
+      const { state, tracker } = fakeGitHub();
+      state.pull = { ...state.pull, headRef: "t3/issue-7", crossRepository: false };
+      assert.strictEqual(yield* tracker.headBranch(42), "t3/issue-7");
+      state.pull = { ...state.pull, crossRepository: true };
+      assert.isNull(yield* tracker.headBranch(42));
+    }),
+  );
+});
+
+describe("liveTracker.postQuestions and awaitAnswer", () => {
+  it.effect(
+    "posts the questions, waits for an instructor's fresh approval, and answers their comments",
+    () =>
+      Effect.gen(function* () {
+        const { state, tracker } = fakeGitHub();
+        yield* TestClock.adjust("1 hour");
+        yield* tracker.postQuestions("1. Which base?");
+        assert.strictEqual(state.posted.length, 1);
+        assert.include(state.posted[0]!.body, "1. Which base?");
+        assert.deepStrictEqual(state.states, ["needs-info"]);
+
+        // The label from before the questions is not the answer.
+        state.approval = { kind: "approved", labeledAt: "1970-01-01T00:30:00Z" };
+        state.comments = [
+          { id: "c0", author: "tom", createdAt: "1970-01-01T00:20:00Z", body: "An old note." },
+        ];
+        const waiting = yield* Effect.forkChild(tracker.awaitAnswer(), { startImmediately: true });
+        yield* TestClock.adjust("5 minutes");
+        assert.deepStrictEqual(state.states, ["needs-info"]);
+
+        state.comments.push(
+          { id: "c1", author: "tom", createdAt: "1970-01-01T01:02:00Z", body: "Use main." },
+          { id: "c2", author: "bot", createdAt: "1970-01-01T01:02:30Z", body: `${MARKER} noted` },
+        );
+        state.approval = { kind: "approved", labeledAt: "1970-01-01T01:03:00Z" };
+        yield* TestClock.adjust("1 minute");
+        assert.deepStrictEqual(yield* Fiber.join(waiting), { text: "tom:\nUse main." });
+        assert.deepStrictEqual(state.states, ["needs-info", "building"]);
+        assert.isTrue(state.askedWith.every((given) => given.length === 1 && given[0] === "tom"));
+      }),
+  );
+
+  it.effect("says so when the issue was approved again without a comment", () =>
+    Effect.gen(function* () {
+      const { state, tracker } = fakeGitHub();
+      yield* tracker.postQuestions("1. Really?");
+      state.approval = { kind: "approved", labeledAt: "1970-01-01T00:01:00Z" };
+      const waiting = yield* Effect.forkChild(tracker.awaitAnswer(), { startImmediately: true });
+      yield* TestClock.adjust("1 minute");
+      assert.deepStrictEqual(yield* Fiber.join(waiting), {
+        text: "No comments; the issue was approved again.",
+      });
     }),
   );
 });

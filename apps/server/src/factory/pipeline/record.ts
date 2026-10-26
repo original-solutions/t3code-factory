@@ -30,6 +30,12 @@ export const runIdFor = (pipelineId: string, ms: number, hex: string): string =>
   return `${pipelineId}-${stamp}-${hex}`;
 };
 
+/** The pipeline a run id belongs to: the id without its time and random digits. */
+export const pipelineIdOf = (runId: string): string | null => {
+  const match = RUN_ID_PATTERN.exec(runId);
+  return match === null ? null : runId.slice(0, runId.length - match[1]!.length - 6);
+};
+
 export const recordPath = (dir: string, id: string): string => NodePath.join(dir, `${id}.jsonl`);
 
 const io = <A>(what: string, run: () => A) =>
@@ -152,25 +158,3 @@ export const listRecords = (dir: string) =>
       stamp(a) === stamp(b) ? (a < b ? 1 : -1) : stamp(a) < stamp(b) ? 1 : -1,
     );
   });
-
-/** The reason a run that was under way when the server stopped is given at the next start. */
-export const RESTARTED = "the server restarted";
-
-/**
- * Ends every record in `dir` that has not ended as `interrupted`: a run is a fiber, and nothing
- * resumes one the process lost. Answers the ids it ended.
- */
-export const markInterrupted = Effect.fn("PipelineRecord.markInterrupted")(function* (
-  dir: string,
-  ms: number,
-) {
-  const marked: Array<string> = [];
-  for (const id of yield* listRecords(dir)) {
-    const path = recordPath(dir, id);
-    const events = yield* readRecord(path);
-    if (events.some((event) => event.event === "ended")) continue;
-    yield* appendEvent(path, ms, { event: "ended", result: "interrupted", reason: RESTARTED });
-    marked.push(id);
-  }
-  return marked;
-});

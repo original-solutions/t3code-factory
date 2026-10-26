@@ -7,15 +7,18 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import { describe } from "vite-plus/test";
 
 import { FactoryProcess } from "../process.ts";
 import { FactoryPaths } from "../t3/paths.ts";
-import { FactorySessions } from "../t3/sessions.ts";
+import { FactorySessions, type ThreadStatus } from "../t3/sessions.ts";
 import { FactoryWatchedRepos } from "../t3/watchedRepos.ts";
-import { buildAndGate } from "./fixtures.ts";
+import type { BoundGitHub } from "../tracker/github.ts";
+import { buildAndGate, buildAndLearn } from "./fixtures.ts";
 import { encodePipeline } from "./model.ts";
 import { appendEvent, readRecord, recordPath, runIdFor } from "./record.ts";
 import * as Runs from "./runs.ts";
@@ -31,8 +34,26 @@ type Setup = {
   readonly layer: Layer.Layer<PipelineRuns>;
 };
 
-/** The service over a temp factory dir, with sessions whose runs never settle unless `status` says. */
-const setup = (factoryDir: string, status: Effect.Effect<never> = Effect.never): Setup => {
+const settled = (text: string): ThreadStatus => ({
+  worktreePath: "/wt/t1",
+  branch: "t3/t1",
+  archived: false,
+  run: "completed",
+  runOrdinal: 1,
+  runStartedAt: null,
+  runCompletedAt: null,
+  lastAssistantMessage: text,
+});
+
+/**
+ * The service over a temp factory dir, with sessions whose runs never settle unless `status`
+ * says, watching `repos` (none by default).
+ */
+const setup = (
+  factoryDir: string,
+  status: Effect.Effect<ThreadStatus> = Effect.never,
+  repos: ReadonlyArray<{ repo: string; path: string; title: string }> = [],
+): Setup => {
   const archived: Array<string> = [];
   const launched = Deferred.makeUnsafe<void>();
   const archivedOne = Deferred.makeUnsafe<void>();
@@ -72,8 +93,8 @@ const setup = (factoryDir: string, status: Effect.Effect<never> = Effect.never):
             }),
         }),
         Layer.succeed(FactoryWatchedRepos, {
-          list: Effect.succeed({ repos: [], departed: [], unresolved: [] }),
-          listAndRemember: Effect.succeed({ repos: [], departed: [], unresolved: [] }),
+          list: Effect.succeed({ repos, departed: [], unresolved: [] }),
+          listAndRemember: Effect.succeed({ repos, departed: [], unresolved: [] }),
         }),
         NodeServices.layer,
       ),
@@ -85,11 +106,12 @@ const setup = (factoryDir: string, status: Effect.Effect<never> = Effect.never):
 /** The service over a temp factory dir that is removed however the test ends. */
 const withRuns = <A, E>(
   body: (setup: Setup & { readonly factoryDir: string }) => Effect.Effect<A, E>,
-  status?: Effect.Effect<never>,
+  status?: Effect.Effect<ThreadStatus>,
+  repos?: ReadonlyArray<{ repo: string; path: string; title: string }>,
 ) =>
   Effect.acquireUseRelease(
     Effect.sync(() => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "pipeline-runs-"))),
-    (factoryDir) => body({ ...setup(factoryDir, status), factoryDir }),
+    (factoryDir) => body({ ...setup(factoryDir, status, repos), factoryDir }),
     (dir) => Effect.sync(() => NodeFS.rmSync(dir, { recursive: true, force: true })),
   );
 
@@ -138,25 +160,97 @@ describe("PipelineRuns", () => {
     ),
   );
 
-  it.effect("ends a run the server lost as interrupted when it starts", () =>
+  it.effect(
+    "ends a run the server lost as interrupted when it starts, and archives its threads",
+    () =>
+      withRuns(({ factoryDir, archived, layer }) =>
+        Effect.gen(function* () {
+          const runsDir = NodePath.join(factoryDir, "pipelines", "runs");
+          const id = runIdFor("build-and-gate", 0, "0001");
+          yield* appendEvent(recordPath(runsDir, id), 0, {
+            event: "started",
+            pipeline: encodePipeline(buildAndGate),
+            projectRoot: ROOT,
+            repo: null,
+            issue: null,
+          });
+          yield* appendEvent(recordPath(runsDir, id), 1, {
+            event: "thread",
+            node: "build",
+            threadId: "t-lost",
+            worktree: null,
+            branch: null,
+          });
+          const finished = runIdFor("build-and-gate", 0, "0002");
+          yield* appendEvent(recordPath(runsDir, finished), 0, {
+            event: "ended",
+            result: "done",
+            reason: null,
+          });
+          const run = yield* Effect.gen(function* () {
+            const runs = yield* PipelineRuns;
+            return yield* runs.get(id);
+          }).pipe(Effect.provide(layer));
+          assert.strictEqual(run.status, "interrupted");
+          assert.strictEqual(run.reason, Runs.RESTARTED);
+          assert.deepStrictEqual(archived, ["t-lost"]);
+          assert.strictEqual((yield* readRecord(recordPath(runsDir, finished))).length, 1);
+        }),
+      ),
+  );
+
+  it.effect("lists a pipeline's newest runs without reading another pipeline's records", () =>
     withRuns(({ factoryDir, layer }) =>
       Effect.gen(function* () {
-        const id = runIdFor("build-and-gate", 0, "0001");
-        yield* appendEvent(recordPath(NodePath.join(factoryDir, "pipelines", "runs"), id), 0, {
-          event: "started",
-          pipeline: encodePipeline(buildAndGate),
-          projectRoot: ROOT,
-          repo: null,
-          issue: null,
-        });
-        const run = yield* Effect.gen(function* () {
-          const runs = yield* PipelineRuns;
-          return yield* runs.get(id);
-        }).pipe(Effect.provide(layer));
-        assert.strictEqual(run.status, "interrupted");
-        assert.strictEqual(run.reason, "the server restarted");
+        const runsDir = NodePath.join(factoryDir, "pipelines", "runs");
+        const ended = { event: "ended", result: "done", reason: null } as const;
+        for (let n = 0; n < Runs.RUNS_LISTED + 5; n++) {
+          yield* appendEvent(recordPath(runsDir, runIdFor("build", n * 1000, "0000")), n, ended);
+        }
+        yield* appendEvent(recordPath(runsDir, runIdFor("build-2", 0, "0000")), 0, ended);
+        // A directory under a record's name: reading it as a file fails, so a list that touched it would.
+        NodeFS.mkdirSync(recordPath(runsDir, runIdFor("other", 0, "0000")));
+        const runs = yield* PipelineRuns.pipe(Effect.provide(layer));
+        const listed = yield* runs.list("build");
+        assert.strictEqual(listed.length, Runs.RUNS_LISTED);
+        assert.strictEqual(listed[0]!.id, runIdFor("build", (Runs.RUNS_LISTED + 4) * 1000, "0000"));
+        assert.isTrue(
+          listed.every((run) => run.id.startsWith("build-") && !run.id.startsWith("build-2-")),
+        );
+        assert.deepStrictEqual(
+          (yield* runs.list("build-2")).map((run) => run.id),
+          [runIdFor("build-2", 0, "0000")],
+        );
       }),
     ),
+  );
+
+  it.effect(
+    "gives a run on a watched repo no tracker without a readable config, so Ask ends it stuck",
+    () =>
+      withRuns(
+        ({ factoryDir, archivedOne, layer }) =>
+          Effect.gen(function* () {
+            NodeFS.writeFileSync(
+              NodePath.join(factoryDir, "config.yml"),
+              "gh_config_dir: /gh\nmax_concurrent_runs: 1\n",
+            );
+            const runs = yield* PipelineRuns;
+            const started = yield* runs.start({
+              pipeline: buildAndLearn,
+              projectRoot: ROOT,
+              issue: 12,
+            });
+            assert.strictEqual(started.repo, "acme/widgets");
+            yield* Deferred.await(archivedOne);
+            // The run is ending; a stop waits for that end and changes nothing of it.
+            const run = yield* runs.stop(started.id);
+            assert.strictEqual(run.status, "stuck");
+            assert.strictEqual(run.reason, "Ask needs an issue on a watched repo");
+          }).pipe(Effect.provide(layer)),
+        Effect.succeed(settled("1. Which base?\nFACTORY-STOP: needs-info")),
+        [{ repo: "acme/widgets", path: ROOT, title: "Widgets" }],
+      ),
   );
   it.effect("ends a run whose executor dies as error, and archives its threads", () =>
     withRuns(
@@ -224,6 +318,67 @@ describe("PipelineRuns", () => {
           reason: Runs.SERVER_STOPPED,
         });
         assert.deepStrictEqual(archived, ["t1"]);
+      }),
+    ),
+  );
+});
+
+const PROJECT_CONFIG = (instructors: string) =>
+  `factory:\n  instructors: [${instructors}]\n  base: main\n  provision: []\n  gate: ["true"]\n  limits: { gate_retries: 1 }\n  autonomy: pr\n`;
+
+/** A GitHub whose default branch holds `text` as the project config, counting the reads. */
+const githubWithBase = (text: string | null) => {
+  const reads = { n: 0 };
+  const github = {
+    baseConfig: () =>
+      Effect.sync(() => {
+        reads.n += 1;
+        return { branch: "main", tip: "abc", text };
+      }),
+  } as unknown as BoundGitHub;
+  return { github, reads };
+};
+
+describe("projectConfigFor", () => {
+  const withRoot = <A>(body: (root: string) => Effect.Effect<A, never, FileSystem.FileSystem>) =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "pipeline-root-"))),
+      body,
+      (dir) => Effect.sync(() => NodeFS.rmSync(dir, { recursive: true, force: true })),
+    ).pipe(Effect.provide(NodeServices.layer));
+
+  it.effect("takes the checkout's config first, and never reads the base for it", () =>
+    withRoot((root) =>
+      Effect.gen(function* () {
+        NodeFS.mkdirSync(NodePath.join(root, ".dw"));
+        NodeFS.writeFileSync(NodePath.join(root, ".dw", "config.yml"), PROJECT_CONFIG("tom"));
+        const base = githubWithBase(PROJECT_CONFIG("someone"));
+        const config = yield* Runs.projectConfigFor(root, base.github);
+        assert.deepStrictEqual(
+          Option.map(config, (c) => c.instructors),
+          Option.some(["tom"]),
+        );
+        assert.strictEqual(base.reads.n, 0);
+      }),
+    ),
+  );
+
+  it.effect("falls back to the default branch's config, and to none when neither reads", () =>
+    withRoot((root) =>
+      Effect.gen(function* () {
+        const base = githubWithBase(PROJECT_CONFIG("rawphp"));
+        const fromBase = yield* Runs.projectConfigFor(root, base.github);
+        assert.deepStrictEqual(
+          Option.map(fromBase, (c) => c.instructors),
+          Option.some(["rawphp"]),
+        );
+        assert.isTrue(
+          Option.isNone(yield* Runs.projectConfigFor(root, githubWithBase(null).github)),
+        );
+        assert.isTrue(
+          Option.isNone(yield* Runs.projectConfigFor(root, githubWithBase("factory: 3").github)),
+        );
+        assert.isTrue(Option.isNone(yield* Runs.projectConfigFor(root, null)));
       }),
     ),
   );

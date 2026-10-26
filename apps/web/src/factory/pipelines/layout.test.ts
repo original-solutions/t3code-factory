@@ -16,7 +16,6 @@ const buildAndGate: Pipeline = {
       x: 280,
       y: 200,
       instructions: { skill: "factory" },
-      fresh: false,
     },
     {
       id: "gate",
@@ -51,7 +50,6 @@ const buildAndLearn: Pipeline = {
       x: 0,
       y: 0,
       instructions: { skill: "factory" },
-      fresh: false,
     },
     {
       id: "gate",

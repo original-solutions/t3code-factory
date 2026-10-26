@@ -43,7 +43,7 @@ import {
 import { RunDialog } from "./RunDialog";
 import { RunsPanel } from "./RunsPanel";
 import { SimulationPanel } from "./SimulationPanel";
-import type { Catalog, Kind, PipelineRecord, Problem, Trace } from "./types";
+import type { Catalog, Kind, Pipeline, PipelineRecord, Problem, Trace } from "./types";
 
 const VALIDATE_DEBOUNCE_MS = 300;
 const SIMULATE_DEBOUNCE_MS = 300;
@@ -163,8 +163,15 @@ function Editor({
   const dirty = isDirty(state);
   const canvas = useRef<CanvasHandle>(null);
 
-  const [problems, setProblems] = useState<ReadonlyArray<Problem>>(record.problems);
+  const [checked, setChecked] = useState<{
+    readonly pipeline: Pipeline;
+    readonly problems: ReadonlyArray<Problem>;
+  } | null>(null);
   const [checkError, setCheckError] = useState<string | null>(null);
+  // Back at the loaded pipeline (as loaded, or by undo) the problems it came with stand; an edit
+  // keeps the latest check's until its own check answers.
+  const atRecord = pipeline === record.pipeline;
+  const problems = atRecord ? record.problems : (checked?.problems ?? record.problems);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -211,21 +218,24 @@ function Editor({
   // The latest validation's number: an answer for an older pipeline is dropped.
   const checks = useRef(0);
   useEffect(() => {
-    // The record came with its problems; check again only once the person changes something.
-    if (pipeline === record.pipeline) return;
+    // Back at the record's pipeline, an answer still in flight for an edited one is dropped.
+    if (pipeline === record.pipeline) {
+      checks.current += 1;
+      return;
+    }
     const timer = setTimeout(() => {
       const n = ++checks.current;
       pipelineApi.validate(environmentId, pipeline).then(
         (answer) => {
           if (n !== checks.current) return;
-          setProblems(answer.problems);
+          setChecked({ pipeline, problems: answer.problems });
           setCheckError(null);
         },
         (error: unknown) => {
           if (n !== checks.current) return;
           const decode = decodeErrorsOf(error);
           if (decode !== null) {
-            setProblems(problemsFromDecodeErrors(pipeline, decode));
+            setChecked({ pipeline, problems: problemsFromDecodeErrors(pipeline, decode) });
             setCheckError(null);
           } else setCheckError(messageOf(error));
         },
@@ -268,12 +278,12 @@ function Editor({
     try {
       const answer = await pipelineApi.save(environmentId, sent);
       dispatch({ type: "saved", pipeline: sent });
-      setProblems(answer.problems);
+      setChecked({ pipeline: sent, problems: answer.problems });
       setCheckError(null);
     } catch (error) {
       const decode = decodeErrorsOf(error);
       if (decode !== null) {
-        setProblems(problemsFromDecodeErrors(sent, decode));
+        setChecked({ pipeline: sent, problems: problemsFromDecodeErrors(sent, decode) });
         setSaveError(
           `Not saved: the server could not read ${plural(decode.length, "field")}. They are marked on the canvas.`,
         );
@@ -470,7 +480,11 @@ function Editor({
         size="sm"
         value={pipeline.name}
       />
-      <StatusChip checkError={checkError} onPick={pickProblem} problems={problems} />
+      <StatusChip
+        checkError={atRecord ? null : checkError}
+        onPick={pickProblem}
+        problems={problems}
+      />
       {stacked ? null : actions}
     </div>
   );
@@ -576,6 +590,7 @@ function Editor({
                     environmentId={environmentId}
                     error={runs.error ? messageOf(runs.error) : null}
                     kinds={kinds}
+                    onRetry={runs.reload}
                     onSelect={setRunId}
                     onStop={(id) => void stopRun(id)}
                     pipeline={pipeline}

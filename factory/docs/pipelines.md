@@ -28,6 +28,7 @@ nodes:
       y: 200,
       check: { commands: [factory/scripts/check.sh] },
     }
+  - { id: ask, kind: ask, label: Ask, x: 280, y: 420 }
   - { id: review, kind: pr, label: Review, x: 760, y: 200 }
   - {
       id: learn,
@@ -38,7 +39,7 @@ nodes:
       instructions: { skill: session-capture },
     }
   - { id: done, kind: end, result: done, x: 1240, y: 200 }
-  - { id: stuck, kind: end, result: stuck, x: 520, y: 420 }
+  - { id: stuck, kind: end, result: stuck, x: 760, y: 420 }
 edges:
   - { id: e1, from: start, port: next, to: build }
   - { id: e2, from: build, port: done, to: gate }
@@ -48,21 +49,31 @@ edges:
       port: fail,
       to: build,
       max: 2,
-      instructions: { brief: "The gate failed. Fix it and end with a result line." },
+      instructions: { brief: "The gate failed. Fix it." },
     }
   - { id: e4, from: gate, port: pass, to: review }
+  - { id: e5, from: build, port: questions, to: ask }
   - {
-      id: e5,
+      id: e6,
+      from: ask,
+      port: answered,
+      to: build,
+      max: 3,
+      instructions: { brief: "Continue with the answers below." },
+    }
+  - { id: e7, from: build, port: stop, to: stuck }
+  - {
+      id: e8,
       from: review,
       port: feedback,
       to: build,
       max: 5,
       instructions: { brief: "Address the feedback below." },
     }
-  - { id: e6, from: review, port: base-moved, to: gate, max: 10 }
-  - { id: e7, from: review, port: merged, to: learn }
-  - { id: e8, from: learn, port: done, to: done }
-  - { id: e9, from: review, port: closed, to: stuck }
+  - { id: e9, from: review, port: base-moved, to: gate, max: 10 }
+  - { id: e10, from: review, port: merged, to: learn }
+  - { id: e11, from: review, port: closed, to: stuck }
+  - { id: e12, from: learn, port: done, to: done }
 ```
 
 ### Nodes
@@ -72,7 +83,7 @@ Every node has `id`, `kind`, an optional `label`, and `x`, `y` for the canvas. A
 | kind     | what runs                                                                                          | ports                                        | fields                                             |
 | -------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------- | -------------------------------------------------- |
 | `start`  | nothing; where a run begins                                                                        | `next`                                       |                                                    |
-| `agent`  | an agent turn in the run's session (or a fresh thread with `fresh: true`)                          | `done`, `questions`, `stop`                  | `instructions` (required), `fresh` (default false) |
+| `agent`  | an agent turn in the run's session, the thread whose branch is the run's                           | `done`, `questions`, `stop`                  | `instructions` (required)                          |
 | `verify` | commands in the run's worktree, or a reviewer agent in a fresh thread that answers pass or fail    | `pass`, `fail`                               | `check` (required): `commands`, `skill` or `brief` |
 | `ask`    | the questions go to the issue as a comment; the run waits for a person to answer and re-approve    | `answered`                                   |                                                    |
 | `pr`     | the pull request the session reported is marked ready; the run waits for a person                  | `feedback`, `base-moved`, `merged`, `closed` |                                                    |
@@ -113,7 +124,7 @@ The prototype's limits, by choice:
 
 - A run is not resumed across a server stop. When the server stops, each running run is interrupted, its threads archived and its record ended `interrupted`; a record a crash left open is marked so at the next start. The factory's issue runs have resumable steps; pipeline runs do not yet.
 - A run may work for 180 minutes in all (`RUN_LIMIT_MINUTES`), counted like the factory's own limit: time spent waiting at `ask` and `pr` nodes does not count. Past it the run ends `stuck`.
-- Reads in the wait loops (a thread's status, the issue's approval, the pull request) are retried on failure and give up only after ten failures in a row, so a day-long wait survives a network blip. Writes fail at once.
+- Reads in the wait loops are retried on failure. A thread's status gives up after ten failed reads in a row (`MAX_READ_FAILURES`); the waits on a person (the issue's approval, the pull request) give up only after failing for four hours (`TRACKER_PATIENCE`), so a day-long wait survives an outage or an expired login. Writes fail at once.
 - Who counts as a person is the repo's `instructors`, read from the checkout's `.dw/config.yml`, else from the default branch's. With neither, the run has no tracker, and its `ask` and `pr` nodes end it stuck.
 - Commands run in the session's worktree, not in a fresh checkout merged with the base, as the factory's gate does.
 - `ask` and `pr` need an issue on a watched repo. A run started without one ends `stuck` when it reaches them.
@@ -136,7 +147,7 @@ Under `/api/factory/pipelines`, with the factory's auth (`t3/auth.ts`):
 | POST   | `/validate`      | orchestration:read    | problems for the body, without saving                             |
 | POST   | `/simulate`      | orchestration:read    | the trace for `{ pipeline, script }`                              |
 | POST   | `/:id/run`       | orchestration:operate | starts a run: `{ projectRoot, issue? }`                           |
-| GET    | `/runs`          | orchestration:read    | lists runs                                                        |
+| GET    | `/runs`          | orchestration:read    | lists the newest 50 runs, of one pipeline with `?pipeline=<id>`   |
 | GET    | `/runs/:id`      | orchestration:read    | one run's record                                                  |
 | POST   | `/runs/:id/stop` | orchestration:operate | stops it                                                          |
 
@@ -144,7 +155,7 @@ POST, not PUT or DELETE: the browser CORS layer allows GET and POST.
 
 ## Templates
 
-`pipeline/templates.ts` holds three pipelines the catalog serves and the New pipeline dialog offers: the three prototypes the design was exercised on, simplest first. A template is a pipeline body; the dialog gives it the new name and id. They are the examples in this document, kept valid by their test.
+`pipeline/templates.ts` holds three pipelines the catalog serves and the New pipeline dialog offers: the three prototypes the design was exercised on, simplest first. A template is a pipeline body; the dialog gives it the new name and id. Their test keeps them valid. The example above is not one of them: it is `buildAndLearn` in `pipeline/fixtures.ts`, the pipeline the executor's tests run, and the same test checks that this document's YAML still decodes to it.
 
 ## Skills on the machine
 

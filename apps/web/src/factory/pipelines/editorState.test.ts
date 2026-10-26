@@ -22,7 +22,6 @@ const PIPELINE: Pipeline = {
       x: 280,
       y: 200,
       instructions: { skill: "factory" },
-      fresh: false,
     },
     { id: "done", kind: "end", result: "done", x: 520, y: 200 },
   ],
@@ -63,7 +62,7 @@ describe("editorReducer", () => {
       "agent-2",
     ]);
     expect(state.selection).toEqual({ kind: "node", id: "agent-2" });
-    expect(state.pipeline.nodes[3]).toMatchObject({ kind: "agent", fresh: false });
+    expect(state.pipeline.nodes[3]).toMatchObject({ kind: "agent" });
   });
 
   it("connects a free port with the lowest free edge id", () => {

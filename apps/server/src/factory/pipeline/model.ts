@@ -21,7 +21,7 @@ export type NodeBase = {
 export type Node = NodeBase &
   (
     | { readonly kind: "start" }
-    | { readonly kind: "agent"; readonly instructions: Instructions; readonly fresh: boolean }
+    | { readonly kind: "agent"; readonly instructions: Instructions }
     | { readonly kind: "verify"; readonly check: Check }
     | { readonly kind: "ask" }
     | { readonly kind: "pr" }
@@ -261,11 +261,8 @@ const decodeNode = (value: unknown, path: string, errors: Errors): Node | undefi
         errors,
         false,
       );
-      const fresh = value["fresh"];
-      if (fresh !== undefined && typeof fresh !== "boolean")
-        errors.add(`${path}.fresh`, "must be true or false");
       if (instructions === undefined || "commands" in instructions) return undefined;
-      return { ...base, kind, instructions, fresh: fresh === true };
+      return { ...base, kind, instructions };
     }
     case "learn": {
       const instructions = decodeInstructions(

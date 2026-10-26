@@ -20,7 +20,7 @@ type NodeBase = {
 export type PipelineNode = NodeBase &
   (
     | { readonly kind: "start" }
-    | { readonly kind: "agent"; readonly instructions: Instructions; readonly fresh: boolean }
+    | { readonly kind: "agent"; readonly instructions: Instructions }
     | { readonly kind: "verify"; readonly check: Check }
     | { readonly kind: "ask" }
     | { readonly kind: "pr" }

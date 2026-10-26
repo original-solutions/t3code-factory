@@ -56,7 +56,6 @@ const TEMPLATE_PIPELINE: Pipeline = {
       x: 280,
       y: 200,
       instructions: { brief: "Do it." },
-      fresh: false,
     },
     { id: "done", kind: "end", result: "done", x: 520, y: 200 },
   ],

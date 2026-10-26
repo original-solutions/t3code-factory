@@ -5,6 +5,7 @@ import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { cn } from "~/lib/utils";
 
+import { FactoryLoading, FactoryReadFailure } from "../FactoryNotices";
 import { TouchLink } from "../TouchLink";
 import { asPipeline, nodeName } from "./model";
 import type { KindInfo, Pipeline, RecordedEvent, RunDetail, RunStatus, RunSummary } from "./types";
@@ -108,6 +109,7 @@ export function RunsPanel({
   stopping,
   onSelect,
   onStop,
+  onRetry,
 }: {
   environmentId: EnvironmentId;
   pipeline: Pipeline;
@@ -119,6 +121,7 @@ export function RunsPanel({
   stopping: boolean;
   onSelect: (id: string | null) => void;
   onStop: (id: string) => void;
+  onRetry: () => void;
 }) {
   const nameIn = (graph: Pipeline) => (id: string) => {
     const node = graph.nodes.find((candidate) => candidate.id === id);
@@ -133,21 +136,15 @@ export function RunsPanel({
   const events = (detail?.events ?? []).map((event, n) => ({ event, n }));
   if (runs === null) {
     return error ? (
-      <p className="text-sm text-destructive-foreground" role="alert">
-        Could not read runs: {error}
-      </p>
+      <FactoryReadFailure label="runs" message={error} onRetry={onRetry} verb="read" />
     ) : (
-      <p className="text-sm text-muted-foreground" role="status">
-        Loading runs…
-      </p>
+      <FactoryLoading label="Loading runs" />
     );
   }
   return (
     <section aria-label="Runs" className="flex flex-col gap-3">
       {error ? (
-        <p className="text-xs text-destructive-foreground" role="alert">
-          Could not refresh runs: {error}
-        </p>
+        <FactoryReadFailure label="runs" message={error} onRetry={onRetry} verb="refresh" />
       ) : null}
       {runs.length === 0 ? (
         <p className="text-sm text-muted-foreground">No runs yet. Run starts one on a project.</p>
