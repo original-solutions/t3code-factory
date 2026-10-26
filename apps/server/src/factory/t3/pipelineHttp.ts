@@ -1,10 +1,6 @@
 /**
- * The pipeline routes, under `/api/factory/pipelines`, each behind T3's own authentication
- * (`route`). The table of routes and scopes is in factory/docs/pipelines.md under "HTTP".
- * `PipelineRoutes` is merged into `FactoryRoutes` (`http.ts`).
- *
- * Each handler decodes its input, calls the store, the skills catalog, the validator, the
- * interpreter or `PipelineRuns`, and maps the result to a status and a body. A failed read or
+ * The pipeline routes under `/api/factory/pipelines`, behind T3's own authentication (`route`).
+ * The table of routes and scopes is in factory/docs/pipelines.md under "HTTP". A failed read or
  * write answers 500 `factory_error`, mapped once for every route by `pipelineRoute`.
  */
 import {

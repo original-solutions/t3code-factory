@@ -1,11 +1,7 @@
 /**
- * The node editor: nodes are positioned divs in a transformed layer, edges are SVG paths drawn in
- * the same coordinate space. Geometry lives in `geometry.ts`; this file only maps pointer, wheel
- * and key input onto it. Nothing animates: every repaint follows an input.
- *
- * A pan changes only the layer transforms and the grid: the nodes, edges and labels are memoised
- * on primitive props and handed handlers that never change, so they keep their render. A drag
- * re-renders the dragged node and the edges whose path moved.
+ * The node editor: positioned divs in a transformed layer, edges as SVG paths in the same space.
+ * Nothing animates: every repaint follows an input. A pan changes only the layer transforms and
+ * the grid; nodes, edges and labels are memoised on primitive props with handlers that never change.
  */
 import { LayoutGridIcon, MaximizeIcon, MinusIcon, PlusIcon } from "lucide-react";
 import {

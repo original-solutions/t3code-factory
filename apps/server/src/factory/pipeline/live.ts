@@ -219,10 +219,8 @@ interface PullState {
 
 /**
  * The issue and its pull requests on GitHub. Questions move the issue to `factory:needs-info`;
- * an instructor's `factory:ready` after them is the answer, and moves it to `factory:building`.
- * A pull request's feedback is read from the moment it was marked ready, and each feedback
- * outcome moves that moment on, so nothing is told twice and nothing said meanwhile is lost.
- * Reads in the waits ride out failures (see `poll`); writes fail at once.
+ * an instructor's `factory:ready` after them is the answer. Feedback is read from the moment
+ * the pull request was marked ready, and each feedback outcome moves that moment on.
  */
 export const liveTracker = (input: LiveTrackerInput): Tracker => {
   const { github, issue, instructors } = input;
