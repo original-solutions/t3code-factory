@@ -23,6 +23,10 @@ const PART_MARGIN = 24;
 /** Where the web client keeps its own settings (apps/web/src/clientPersistenceStorage.ts). */
 const CLIENT_SETTINGS_KEY = "t3code:client-settings:v1";
 
+/** The pipeline the pipeline shots show: the Learning loop template, created through the UI. */
+const PIPELINE_NAME = "Learning loop";
+const PIPELINE_ID = "learning-loop";
+
 interface Shot {
   readonly name: string;
   /** The page's path, given the id of the environment the throwaway server runs. */
@@ -70,7 +74,36 @@ const SHOTS: ReadonlyArray<Shot> = [
       await page.getByText("poll", { exact: false }).first().waitFor();
     },
   },
+  {
+    name: "pipeline-editor",
+    path: (environmentId) => `/factory/pipelines/${environmentId}/${PIPELINE_ID}`,
+    ready: async (page) => {
+      await page.getByRole("button", { name: "Build node" }).click();
+      await page.getByLabel("Label", { exact: true }).waitFor();
+    },
+  },
+  {
+    name: "pipeline-simulation",
+    path: (environmentId) => `/factory/pipelines/${environmentId}/${PIPELINE_ID}`,
+    ready: async (page) => {
+      await page.getByRole("button", { name: "Build node" }).waitFor();
+      await page.getByRole("button", { name: "Simulate" }).click();
+      await page.getByRole("button", { name: "Happy path" }).click();
+      await page.getByRole("status").getByText("Ended done").waitFor();
+    },
+  },
 ];
+
+/** Creates the pipeline the pipeline shots show, from its template, the way a person would. */
+const createPipeline = async (page: Page, webOrigin: string): Promise<void> => {
+  await page.goto(`${webOrigin}/factory/pipelines`);
+  await page.getByRole("button", { name: "New pipeline" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "New pipeline" });
+  await dialog.getByLabel("Name").fill(PIPELINE_NAME);
+  await dialog.getByText(PIPELINE_NAME, { exact: true }).click();
+  await dialog.getByRole("button", { name: "Create" }).click();
+  await page.getByRole("button", { name: "Build node" }).waitFor();
+};
 
 /** The server's environment: no GitHub credentials reach it, and no baked-in origins. */
 const serverEnv = (ghConfigDir: string): NodeJS.ProcessEnv => {
@@ -246,6 +279,7 @@ const capture = async (browser: Browser, server: DevServer): Promise<void> => {
   const page = await context.newPage();
   await page.goto(server.pairingUrl);
   await page.waitForURL((url) => !url.pathname.startsWith("/pair"), { timeout: 60_000 });
+  await createPipeline(page, server.webOrigin);
   for (const theme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: theme });
     for (const shot of SHOTS) {
