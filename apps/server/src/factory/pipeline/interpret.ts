@@ -3,7 +3,7 @@
  * simulation and the executor share it; the executor supplies outcomes from agents, commands and
  * the tracker, the simulation from a script.
  */
-import { kindInfo, type Edge, type Node, type Pipeline } from "./model.ts";
+import { kindInfo, nodeName, type Edge, type Node, type Pipeline } from "./model.ts";
 
 /** Where a run stands: the node it is at and how often it took each limited edge. */
 export type Cursor = {
@@ -27,8 +27,6 @@ export const startOf = (pipeline: Pipeline): Node | undefined =>
 export const edgeFrom = (pipeline: Pipeline, node: string, port: string): Edge | undefined =>
   pipeline.edges.find((edge) => edge.from === node && edge.port === port);
 
-const nameOf = (node: Node) => node.label ?? kindInfo(node.kind).label;
-
 /** The cursor at the start node. */
 export const initialCursor = (pipeline: Pipeline): Cursor | undefined => {
   const start = startOf(pipeline);
@@ -40,12 +38,12 @@ export const advance = (pipeline: Pipeline, cursor: Cursor, port: string): Move 
   const node = nodeOf(pipeline, cursor.node);
   const edge = edgeFrom(pipeline, cursor.node, port);
   if (edge === undefined) {
-    const name = node === undefined ? cursor.node : nameOf(node);
+    const name = node === undefined ? cursor.node : nodeName(node);
     return { kind: "stuck", reason: `${name} ended with ${port}, which has no transition` };
   }
   const count = (cursor.taken[edge.id] ?? 0) + 1;
   if (edge.max !== undefined && count > edge.max) {
-    const name = node === undefined ? cursor.node : nameOf(node);
+    const name = node === undefined ? cursor.node : nodeName(node);
     return {
       kind: "stuck",
       reason: `${name} ended with ${port} for the ${ordinal(count)} time; the limit is ${edge.max}`,

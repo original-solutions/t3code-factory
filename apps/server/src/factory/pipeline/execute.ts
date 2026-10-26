@@ -9,8 +9,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { asciiLower } from "../ledger/runId.ts";
+import { isLaunchBranch } from "../t3/sessions.ts";
 import {
-  kindInfo,
+  nodeName,
   type Check,
   type Edge,
   type Instructions,
@@ -110,8 +111,6 @@ export const pastLimit = (minutes: number) => `the run passed its time limit of 
 /** How much of each outcome's detail a learner is shown. */
 const DETAIL_IN_SUMMARY = 400;
 
-const nameOf = (node: Node) => node.label ?? kindInfo(node.kind).label;
-
 export const instructionsText = (instructions: Instructions | Check): string =>
   "skill" in instructions
     ? `/${instructions.skill}`
@@ -122,7 +121,7 @@ export const instructionsText = (instructions: Instructions | Check): string =>
 const preamble = (pipeline: Pipeline, node: Node, run: RunContext): string => {
   const issue =
     run.issue === null ? "" : ` The issue is ${run.repo === null ? "" : run.repo}#${run.issue}.`;
-  return `The factory launched this session unattended as part of the pipeline ${pipeline.name}, step ${nameOf(node)}. Nobody is in the chat.${issue} ${RESULT_LINES}`;
+  return `The factory launched this session unattended as part of the pipeline ${pipeline.name}, step ${nodeName(node)}. Nobody is in the chat.${issue} ${RESULT_LINES}`;
 };
 
 /** What one node ended with, or the reason the run ends stuck at it. */
@@ -161,7 +160,7 @@ export const recordSummary = (pipeline: Pipeline, events: ReadonlyArray<RunEvent
     switch (event.event) {
       case "entered": {
         const node = nodeOf(pipeline, event.node);
-        const name = node === undefined ? event.node : nameOf(node);
+        const name = node === undefined ? event.node : nodeName(node);
         lines.push(`- ${name} (${event.node}), visit ${event.visit}`);
         break;
       }
@@ -246,13 +245,17 @@ export const execute = Effect.fn("PipelineExecute.execute")(function* (
 
   /**
    * The reported pull request that comes from the run's branch. An agent's message can name a
-   * pull request that is not its own (an earlier attempt, a sibling), so the branch decides.
+   * pull request that is not its own (an earlier attempt, a sibling), so the branch decides: the
+   * thread's branch as T3 reports it, or the temporary branch T3 made its worktree on, which a
+   * session pushes when T3 renamed the branch after launch.
    */
   const fromOwnBranch = Effect.fn("PipelineExecute.fromOwnBranch")(function* (tracker: Tracker) {
-    const branch = main?.branch ?? null;
-    if (branch === null) return null;
+    if (main === null || main.branch === null) return null;
     for (const candidate of reported) {
-      if ((yield* tracker.headBranch(candidate)) === branch) return candidate;
+      const head = yield* tracker.headBranch(candidate);
+      if (head !== null && (head === main.branch || isLaunchBranch(head, main.worktree))) {
+        return candidate;
+      }
     }
     return null;
   });
@@ -265,7 +268,7 @@ export const execute = Effect.fn("PipelineExecute.execute")(function* (
     fromBranch: string | null,
   ) {
     const thread = yield* ports.launch({
-      title: `${pipeline.name}: ${nameOf(node)}`,
+      title: `${pipeline.name}: ${nodeName(node)}`,
       message,
       fromBranch,
     });
@@ -383,7 +386,7 @@ export const execute = Effect.fn("PipelineExecute.execute")(function* (
         return yield* learn(node);
       case "ask": {
         if (ports.tracker === null)
-          return { stuck: `${nameOf(node)} needs an issue on a watched repo` };
+          return { stuck: `${nodeName(node)} needs an issue on a watched repo` };
         yield* ports.tracker.postQuestions(incoming?.detail ?? "");
         yield* record({ event: "waiting", node: node.id, on: "an answer on the issue" });
         const answer = yield* ports.tracker.awaitAnswer();
@@ -392,7 +395,7 @@ export const execute = Effect.fn("PipelineExecute.execute")(function* (
       case "pr": {
         if (reported.length === 0) return { stuck: NO_PULL_REQUEST };
         if (ports.tracker === null)
-          return { stuck: `${nameOf(node)} needs an issue on a watched repo` };
+          return { stuck: `${nodeName(node)} needs an issue on a watched repo` };
         pr ??= yield* fromOwnBranch(ports.tracker);
         if (pr === null) return { stuck: notOwnPullRequest(main?.branch ?? null) };
         if (!markedReady.has(pr)) {

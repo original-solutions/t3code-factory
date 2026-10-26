@@ -78,6 +78,23 @@ describe("livePorts.settle", () => {
     }),
   );
 
+  it.effect(
+    "fails when the thread was archived, and settles a run that failed or was interrupted",
+    () =>
+      Effect.gen(function* () {
+        const gone = portsReading(() =>
+          Effect.succeed({ ...status(1, "running", null), archived: true }),
+        );
+        const error = yield* Effect.flip(gone.ports.settle("t1"));
+        assert.strictEqual(error.message, "thread t1 was archived");
+
+        const failed = portsReading(() => Effect.succeed(status(1, "failed", "it broke")));
+        assert.strictEqual((yield* failed.ports.settle("t1")).text, "it broke");
+        const interrupted = portsReading(() => Effect.succeed(status(1, "interrupted", null)));
+        assert.isNull((yield* interrupted.ports.settle("t1")).text);
+      }),
+  );
+
   it.effect("rides out failed reads, and gives up after ten in a row", () =>
     Effect.gen(function* () {
       let failing = MAX_READ_FAILURES - 1;
@@ -320,14 +337,19 @@ describe("liveTracker.awaitPullRequest", () => {
     }),
   );
 
-  it.effect("names the branch a pull request comes from, and none for a fork's", () =>
-    Effect.gen(function* () {
-      const { state, tracker } = fakeGitHub();
-      state.pull = { ...state.pull, headRef: "t3/issue-7", crossRepository: false };
-      assert.strictEqual(yield* tracker.headBranch(42), "t3/issue-7");
-      state.pull = { ...state.pull, crossRepository: true };
-      assert.isNull(yield* tracker.headBranch(42));
-    }),
+  it.effect(
+    "names the branch a pull request comes from, none for a fork's, and rides out a failed read",
+    () =>
+      Effect.gen(function* () {
+        const { state, tracker } = fakeGitHub();
+        state.pull = { ...state.pull, headRef: "t3/issue-7", crossRepository: false };
+        state.failPullReads = 2;
+        const reading = yield* Effect.forkChild(tracker.headBranch(42), { startImmediately: true });
+        yield* TestClock.adjust("2 minutes");
+        assert.strictEqual(yield* Fiber.join(reading), "t3/issue-7");
+        state.pull = { ...state.pull, crossRepository: true };
+        assert.isNull(yield* tracker.headBranch(42));
+      }),
   );
 });
 

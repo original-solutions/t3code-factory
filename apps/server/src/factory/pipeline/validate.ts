@@ -3,7 +3,7 @@
  * warnings are things the editor points at. The rules are listed in factory/docs/pipelines.md
  * under "Validation", and the tests pin each one.
  */
-import { kindInfo, portsOf, type Edge, type Node, type Pipeline } from "./model.ts";
+import { nodeName, portsOf, type Edge, type Node, type Pipeline } from "./model.ts";
 
 export type Problem = {
   readonly level: "error" | "warning";
@@ -15,8 +15,6 @@ export type Problem = {
 
 /** The skills a pipeline may name: those the catalog found on this machine. */
 export type Skills = ReadonlySet<string>;
-
-const nameOf = (node: Node) => node.label ?? kindInfo(node.kind).label;
 
 const skillOf = (
   value:
@@ -125,17 +123,21 @@ export const validate = (pipeline: Pipeline, skills: Skills): ReadonlyArray<Prob
     if (check !== null) {
       const skill = skillOf(check);
       if (skill === "")
-        error(`${nameOf(node)} needs a skill: pick one this machine has`, { node: node.id });
+        error(`${nodeName(node)} needs a skill: pick one this machine has`, { node: node.id });
       else if (skill !== null && !skills.has(skill)) {
-        error(`${nameOf(node)} names the skill ${skill}, which this machine does not have`, {
+        error(`${nodeName(node)} names the skill ${skill}, which this machine does not have`, {
           node: node.id,
         });
       }
       if ("brief" in check && check.brief.trim() === "") {
-        error(`${nameOf(node)}'s brief is empty: say what the agent should do`, { node: node.id });
+        error(`${nodeName(node)}'s brief is empty: say what the agent should do`, {
+          node: node.id,
+        });
       }
       if ("commands" in check && check.commands.length === 0) {
-        error(`${nameOf(node)} has no commands: add at least one, one per line`, { node: node.id });
+        error(`${nodeName(node)} has no commands: add at least one, one per line`, {
+          node: node.id,
+        });
       }
     }
   }
@@ -150,12 +152,12 @@ export const validate = (pipeline: Pipeline, skills: Skills): ReadonlyArray<Prob
       error(`transition ${edge.id} enters a node that does not exist`, { edge: edge.id });
     if (from === undefined || to === undefined) continue;
     if (from.kind === "end")
-      error(`nothing leaves ${nameOf(from)}: it is an end`, { edge: edge.id });
+      error(`nothing leaves ${nodeName(from)}: it is an end`, { edge: edge.id });
     else if (!portsOf(from.kind).includes(edge.port)) {
-      error(`${nameOf(from)} has no outcome ${edge.port}`, { edge: edge.id });
+      error(`${nodeName(from)} has no outcome ${edge.port}`, { edge: edge.id });
     }
     if (to.kind === "start")
-      error(`nothing enters ${nameOf(to)}: it is the start`, { edge: edge.id });
+      error(`nothing enters ${nodeName(to)}: it is the start`, { edge: edge.id });
     if (edge.instructions !== undefined) {
       const skill = skillOf(edge.instructions);
       if (skill === "")
@@ -171,7 +173,7 @@ export const validate = (pipeline: Pipeline, skills: Skills): ReadonlyArray<Prob
     const key = `${edge.from}\u0000${edge.port}`;
     const other = taken.get(key);
     if (other !== undefined) {
-      error(`${nameOf(from)} has two transitions on ${edge.port}`, { edge: edge.id });
+      error(`${nodeName(from)} has two transitions on ${edge.port}`, { edge: edge.id });
     } else taken.set(key, edge);
     if (edge.max !== undefined && !onCycle(pipeline, edge)) {
       warning(`the limit on transition ${edge.id} has no effect: it is not in a loop`, {
@@ -184,7 +186,7 @@ export const validate = (pipeline: Pipeline, skills: Skills): ReadonlyArray<Prob
   if (cycle !== null) {
     const names = cycle.map((id) => {
       const node = nodes.get(id);
-      return node === undefined ? id : nameOf(node);
+      return node === undefined ? id : nodeName(node);
     });
     error(`the loop ${names.join(" → ")} has no limit on any of its transitions`);
   }
@@ -192,7 +194,7 @@ export const validate = (pipeline: Pipeline, skills: Skills): ReadonlyArray<Prob
   for (const node of pipeline.nodes) {
     for (const port of portsOf(node.kind)) {
       if (!taken.has(`${node.id}\u0000${port}`)) {
-        warning(`${nameOf(node)} has no transition on ${port}: a run taking it ends stuck`, {
+        warning(`${nodeName(node)} has no transition on ${port}: a run taking it ends stuck`, {
           node: node.id,
         });
       }
@@ -203,7 +205,7 @@ export const validate = (pipeline: Pipeline, skills: Skills): ReadonlyArray<Prob
     const seen = reachable(pipeline, starts[0]!.id);
     for (const node of pipeline.nodes) {
       if (!seen.has(node.id))
-        warning(`${nameOf(node)} cannot be reached from the start`, { node: node.id });
+        warning(`${nodeName(node)} cannot be reached from the start`, { node: node.id });
     }
   }
 

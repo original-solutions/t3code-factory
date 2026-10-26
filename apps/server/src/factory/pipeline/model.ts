@@ -126,6 +126,9 @@ const KIND_BY_NAME = new Map(KINDS.map((info) => [info.kind, info]));
 
 export const kindInfo = (kind: Kind): KindInfo => KIND_BY_NAME.get(kind)!;
 
+/** A node as a person reads it: its label, else its kind's. */
+export const nodeName = (node: Node): string => node.label ?? kindInfo(node.kind).label;
+
 export const isKind = (value: unknown): value is Kind =>
   typeof value === "string" && KIND_BY_NAME.has(value as Kind);
 
@@ -261,7 +264,16 @@ const decodeNode = (value: unknown, path: string, errors: Errors): Node | undefi
         errors,
         false,
       );
-      if (instructions === undefined || "commands" in instructions) return undefined;
+      // An earlier prototype let an agent node run in a fresh thread, whose commits never reached
+      // the run's branch. Refusing the key tells the owner, where dropping it would change the node.
+      if (value["fresh"] === true) {
+        errors.add(
+          `${path}.fresh`,
+          "is no longer supported: an agent node continues the run's thread; remove the key",
+        );
+      }
+      if (instructions === undefined || "commands" in instructions || value["fresh"] === true)
+        return undefined;
       return { ...base, kind, instructions };
     }
     case "learn": {

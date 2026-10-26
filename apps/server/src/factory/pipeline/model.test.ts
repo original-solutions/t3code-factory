@@ -57,6 +57,36 @@ describe("decodePipeline", () => {
     ]);
   });
 
+  it("refuses an agent node's fresh: true, which an earlier prototype honoured, and drops false", () => {
+    const node = (fresh: boolean) => ({
+      id: "a",
+      kind: "agent",
+      x: 0,
+      y: 0,
+      instructions: { brief: "Do it." },
+      fresh,
+    });
+    const body = (fresh: boolean) => ({
+      id: "p",
+      name: "P",
+      nodes: [{ id: "s", kind: "start", x: 0, y: 0 }, node(fresh)],
+      edges: [],
+    });
+    const refused = decodePipeline(body(true));
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) {
+      expect(refused.errors.map((error) => error.path)).toEqual(["nodes.1.fresh"]);
+      expect(refused.errors[0]!.message).toContain("no longer supported");
+    }
+    expect(decodeOk(body(false)).nodes[1]).toEqual({
+      id: "a",
+      kind: "agent",
+      x: 0,
+      y: 0,
+      instructions: { brief: "Do it." },
+    });
+  });
+
   it("keeps a brief's text as written and trims names", () => {
     const pipeline = decodeOk({
       id: "p",

@@ -271,10 +271,16 @@ export const liveTracker = (input: LiveTrackerInput): Tracker => {
 
   return {
     headBranch: (pr) =>
-      github.pullRequest(pr).pipe(
-        Effect.map((pull) => (pull === null || pull.crossRepository ? null : pull.headRef)),
-        Effect.mapError(portError),
-      ),
+      poll(
+        `reading pull request #${pr}`,
+        TRACKER_POLL,
+        github.pullRequest(pr).pipe(
+          Effect.map((pull) => ({
+            branch: pull === null || pull.crossRepository ? null : pull.headRef,
+          })),
+        ),
+        { failingFor: TRACKER_PATIENCE },
+      ).pipe(Effect.map((found) => found.branch)),
     postQuestions: Effect.fn("PipelineTracker.postQuestions")(function* (text) {
       // Before posting, so an answer quicker than the post is still read; the factory's own
       // comments are left out when the answers are read.

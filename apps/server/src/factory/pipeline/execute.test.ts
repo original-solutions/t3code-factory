@@ -47,6 +47,8 @@ interface Script {
   readonly heads?: Record<number, string | null>;
   /** Threads whose next archive fails. */
   readonly archiveFails?: Array<string>;
+  /** What every settled thread reports as its worktree and branch, in place of `/wt/<id>` and `t3/<id>`. */
+  readonly thread?: { readonly worktree: string; readonly branch: string };
 }
 
 const fakePorts = (script: Script) => {
@@ -59,8 +61,8 @@ const fakePorts = (script: Script) => {
   const ready: Array<number> = [];
   const thread = (threadId: string) => ({
     threadId,
-    worktree: `/wt/${threadId}`,
-    branch: `t3/${threadId}`,
+    worktree: script.thread?.worktree ?? `/wt/${threadId}`,
+    branch: script.thread?.branch ?? `t3/${threadId}`,
   });
   const tracker: Tracker = {
     headBranch: (pr) => Effect.sync(() => script.heads?.[pr] ?? "t3/t1"),
@@ -245,6 +247,21 @@ describe("execute", () => {
         ],
         commands: [{ ok: true, output: "green" }],
         heads: { 5: "t3/earlier" },
+        pullRequest: [{ port: "merged", detail: null }],
+      });
+      const end = yield* execute(buildAndLearn, fake.ports, run);
+      assert.deepStrictEqual(end, { result: "done", reason: null });
+      assert.deepStrictEqual(fake.ready, [42]);
+    }),
+  );
+
+  it.effect("accepts a pull request from the branch T3 made the worktree on, after a rename", () =>
+    Effect.gen(function* () {
+      const fake = fakePorts({
+        replies: [`FACTORY-DONE: ${PR_URL}`, "FACTORY-DONE: lessons written"],
+        commands: [{ ok: true, output: "green" }],
+        thread: { worktree: "/wt/t3-0123abcd", branch: "feat/widgets-12" },
+        heads: { 42: "t3/0123abcd" },
         pullRequest: [{ port: "merged", detail: null }],
       });
       const end = yield* execute(buildAndLearn, fake.ports, run);

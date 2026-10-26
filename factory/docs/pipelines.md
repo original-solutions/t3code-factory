@@ -139,7 +139,7 @@ Under `/api/factory/pipelines`, with the factory's auth (`t3/auth.ts`):
 
 | method | path             | scope                 | does                                                              |
 | ------ | ---------------- | --------------------- | ----------------------------------------------------------------- |
-| GET    | `/catalog`       | orchestration:read    | the node kinds, their ports, and the skills                       |
+| GET    | `/catalog`       | orchestration:read    | the node kinds, their ports, the skills, and the templates        |
 | GET    | `/`              | orchestration:read    | lists pipelines: id, name, counts, problems                       |
 | GET    | `/:id`           | orchestration:read    | one pipeline with its problems                                    |
 | POST   | `/:id`           | settings:write        | saves the body as the pipeline; answers it back with its problems |

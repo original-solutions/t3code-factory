@@ -25,7 +25,7 @@ Add a node from the Add menu, drag it where you want it, and fill it in on the r
 | **Learn**        | A fresh agent reads the run's record and writes what it learned into a skill or brief.    | done                                 |
 | **End**          | The run ends, done or stuck.                                                              |                                      |
 
-Every Agent, Verify and Learn node needs a brief or a skill. Skills are the ones installed on the factory machine, listed when you pick one. A brief is text the agent receives as written.
+Every Agent and Learn node needs a brief or a skill, and a Verify node needs commands, a skill or a brief. Skills are the ones installed on the factory machine, listed when you pick one. A brief is text the agent receives as written.
 
 ## Transitions and loops
 
