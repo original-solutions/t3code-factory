@@ -611,6 +611,7 @@ describe("the control bar", () => {
     expect(claimsSwitch(page).getAttribute("aria-checked")).toBe("true");
     expect(page.all('section[aria-label="Controls"]')[0]!.textContent).toContain("Running");
     await page.click(claimsSwitch(page));
+    expect(belt.onTogglePause).toHaveBeenCalledTimes(1);
     expect(belt.onTogglePause).toHaveBeenLastCalledWith(belt.environments[0]);
     await page.click(page.all("button").find((b) => b.textContent?.startsWith("Studio"))!);
     expect(claimsSwitch(page).getAttribute("aria-label")).toBe("Claims on Studio");

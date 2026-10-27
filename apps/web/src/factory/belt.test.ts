@@ -230,6 +230,18 @@ describe("deriveBelt rail", () => {
     expect(Object.values(belt.runs).flat()).toEqual([]);
   });
 
+  it("leaves a run whose file cannot be read off the rail", () => {
+    const belt = deriveBelt(
+      [
+        environment(ENV_A, {
+          active: [active({ id: id(1), state: null, last_event: null, unreadable: true })],
+        }),
+      ],
+      NOW,
+    );
+    expect(Object.values(belt.runs).flat()).toEqual([]);
+  });
+
   it("takes title from the status, step from the recent list else the state, and when it began", () => {
     const belt = deriveBelt(
       [

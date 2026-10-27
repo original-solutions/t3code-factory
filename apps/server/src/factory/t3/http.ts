@@ -24,7 +24,7 @@ import { Attention } from "../attention.ts";
 import { pauseClaimsNow, resumeClaimsNow, showRun, stopRun } from "../control.ts";
 import { FactoryLoop, hostName } from "../index.ts";
 import { isLedgerError, type LedgerError } from "../ledger/errors.ts";
-import { listRuns, type RunSummary } from "../ledger/listRuns.ts";
+import { listRuns, type RunReadCache, type RunSummary } from "../ledger/listRuns.ts";
 import { runIdToString } from "../ledger/runId.ts";
 import { readMachineConfigReport } from "../settings.ts";
 import { buildStatus } from "../status.ts";
@@ -100,34 +100,41 @@ const statusWord = (run: RunSummary) =>
 /** The `:id` of the route, as text: `control.ts` parses it before anything is read. */
 const idParam = Effect.map(HttpRouter.params, ({ id }) => id ?? "");
 
-const statusRoute = factoryRoute(
-  "GET",
-  STATUS_PATH,
-  AuthOrchestrationReadScope,
-  Effect.gen(function* () {
-    const loop = yield* FactoryLoop;
-    const paths = yield* FactoryPaths;
-    const attention = yield* (yield* Attention).list();
-    const passRunning = yield* loop.passRunning;
-    const runningThreads = yield* loop.runningThreads.pipe(
-      Effect.tapError((error) => Effect.logWarning(`status: ${error.message}`, error.cause)),
-      Effect.orElseSucceed(() => null),
-    );
-    const nowMs = yield* Clock.currentTimeMillis;
-    const report = yield* guarded(() =>
-      buildStatus({
-        status: loop.status,
-        version: packageJson.version,
-        machine: hostName(),
-        machineConfigPath: paths.machineConfigPath,
-        dataDir: paths.factoryDir,
-        nowMs,
-        passRunning,
-        runningThreads,
-        attention,
+/** The Factory page asks for a status every 5 seconds, so the route keeps the run files it read. */
+const statusRoute = Layer.unwrap(
+  Effect.sync(() => {
+    const cache: RunReadCache = new Map();
+    return factoryRoute(
+      "GET",
+      STATUS_PATH,
+      AuthOrchestrationReadScope,
+      Effect.gen(function* () {
+        const loop = yield* FactoryLoop;
+        const paths = yield* FactoryPaths;
+        const attention = yield* (yield* Attention).list();
+        const passRunning = yield* loop.passRunning;
+        const runningThreads = yield* loop.runningThreads.pipe(
+          Effect.tapError((error) => Effect.logWarning(`status: ${error.message}`, error.cause)),
+          Effect.orElseSucceed(() => null),
+        );
+        const nowMs = yield* Clock.currentTimeMillis;
+        const report = yield* guarded(() =>
+          buildStatus({
+            status: loop.status,
+            version: packageJson.version,
+            machine: hostName(),
+            machineConfigPath: paths.machineConfigPath,
+            dataDir: paths.factoryDir,
+            nowMs,
+            passRunning,
+            runningThreads,
+            attention,
+            cache,
+          }),
+        );
+        return respond(report);
       }),
     );
-    return respond(report);
   }),
 );
 

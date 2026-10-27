@@ -213,9 +213,6 @@ const passesOf = (
   };
 };
 
-/** The run files the last report read: the Factory page asks for one every 5 seconds. */
-const statusReads: RunReadCache = new Map();
-
 const runRow = (read: RunRead, nowMs: number): StatusReport["runs"][number] => {
   const { summary, seen } = read;
   const lastChange = read.record?.entries.findLast((entry) => entry.event === "state_changed");
@@ -250,6 +247,8 @@ export const buildStatus = (input: {
   /** The loop's `runningThreads`, or null when it failed. */
   readonly runningThreads: number | null;
   readonly attention: ReadonlyArray<AttentionItem>;
+  /** The run files the last report read, kept by the caller between reports. */
+  readonly cache?: RunReadCache;
 }): StatusReport => {
   const { dataDir, nowMs } = input;
   const settings = input.status.state === "running" ? input.status.settings : null;
@@ -258,7 +257,7 @@ export const buildStatus = (input: {
   // before the window cannot hold a line inside it, so it is not read.
   const reads = readRuns(dataDir, {
     skipFinishedBefore: nowMs - PROBLEM_WINDOW_MS,
-    cache: statusReads,
+    ...(input.cache === undefined ? {} : { cache: input.cache }),
   });
   const open = reads.filter((read) => !read.summary.finished);
 

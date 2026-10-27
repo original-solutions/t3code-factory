@@ -83,12 +83,15 @@ function ControlBar({
       className="flex flex-wrap items-stretch rounded-lg border bg-card"
     >
       <div className="flex items-center gap-3 px-5 py-2.5">
-        <Switch
-          aria-label={`Claims on ${selected.label}`}
-          checked={report !== null && !paused}
-          disabled={report === null || busy}
-          onCheckedChange={() => onTogglePause(selected)}
-        />
+        {/* The switch has no coarse-pointer hit area of its own; the label is the 44 px target. */}
+        <label className="inline-flex items-center justify-center pointer-coarse:min-h-11 pointer-coarse:min-w-11">
+          <Switch
+            aria-label={`Claims on ${selected.label}`}
+            checked={report !== null && !paused}
+            disabled={report === null || busy}
+            onCheckedChange={() => onTogglePause(selected)}
+          />
+        </label>
         <div className="flex flex-col gap-1">
           <span className={LABEL}>Claims</span>
           <b className="text-sm font-semibold">

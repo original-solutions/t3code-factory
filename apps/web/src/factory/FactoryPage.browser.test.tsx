@@ -1153,7 +1153,35 @@ describe("FactoryPage filters", () => {
     expect(runLinks(page).toSorted()).toEqual(["Acme__Widgets__8__1", LAPTOP_RUN]);
   });
 
-  it("shows only the chosen environment's read failures", async () => {
+  it("leaves out a filtered-out environment's failure to list every run", async () => {
+    using _state = setup();
+    twoEnvironments();
+    state.runs = resource({ data: { runs: [runRow()] } });
+    state.allRuns = resource({
+      status: "error",
+      data: { runs: [runRow()] },
+      error: new Error("fetch failed"),
+    });
+    state.search = { environment: "env-3" };
+    await using page = await render(createElement(FactoryPage));
+    await page.click(page.button("Show all runs")!);
+    expect(page.text()).not.toContain("Could not refresh Mac Studio");
+  });
+
+  it("names a filtered-out environment whose status the belt still shows when it fails", async () => {
+    using _state = setup();
+    twoEnvironments();
+    state.status = resource({
+      status: "error",
+      data: statusData(),
+      error: new Error("fetch failed"),
+    });
+    state.search = { environment: "env-3" };
+    await using page = await render(createElement(FactoryPage));
+    expect(page.text()).toContain("Could not refresh Mac Studio: fetch failed");
+  });
+
+  it("names a filtered-out environment whose recent runs the belt still counts when they fail", async () => {
     using _state = setup();
     twoEnvironments();
     state.runs = resource({
@@ -1163,7 +1191,7 @@ describe("FactoryPage filters", () => {
     });
     state.search = { environment: "env-3" };
     await using page = await render(createElement(FactoryPage));
-    expect(page.text()).not.toContain("Could not refresh Mac Studio");
+    expect(page.text()).toContain("Could not refresh Mac Studio: fetch failed");
   });
 
   describe("when an environment's recent runs failed before their first answer", () => {

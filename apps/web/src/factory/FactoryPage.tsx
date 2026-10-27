@@ -220,20 +220,15 @@ export function FactoryPage() {
   const runsListed = shownRunsOf.some(({ data }) => data !== null);
   const runsPending = shownRunsOf.some(({ status }) => status === "loading");
   // A failed read is a notice naming its environment while the rest of the page stays. The belt
-  // counts every environment's recent window, so a recent read that failed before its first answer
-  // is named whatever the filter and the table's window: the belt is left without that environment.
+  // shows every environment's status and recent window whatever the filter, so a failure of either
+  // is named whatever the filter: the belt is stale or missing for that environment.
   const notices = environments.flatMap(({ environmentId, label, status }) => {
-    const shown = inEnvironment(environmentId);
-    const runsRead = shown ? runsById.get(environmentId) : undefined;
+    const runsRead = inEnvironment(environmentId) ? runsById.get(environmentId) : undefined;
     const recentRead = recentById.get(environmentId);
     const failedRuns =
-      runsRead?.status === "error"
-        ? runsRead
-        : recentRead?.status === "error" && recentRead.data === null
-          ? recentRead
-          : null;
+      runsRead?.status === "error" ? runsRead : recentRead?.status === "error" ? recentRead : null;
     const failed =
-      failedRuns ?? (shown && status.status === "error" && status.data !== null ? status : null);
+      failedRuns ?? (status.status === "error" && status.data !== null ? status : null);
     if (failed === null) return [];
     return [
       {

@@ -168,13 +168,17 @@ function Bin({
           {runs.map((run) => (
             <li className="flex flex-col gap-0.5 py-2 text-sm first:pt-0 last:pb-0" key={run.key}>
               <div className="flex flex-wrap items-baseline gap-x-2">
-                <Link
-                  className="font-mono font-semibold hover:underline"
-                  params={{ environmentId: run.environmentId, runId: run.id }}
-                  to="/factory/$environmentId/$runId"
+                <TouchLink
+                  className="font-mono font-semibold"
+                  render={
+                    <Link
+                      params={{ environmentId: run.environmentId, runId: run.id }}
+                      to="/factory/$environmentId/$runId"
+                    />
+                  }
                 >
                   {run.issue}
-                </Link>
+                </TouchLink>
                 {run.title === null ? null : (
                   <span className="min-w-0 break-words">{run.title}</span>
                 )}

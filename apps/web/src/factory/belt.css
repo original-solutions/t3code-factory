@@ -1,25 +1,25 @@
 @reference "../index.css";
 
 /*
- * The belt's station colours: a fork-owned light and dark value for each station the theme has no
- * colour for, and the theme's status colours for Done, Stuck and Needs info, so those match the
- * badges of the same status. They paint borders, swatches, dots and the readout's notch, never body
- * text. A station element sets `data-station`, and the classes under it read `--factory-station`.
+ * The belt's station colours, all from the theme: its status colours for PR open, Done, Stuck and
+ * Needs info, so those match the badges of the same status, and palette steps for the posts the
+ * theme has no colour for. Claimed is orange, not amber, so it stays apart from Needs info. They
+ * paint borders, swatches, dots and the readout's notch, never body text. A station element sets
+ * `data-station`, and the classes under it read `--factory-station`.
  */
 :root {
-  --factory-claimed: #d98a1a;
-  --factory-building: #0e9f8a;
-  --factory-gate: #7c4dcc;
-  --factory-pr: #2b6fdb;
+  --factory-claimed: var(--color-orange-600);
+  --factory-building: var(--color-teal-600);
+  --factory-gate: var(--color-violet-600);
+  --factory-pr: var(--info-foreground);
   --factory-done: var(--success-foreground);
   --factory-stuck: var(--destructive-foreground);
   --factory-info: var(--warning-foreground);
 
   @variant dark {
-    --factory-claimed: #f0b04a;
-    --factory-building: #2dd4bf;
-    --factory-gate: #a98bf0;
-    --factory-pr: #6ea8fe;
+    --factory-claimed: var(--color-orange-400);
+    --factory-building: var(--color-teal-400);
+    --factory-gate: var(--color-violet-400);
   }
 }
 

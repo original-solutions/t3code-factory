@@ -180,6 +180,8 @@ export function deriveBelt(environments: ReadonlyArray<BeltEnvironment>, nowMs: 
     });
 
     for (const run of active) {
+      // The runs list badges it; a null state here is a damaged file, not a launching session.
+      if (run.unreadable) continue;
       const station = stationOf(run);
       if (station === null) continue;
       const row = rowById.get(run.id);
