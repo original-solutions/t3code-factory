@@ -348,7 +348,7 @@ export const make = Effect.gen(function* () {
   const retryStacks = new Set<string>();
   // Pause per project and host because credentials are project-specific; leave paused PRs due until reset.
   const pausedUntil = new Map<string, number>();
-  // Back-off per PR key while its host answers not-found; any answer from the host clears it.
+  // Back-off per PR key while its host answers not-found; a summary the host returns clears it.
   const notFoundRetries = new Map<
     string,
     { readonly delayMs: number; readonly retryAtMs: number }
@@ -494,6 +494,7 @@ export const make = Effect.gen(function* () {
       const invalidated = refreshRequested || missingMergedAt || retryStacks.has(key);
       if (invalidated) yield* pullRequests.invalidate({ reference: ref });
       const summary = yield* pullRequests.summary(ref, { recoverTransientFailure: false });
+      notFoundRetries.delete(key);
       const fields = snapshotFieldsOf(summary);
       const needsStack =
         refreshRequested ||
@@ -565,7 +566,6 @@ export const make = Effect.gen(function* () {
       // The host answered, so the cadence clock ticks even if a dispatch below is rejected.
       lastSyncedAt.set(key, nowMs);
       requested.delete(key);
-      notFoundRetries.delete(key);
       yield* Effect.forEach(
         entries,
         (entry) =>
