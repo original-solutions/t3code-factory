@@ -2190,7 +2190,8 @@ describe("timeLimit", () => {
     Effect.gen(function* () {
       const rig = limitedRig();
       const stopAt = T0 + LIMIT_MS + 1;
-      rig.world.lastActivity = stopAt - 3 * MINUTE;
+      // Three and a half minutes: whole minutes, rounded down.
+      rig.world.lastActivity = stopAt - 3.5 * MINUTE;
       rig.clock.now = stopAt;
       const reason = `${TIME_LIMIT} (90 min worked; last session activity 3 min before the stop)`;
       assert.deepStrictEqual(yield* timeLimit(rig.ctx, rig.run), { kind: "stopped", reason });
