@@ -1580,12 +1580,9 @@ export const forward = (
     }),
   );
 
-/** The branch the thread works on, or `undefined` when it has none or T3 cannot say: a read that fails is not a stop. */
-const branchOf = (ctx: BuildingContext, threadId: string): Effect.Effect<string | undefined> =>
-  ctx.sessions.thread(threadId).pipe(
-    Effect.map((thread) => thread.branch ?? undefined),
-    Effect.orElseSucceed(() => undefined),
-  );
+/** The thread's own fields, or `undefined` when T3 cannot say: a read that fails is not a stop. */
+const threadOf = (ctx: BuildingContext, threadId: string) =>
+  ctx.sessions.thread(threadId).pipe(Effect.orElseSucceed(() => undefined));
 
 /** How long before `now` the thread last did anything, or `null` when T3 cannot say: a read that fails is not a stop. */
 const quietFor = (ctx: BuildingContext, threadId: string, now: number) =>
@@ -1630,8 +1627,13 @@ export const timeLimit = Effect.fn("RunnerBuilding.timeLimit")(function* (
     if (closing.kind === "own-merge") return { kind: "skipped", why: "pr-merged" } as const;
   }
   // Read before the archive: the next attempt is told where the work is.
-  const branch = seen.threadId === null ? undefined : yield* branchOf(ctx, seen.threadId);
-  const quiet = seen.threadId === null ? null : yield* quietFor(ctx, seen.threadId, now);
+  const thread = seen.threadId === null ? undefined : yield* threadOf(ctx, seen.threadId);
+  const branch = thread?.branch ?? undefined;
+  // An archived thread's newest event is the archive (a stop retried after it), not the session's.
+  const quiet =
+    seen.threadId === null || thread === undefined || thread.archived
+      ? null
+      : yield* quietFor(ctx, seen.threadId, now);
   const prepared = branch === undefined ? "" : prepareSessionText(branch);
   const stop: Stop = {
     reason: timeLimitReason(worked, quiet),
