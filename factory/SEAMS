@@ -34,6 +34,7 @@ apps/server/src/cloud/bootService.test.ts
 apps/server/src/cloud/bootService.ts
 apps/server/src/httpCors.test.ts
 apps/server/src/httpCors.ts
+apps/server/src/orchestration-v2/PullRequestSyncReactor.ts
 apps/server/src/orchestration-v2/ThreadLaunchService.ts
 apps/server/src/provider/CodexChatGptAuth.test.ts
 apps/server/src/server.ts
