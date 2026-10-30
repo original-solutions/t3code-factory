@@ -40,13 +40,17 @@ const layerSessions = () =>
     ),
   );
 
-/** Appends an agent event of `threadId` that happened at `occurredAt`, as the event store writes one. */
+/** Appends an event of `threadId` that happened at `occurredAt`, as the event store writes one. */
 const event = (
   id: string,
   threadId: string,
   version: number,
   occurredAt: string,
-  applicationVersion = 2,
+  {
+    applicationVersion = 2,
+    type = "turn-item.updated",
+    itemType = "command_execution",
+  }: { applicationVersion?: number; type?: string; itemType?: string } = {},
 ) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -56,8 +60,8 @@ const event = (
         actor_kind, payload_json, metadata_json, application_event_version
       )
       VALUES (
-        ${id}, 'thread', ${threadId}, ${version}, 'turn-item.updated', ${occurredAt},
-        'server', '{}', '{}', ${applicationVersion}
+        ${id}, 'thread', ${threadId}, ${version}, ${type}, ${occurredAt},
+        'server', ${JSON.stringify({ type: itemType })}, '{}', ${applicationVersion}
       )
     `;
   });
@@ -69,13 +73,29 @@ describe("FactorySessions.lastActivity", () => {
       yield* event("e2", "thread-1", 2, "2026-10-31T01:05:00.000Z");
       yield* event("e3", "thread-2", 1, "2026-10-31T02:00:00.000Z");
       // A legacy (V1) event on the same stream is not the agent's.
-      yield* event("e4", "thread-1", 3, "2026-10-31T03:00:00.000Z", 1);
+      yield* event("e4", "thread-1", 3, "2026-10-31T03:00:00.000Z", { applicationVersion: 1 });
       const sessions = yield* Sessions.FactorySessions;
       assert.strictEqual(
         yield* sessions.lastActivity("thread-1"),
         Date.parse("2026-10-31T01:05:00.000Z"),
       );
       assert.isNull(yield* sessions.lastActivity("thread-3"));
+    }).pipe(Effect.provide(layerSessions())),
+  );
+
+  it.effect("counts what the agent did, not what was sent into its thread", () =>
+    Effect.gen(function* () {
+      yield* event("e1", "thread-1", 1, "2026-10-31T01:00:00.000Z", { itemType: "reasoning" });
+      yield* event("e2", "thread-1", 2, "2026-10-31T01:05:00.000Z", { type: "subagent.updated" });
+      // The factory's own messages and the thread's other changes come after it.
+      yield* event("e3", "thread-1", 3, "2026-10-31T01:10:00.000Z", { itemType: "user_message" });
+      yield* event("e4", "thread-1", 4, "2026-10-31T01:15:00.000Z", { itemType: "system_notice" });
+      yield* event("e5", "thread-1", 5, "2026-10-31T01:20:00.000Z", { type: "run.updated" });
+      const sessions = yield* Sessions.FactorySessions;
+      assert.strictEqual(
+        yield* sessions.lastActivity("thread-1"),
+        Date.parse("2026-10-31T01:05:00.000Z"),
+      );
     }).pipe(Effect.provide(layerSessions())),
   );
 

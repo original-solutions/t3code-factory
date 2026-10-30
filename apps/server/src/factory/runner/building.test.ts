@@ -2247,14 +2247,17 @@ describe("timeLimit", () => {
     }),
   );
 
-  it.effect("stops with the plain reason when the thread is already archived", () =>
+  it.effect("reads the last activity at the stop time even when T3 records it later", () =>
     Effect.gen(function* () {
-      // A stop retried after its archive: the archive is the thread's newest event, not the session's.
       const rig = limitedRig();
-      rig.world.thread = { worktreePath: "/t3/wt", branch: "t3code/abc", archived: true };
-      rig.world.lastActivity = T0 + LIMIT_MS;
-      const elapsed = yield* stopAtTheLimit(rig);
-      assert.deepStrictEqual(linesOf(rig), limitEvents(elapsed, "t3code/abc"));
+      const stopAt = T0 + LIMIT_MS + 1;
+      // T3's clock runs two minutes ahead of the runner's.
+      rig.world.lastActivity = stopAt + 2 * MINUTE;
+      rig.clock.now = stopAt;
+      assert.deepStrictEqual(yield* timeLimit(rig.ctx, rig.run), {
+        kind: "stopped",
+        reason: `${TIME_LIMIT} (90 min worked; last session activity 0 min before the stop)`,
+      });
     }),
   );
 

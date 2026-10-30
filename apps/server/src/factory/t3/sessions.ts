@@ -5,6 +5,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type ModelSelection,
+  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -259,6 +260,20 @@ const threadOf = (thread: ThreadFields): Thread => ({
   archived: thread.archivedAt !== null && thread.archivedAt !== undefined,
 });
 
+/** The turn items a session's agent makes, unlike the messages and notices sent into its thread. */
+const AGENT_ITEM_TYPES = [
+  "assistant_message",
+  "reasoning",
+  "proposed_plan",
+  "todo_list",
+  "file_change",
+  "command_execution",
+  "file_search",
+  "web_search",
+  "dynamic_tool",
+  "subagent",
+] satisfies ReadonlyArray<OrchestrationV2TurnItem["type"]>;
+
 /** A message queued behind a working run and cancelled before it started. */
 const isCancelledUnstarted = (run: ThreadSnapshot["runs"][number]) =>
   run.status === "cancelled" && (run.startedAt === null || run.startedAt === undefined);
@@ -399,8 +414,8 @@ export class FactorySessions extends Context.Service<
     /** The branches of the threads that are neither archived nor deleted, a person's or the factory's. */
     readonly liveBranches: Effect.Effect<ReadonlySet<string>, SessionsError>;
     /**
-     * When the thread's last event happened (a message, tool call or any other change), as epoch
-     * milliseconds; null for a thread with no events.
+     * When the thread's agent last did anything (a message, reasoning, tool call or subagent), as
+     * epoch milliseconds; null when it has done nothing. What is sent into the thread is not counted.
      */
     readonly lastActivity: (threadId: string) => Effect.Effect<number | null, SessionsError>;
     /**
@@ -814,15 +829,22 @@ const make = Effect.gen(function* () {
     Effect.mapError((cause) => new SessionsError({ operation: "live-branches", cause })),
   );
 
-  // The thread's newest event in the shared event log (`OrchestrationEventStore`), by its
-  // `(aggregate_kind, stream_id, sequence)` index.
+  // The thread's newest agent event in the shared event log (`OrchestrationEventStore`). Pinned to
+  // the stream index as `latestAgentSequence` is: the planner otherwise walks every newer V2 event.
   const lastActivity: FactorySessions["Service"]["lastActivity"] = (threadId) =>
     sql<{ readonly occurred_at: string }>`
       SELECT occurred_at
-      FROM orchestration_events
+      FROM orchestration_events INDEXED BY idx_orchestration_events_agent_stream_sequence
       WHERE aggregate_kind = 'thread'
         AND stream_id = ${threadId}
         AND application_event_version = 2
+        AND (
+          event_type = 'subagent.updated'
+          OR (
+            event_type = 'turn-item.updated'
+            AND json_extract(payload_json, '$.type') IN ${sql.in(AGENT_ITEM_TYPES)}
+          )
+        )
       ORDER BY sequence DESC
       LIMIT 1
     `.pipe(

@@ -1629,9 +1629,8 @@ export const timeLimit = Effect.fn("RunnerBuilding.timeLimit")(function* (
   // Read before the archive: the next attempt is told where the work is.
   const thread = seen.threadId === null ? undefined : yield* threadOf(ctx, seen.threadId);
   const branch = thread?.branch ?? undefined;
-  // An archived thread's newest event is the archive (a stop retried after it), not the session's.
   const quiet =
-    seen.threadId === null || thread === undefined || thread.archived
+    seen.threadId === null || thread === undefined
       ? null
       : yield* quietFor(ctx, seen.threadId, now);
   const prepared = branch === undefined ? "" : prepareSessionText(branch);
