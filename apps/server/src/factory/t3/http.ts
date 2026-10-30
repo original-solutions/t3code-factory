@@ -337,10 +337,35 @@ const restartRoute = factoryRoute(
 
 const NO_DEPLOY_PENDING = { code: "no_deploy_pending", message: "no build is waiting to deploy" };
 
+const DEPLOY_CHANGED = {
+  code: "deploy_changed",
+  message: "another build is waiting now than the one shown; check it and ask again",
+};
+
 /** The build autodeploy has waiting, by sha, or null when there is none. */
 const waitingBuild = (factoryDir: string, nowMs: number) => {
   const wait = deployWait(loadPendingDeploy(factoryDir), loadDeploySnooze(factoryDir), nowMs);
   return wait?.pending.commit ?? null;
+};
+
+/** The build the caller saw, from a `{ commit }` body; null when the body names none. */
+const seenBuild = Effect.gen(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const body = yield* Effect.result(request.json);
+  if (Result.isFailure(body) || typeof body.success !== "object" || body.success === null) {
+    return null;
+  }
+  const commit = (body.success as Record<string, unknown>)["commit"];
+  return typeof commit === "string" ? commit : null;
+});
+
+/**
+ * The waiting build, or "changed" when it is not the one the caller saw. A caller that names no
+ * build, such as a page from before the check, takes the build that is waiting.
+ */
+const waitingBuildSeen = (factoryDir: string, nowMs: number, seen: string | null) => {
+  const build = waitingBuild(factoryDir, nowMs);
+  return build !== null && seen !== null && seen !== build ? ("changed" as const) : build;
 };
 
 /**
@@ -354,11 +379,15 @@ const snoozeDeployRoute = factoryRoute(
   Effect.gen(function* () {
     const { factoryDir } = yield* FactoryPaths;
     const nowMs = yield* Clock.currentTimeMillis;
+    const seen = yield* seenBuild;
     const snoozed = yield* guarded(() => {
-      const commit = waitingBuild(factoryDir, nowMs);
-      return commit === null ? null : snoozeDeploy(factoryDir, nowMs, commit);
+      const commit = waitingBuildSeen(factoryDir, nowMs, seen);
+      return commit === null || commit === "changed"
+        ? commit
+        : snoozeDeploy(factoryDir, nowMs, commit);
     });
     if (snoozed === null) return respond(NO_DEPLOY_PENDING, 409);
+    if (snoozed === "changed") return respond(DEPLOY_CHANGED, 409);
     switch (snoozed.kind) {
       case "snoozed":
         return respond({ snoozed_until: formatTs(snoozed.untilMs) });
@@ -394,12 +423,14 @@ const deployNowRoute = factoryRoute(
   Effect.gen(function* () {
     const { factoryDir } = yield* FactoryPaths;
     const nowMs = yield* Clock.currentTimeMillis;
+    const seen = yield* seenBuild;
     const commit = yield* guarded(() => {
-      const build = waitingBuild(factoryDir, nowMs);
-      if (build !== null) requestDeployNow(factoryDir, nowMs, build);
+      const build = waitingBuildSeen(factoryDir, nowMs, seen);
+      if (build !== null && build !== "changed") requestDeployNow(factoryDir, nowMs, build);
       return build;
     });
     if (commit === null) return respond(NO_DEPLOY_PENDING, 409);
+    if (commit === "changed") return respond(DEPLOY_CHANGED, 409);
     const kicked = yield* (yield* DeployKick).kick;
     return respond(
       {

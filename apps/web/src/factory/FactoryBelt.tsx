@@ -351,11 +351,12 @@ export function FactoryBelt({
       ?.status.refresh();
   };
   const deploy = async ({ environmentId, status }: FactoryEnvironment, now: boolean) => {
+    const shown = status.data?.deploy_pending?.commit ?? null;
     setDeployBusy((current) => withMember(current, environmentId, true));
     setDeployNotes((current) => withEntry(current, environmentId, null));
     try {
       if (now) {
-        const { commit, kicked } = await factoryApi.deployNow(environmentId);
+        const { commit, kicked } = await factoryApi.deployNow(environmentId, shown);
         const message = kicked
           ? "Updating. The server restarts once the build is installed."
           : "Updating within 10 minutes.";
@@ -363,7 +364,7 @@ export function FactoryBelt({
           new Map(current).set(environmentId, { commit, message, away: false }),
         );
       } else {
-        await factoryApi.snoozeDeploy(environmentId);
+        await factoryApi.snoozeDeploy(environmentId, shown);
       }
     } catch (error) {
       setDeployNotes((current) => withEntry(current, environmentId, messageOf(error)));

@@ -153,15 +153,17 @@ describe("factoryApi over HTTP", () => {
 
   it("snoozes and installs a waiting update with POSTs to the deploy paths", async () => {
     answer(200, '{"snoozed_until":"2026-10-30T09:00:00.000Z"}');
-    expect(await factoryApi.snoozeDeploy(ENV_1)).toEqual({
+    expect(await factoryApi.snoozeDeploy(ENV_1, "abc")).toEqual({
       snoozed_until: "2026-10-30T09:00:00.000Z",
     });
     expect(sent().method).toBe("POST");
     expect(new URL(sent().url).pathname).toBe("/api/factory/deploy/snooze");
+    expect(await sent().json()).toEqual({ commit: "abc" });
     answer(202, '{"commit":"abc","kicked":false,"message":"next tick"}');
-    expect((await factoryApi.deployNow(ENV_1)).kicked).toBe(false);
+    expect((await factoryApi.deployNow(ENV_1, "abc")).kicked).toBe(false);
     expect(sent().method).toBe("POST");
     expect(new URL(sent().url).pathname).toBe("/api/factory/deploy/now");
+    expect(await sent().json()).toEqual({ commit: "abc" });
   });
 
   it("maps an error body to the status, code and message", async () => {
@@ -332,8 +334,8 @@ describe("factoryApi on the given environment", () => {
       () => factoryApi.pauseClaims(ENV_2),
       () => factoryApi.resumeClaims(ENV_2),
       () => factoryApi.dismissAttention(ENV_2, ["config"]),
-      () => factoryApi.snoozeDeploy(ENV_2),
-      () => factoryApi.deployNow(ENV_2),
+      () => factoryApi.snoozeDeploy(ENV_2, "abc"),
+      () => factoryApi.deployNow(ENV_2, "abc"),
     ];
     for (const call of calls) {
       answer(200, "{}");

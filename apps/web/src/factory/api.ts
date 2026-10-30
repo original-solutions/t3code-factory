@@ -174,8 +174,15 @@ export interface FactoryApi {
   readonly stopRun: (environmentId: EnvironmentId, id: string) => Promise<FactoryStopResult>;
   readonly pauseClaims: (environmentId: EnvironmentId) => Promise<FactoryPauseResult>;
   readonly resumeClaims: (environmentId: EnvironmentId) => Promise<FactoryResumeResult>;
-  readonly snoozeDeploy: (environmentId: EnvironmentId) => Promise<FactorySnoozeResult>;
-  readonly deployNow: (environmentId: EnvironmentId) => Promise<FactoryDeployNowResult>;
+  /** `commit` is the waiting build the page showed; the server refuses when another waits now. */
+  readonly snoozeDeploy: (
+    environmentId: EnvironmentId,
+    commit: string | null,
+  ) => Promise<FactorySnoozeResult>;
+  readonly deployNow: (
+    environmentId: EnvironmentId,
+    commit: string | null,
+  ) => Promise<FactoryDeployNowResult>;
   readonly dismissAttention: (
     environmentId: EnvironmentId,
     ids: ReadonlyArray<string>,
@@ -296,8 +303,9 @@ const httpApi: FactoryApi = {
   stopRun: (environmentId, id) => post(environmentId, `${runPath(id)}/stop`),
   pauseClaims: (environmentId) => post(environmentId, "/api/factory/claims/pause"),
   resumeClaims: (environmentId) => post(environmentId, "/api/factory/claims/resume"),
-  snoozeDeploy: (environmentId) => post(environmentId, "/api/factory/deploy/snooze"),
-  deployNow: (environmentId) => post(environmentId, "/api/factory/deploy/now"),
+  snoozeDeploy: (environmentId, commit) =>
+    post(environmentId, "/api/factory/deploy/snooze", { commit }),
+  deployNow: (environmentId, commit) => post(environmentId, "/api/factory/deploy/now", { commit }),
   dismissAttention: (environmentId, ids) =>
     post(environmentId, "/api/factory/attention/dismiss", { ids }),
 };
@@ -317,8 +325,9 @@ export const factoryApi: FactoryApi = {
   stopRun: (environmentId, id) => (override ?? httpApi).stopRun(environmentId, id),
   pauseClaims: (environmentId) => (override ?? httpApi).pauseClaims(environmentId),
   resumeClaims: (environmentId) => (override ?? httpApi).resumeClaims(environmentId),
-  snoozeDeploy: (environmentId) => (override ?? httpApi).snoozeDeploy(environmentId),
-  deployNow: (environmentId) => (override ?? httpApi).deployNow(environmentId),
+  snoozeDeploy: (environmentId, commit) =>
+    (override ?? httpApi).snoozeDeploy(environmentId, commit),
+  deployNow: (environmentId, commit) => (override ?? httpApi).deployNow(environmentId, commit),
   dismissAttention: (environmentId, ids) =>
     (override ?? httpApi).dismissAttention(environmentId, ids),
 };

@@ -712,6 +712,37 @@ describe("a waiting deploy: snooze and update now", () => {
       }),
   );
 
+  it.effect(
+    "snooze and update now refuse a build that is no longer the one waiting, and write and kick nothing",
+    () =>
+      serving({}, async (call, { tokens, dir, wakes }) => {
+        writePending(dir);
+        const older = { commit: "1".repeat(40) };
+        for (const [path, token] of [
+          [DEPLOY_NOW_PATH, tokens.maintain],
+          [DEPLOY_SNOOZE_PATH, tokens.operate],
+        ] as const) {
+          const response = await call("POST", path, token, older);
+          assert.strictEqual(response.status, 409, path);
+          assert.strictEqual((await json(response)).code, "deploy_changed");
+        }
+        assert.isFalse(NodeFS.existsSync(nowFile(dir)));
+        assert.isFalse(NodeFS.existsSync(snoozeFile(dir)));
+        assert.strictEqual(wakes.kicks, 0);
+
+        const shown = { commit: SHA };
+        assert.strictEqual(
+          (await call("POST", DEPLOY_SNOOZE_PATH, tokens.operate, shown)).status,
+          200,
+        );
+        assert.strictEqual(
+          (await call("POST", DEPLOY_NOW_PATH, tokens.maintain, shown)).status,
+          202,
+        );
+        assert.strictEqual(NodeFS.readFileSync(nowFile(dir), "utf8"), `${SHA}\n`);
+      }),
+  );
+
   it.effect("the status shows a snoozed build", () =>
     serving({ status: running }, async (call, { tokens, dir }) => {
       writePending(dir);

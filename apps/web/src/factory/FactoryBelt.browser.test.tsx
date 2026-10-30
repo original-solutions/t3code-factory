@@ -826,7 +826,7 @@ describe("a waiting update", () => {
     });
     await using page = await render(createElement(FactoryBelt, belt));
     await page.click(page.button("Snooze 1 hour")!);
-    expect(snoozeDeploy).toHaveBeenCalledWith(DESKTOP);
+    expect(snoozeDeploy).toHaveBeenCalledWith(DESKTOP, SHA);
     expect(page.button("Snooze 1 hour")!.disabled).toBe(true);
     expect(page.button("Update now")!.disabled).toBe(true);
     await page.click(page.all("button").find((b) => b.textContent?.startsWith("Studio"))!);
@@ -884,7 +884,7 @@ describe("a waiting update", () => {
       "2 threads with an agent at work will be interrupted; you continue them in T3.",
     );
     await act(async () => dialogButton("Update now")!.click());
-    expect(deployNow).toHaveBeenCalledWith(DESKTOP);
+    expect(deployNow).toHaveBeenCalledWith(DESKTOP, SHA);
     await expect
       .poll(() => banner(page)?.textContent)
       .toBe("Updating. The server restarts once the build is installed.");
@@ -932,7 +932,7 @@ describe("a waiting update", () => {
     await using page = await render(createElement(FactoryBelt, belt));
     await page.click(page.button("Update now")!);
     expect(dialog()).toBeNull();
-    expect(deployNow).toHaveBeenCalledWith(DESKTOP);
+    expect(deployNow).toHaveBeenCalledWith(DESKTOP, SHA);
     expect(banner(page)?.textContent).toBe("Updating within 10 minutes.");
     // The banner says updating until the build is no longer waiting.
     await page.rerender(
