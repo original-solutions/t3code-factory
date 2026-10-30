@@ -322,6 +322,41 @@ describe("pull request sync for a pull request the host cannot find or the crede
     },
   );
 
+  it.effect("starts again from the first step after any answer other than not-found", () => {
+    let answer: "not-found" | "unreachable" = "not-found";
+    return withReactor(
+      {
+        threads: [thread("hidden", [makeLink(719)])],
+        summary: () =>
+          Effect.fail(
+            answer === "not-found"
+              ? notFound()
+              : new PullRequestOperationError({
+                  operation: "summary",
+                  detail: "Could not reach GitHub at github.com.",
+                }),
+          ),
+      },
+      (fixture, reactor) =>
+        Effect.gen(function* () {
+          // Not found at 12:00 and 12:01, unreachable at 12:03 and 12:04, not found at 12:05.
+          yield* sweep(fixture, reactor, 2);
+          answer = "unreachable";
+          yield* sweep(fixture, reactor, 2);
+          answer = "not-found";
+          yield* sweep(fixture, reactor);
+
+          assert.strictEqual(yield* callsFor(fixture, 719), 5);
+          assert.deepStrictEqual(
+            skippedFor(fixture, 719)
+              .filter((fields) => "retryAt" in fields)
+              .map((fields) => fields.retryAt),
+            [iso(1), iso(3), iso(6)],
+          );
+        }),
+    );
+  });
+
   it.effect("keeps reading other pull requests, including ones in the same repository", () =>
     withReactor(
       {

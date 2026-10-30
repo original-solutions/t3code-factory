@@ -471,7 +471,6 @@ export const make = Effect.gen(function* () {
       const invalidated = refreshRequested || missingMergedAt || retryStacks.has(key);
       if (invalidated) yield* pullRequests.invalidate({ reference: ref });
       const summary = yield* pullRequests.summary(ref, { recoverTransientFailure: false });
-      notFound.clear(key);
       const fields = snapshotFieldsOf(summary);
       const needsStack =
         refreshRequested ||
@@ -561,7 +560,7 @@ export const make = Effect.gen(function* () {
 
     const skips = new Map<string, { count: number; readonly key: string }>();
     const readGroup = (key: string, entries: ReadonlyArray<LinkEntry>, pauseKey: string) =>
-      syncGroup(key, entries).pipe(
+      notFound.read(key, nowMs, requested, syncGroup(key, entries)).pipe(
         Effect.catchCause((cause) => {
           if (Cause.hasInterruptsOnly(cause)) return Effect.failCause(cause);
           const retryAt = rateLimitRetryAt(cause);
@@ -569,16 +568,6 @@ export const make = Effect.gen(function* () {
             pausedUntil.set(pauseKey, Math.max(retryAt, pausedUntil.get(pauseKey) ?? 0));
           }
           const reason = skipReason(cause);
-          if (isNotFound(cause)) {
-            // The host answered the refresh, so it is not asked again before the back-off ends.
-            requested.delete(key);
-            // Logged per key, not batched in `skips`, so each line carries that key's own retryAt.
-            return Effect.logWarning("pull request sync skipped", {
-              key,
-              reason,
-              retryAt: DateTime.formatIso(DateTime.makeUnsafe(notFound.record(key, nowMs))),
-            });
-          }
           const skip = skips.get(reason);
           if (skip === undefined) skips.set(reason, { count: 1, key });
           else skip.count += 1;
@@ -589,10 +578,6 @@ export const make = Effect.gen(function* () {
       groups,
       ([key, entries]) => {
         if (!((scope === "all" || requested.has(key)) && isDue(key, entries, nowMs))) {
-          return Effect.void;
-        }
-        // A requested refresh reads through the back-off, so access granted since is seen at once.
-        if (!requested.has(key) && notFound.waiting(key, nowMs)) {
           return Effect.void;
         }
         const first = entries[0]!;
@@ -761,19 +746,44 @@ function isNotFound(cause: Cause.Cause<unknown>): boolean {
 
 function makeNotFoundBackoff() {
   const retries = new Map<string, { readonly delayMs: number; readonly retryAtMs: number }>();
+  const record = (key: string, nowMs: number) => {
+    const previous = retries.get(key)?.delayMs;
+    const delayMs =
+      previous === undefined
+        ? NOT_FOUND_FIRST_RETRY_MS
+        : Math.min(previous * 2, NOT_FOUND_MAX_RETRY_MS);
+    const retryAtMs = nowMs + delayMs;
+    retries.set(key, { delayMs, retryAtMs });
+    return retryAtMs;
+  };
   return {
-    waiting: (key: string, nowMs: number) => (retries.get(key)?.retryAtMs ?? 0) > nowMs,
-    record: (key: string, nowMs: number) => {
-      const previous = retries.get(key)?.delayMs;
-      const delayMs =
-        previous === undefined
-          ? NOT_FOUND_FIRST_RETRY_MS
-          : Math.min(previous * 2, NOT_FOUND_MAX_RETRY_MS);
-      const retryAtMs = nowMs + delayMs;
-      retries.set(key, { delayMs, retryAtMs });
-      return retryAtMs;
-    },
-    clear: (key: string) => retries.delete(key),
+    // Waits only while the host's latest answer for the key was not-found. A requested refresh
+    // reads through the wait, so access granted since is seen at once.
+    read: <E, R>(
+      key: string,
+      nowMs: number,
+      requested: Set<string>,
+      read: Effect.Effect<void, E, R>,
+    ): Effect.Effect<void, E, R> =>
+      !requested.has(key) && (retries.get(key)?.retryAtMs ?? 0) > nowMs
+        ? Effect.void
+        : read.pipe(
+            Effect.tap(() => Effect.sync(() => retries.delete(key))),
+            Effect.catchCause((cause) => {
+              if (!isNotFound(cause)) {
+                if (!Cause.hasInterruptsOnly(cause)) retries.delete(key);
+                return Effect.failCause(cause);
+              }
+              // The host answered the refresh, so it is not asked again before the back-off ends.
+              requested.delete(key);
+              // Logged per key, not batched with other skips, so each line carries its own retryAt.
+              return Effect.logWarning("pull request sync skipped", {
+                key,
+                reason: skipReason(cause),
+                retryAt: DateTime.formatIso(DateTime.makeUnsafe(record(key, nowMs))),
+              });
+            }),
+          ),
     prune: (live: ReadonlyMap<string, unknown>) => {
       for (const key of retries.keys()) if (!live.has(key)) retries.delete(key);
     },
