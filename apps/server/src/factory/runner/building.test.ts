@@ -2286,6 +2286,8 @@ describe("timeLimit", () => {
         const rig = limitedRig();
         // The first read of the thread is the branch; the stop path's own read goes through.
         rig.world.threadOnce = sessionsFailure();
+        // A read of its activity would put minutes in the reason: none is made.
+        rig.world.lastActivity = T0 + LIMIT_MS;
         const elapsed = yield* stopAtTheLimit(rig);
         assert.deepStrictEqual(linesOf(rig), limitEvents(elapsed));
         assert.deepStrictEqual(rig.gh[0], `comment 10 ${limitComment()}`);
