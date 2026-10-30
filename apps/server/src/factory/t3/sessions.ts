@@ -205,6 +205,7 @@ export class SessionsError extends Schema.TaggedError<SessionsError>()("FactoryS
     "running-threads",
     "live-branches",
     "worktrees-directory",
+    "last-activity",
   ]),
   cause: Schema.Defect(),
 }) {
@@ -397,6 +398,11 @@ export class FactorySessions extends Context.Service<
     readonly runningThreads: Effect.Effect<number, SessionsError>;
     /** The branches of the threads that are neither archived nor deleted, a person's or the factory's. */
     readonly liveBranches: Effect.Effect<ReadonlySet<string>, SessionsError>;
+    /**
+     * When the thread's last event happened (a message, tool call or any other change), as epoch
+     * milliseconds; null for a thread with no events.
+     */
+    readonly lastActivity: (threadId: string) => Effect.Effect<number | null, SessionsError>;
     /**
      * The folder T3 makes a new thread's worktree under now: the one Settings → Storage names,
      * else `defaultDir`. Null for a setting T3 cannot make a worktree under.
@@ -808,6 +814,23 @@ const make = Effect.gen(function* () {
     Effect.mapError((cause) => new SessionsError({ operation: "live-branches", cause })),
   );
 
+  // The thread's newest event in the shared event log (`OrchestrationEventStore`), by its
+  // `(aggregate_kind, stream_id, sequence)` index.
+  const lastActivity: FactorySessions["Service"]["lastActivity"] = (threadId) =>
+    sql<{ readonly occurred_at: string }>`
+      SELECT occurred_at
+      FROM orchestration_events
+      WHERE aggregate_kind = 'thread'
+        AND stream_id = ${threadId}
+        AND application_event_version = 2
+      ORDER BY sequence DESC
+      LIMIT 1
+    `.pipe(
+      Effect.map((rows) => msOf(rows[0]?.occurred_at)),
+      NodeSqliteClient.readOnly,
+      Effect.mapError((cause) => new SessionsError({ operation: "last-activity", cause })),
+    );
+
   const worktreesDirectory: FactorySessions["Service"]["worktreesDirectory"] = Effect.fn(
     "Sessions.worktreesDirectory",
   )(
@@ -830,6 +853,7 @@ const make = Effect.gen(function* () {
     brokenWorktrees,
     runningThreads,
     liveBranches,
+    lastActivity,
     worktreesDirectory,
   });
 });

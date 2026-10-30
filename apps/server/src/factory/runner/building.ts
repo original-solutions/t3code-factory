@@ -56,13 +56,13 @@ import {
   RESULT_LINE_REMINDER,
   STOPPED_BY_HAND,
   THREAD_GONE,
-  TIME_LIMIT,
   WRONG_ACCOUNT,
   WRONG_ACCOUNT_PREFIX,
   REFUSED_BODY_EDIT,
   bodyEditMessage,
   commentMessage,
   rateLimitedMessage,
+  timeLimitReason,
   type CommentDropReason,
   droppedCommentMessage,
   prepareSessionText,
@@ -138,7 +138,13 @@ export interface BuildingContext extends RunContext {
   >;
   readonly sessions: Pick<
     FactorySessions["Service"],
-    "status" | "thread" | "send" | "archive" | "removeWorktree" | "worktreeCheckout"
+    | "status"
+    | "thread"
+    | "send"
+    | "archive"
+    | "removeWorktree"
+    | "worktreeCheckout"
+    | "lastActivity"
   >;
   /** Unix epoch milliseconds. */
   readonly clock: () => number;
@@ -1581,11 +1587,17 @@ const branchOf = (ctx: BuildingContext, threadId: string): Effect.Effect<string 
     Effect.orElseSucceed(() => undefined),
   );
 
+/** How long before `now` the thread last did anything, or `null` when T3 cannot say: a read that fails is not a stop. */
+const quietFor = (ctx: BuildingContext, threadId: string, now: number) =>
+  ctx.sessions.lastActivity(threadId).pipe(
+    Effect.map((at) => (at === null ? null : now - at)),
+    Effect.orElseSucceed(() => null),
+  );
+
 /**
  * Stops a run that has worked longer than `limits.minutes`, counting `triage` and `building` time
- * from the ledger; time waiting in `pr-open` is left out. The thread is archived and the run goes
- * `stuck` with the reason `the run passed its time limit`. Skipped: `pr-reported` since entering
- * `building`, and `launch-unrecorded` (only `resume` can name that session).
+ * from the ledger, not `pr-open`. The thread is archived and the run goes `stuck` (`timeLimitReason`).
+ * Skipped: `pr-reported` since entering `building`, and `launch-unrecorded` (only `resume` names it).
  */
 export const timeLimit = Effect.fn("RunnerBuilding.timeLimit")(function* (
   ctx: BuildingContext,
@@ -1607,8 +1619,9 @@ export const timeLimit = Effect.fn("RunnerBuilding.timeLimit")(function* (
   if (seen.threadId === null && seen.launchSent) {
     return { kind: "skipped", why: "launch-unrecorded" } as const;
   }
+  const now = ctx.clock();
   const worked =
-    seen.workedMs + (seen.workingSince === null ? 0 : Math.max(0, ctx.clock() - seen.workingSince));
+    seen.workedMs + (seen.workingSince === null ? 0 : Math.max(0, now - seen.workingSince));
   if (worked <= ctx.project.limits.minutes * MINUTE_MS) return { kind: "within" } as const;
   // Only a run that has reported a pull request can have been closed by its own merge: no read
   // for any other.
@@ -1618,9 +1631,10 @@ export const timeLimit = Effect.fn("RunnerBuilding.timeLimit")(function* (
   }
   // Read before the archive: the next attempt is told where the work is.
   const branch = seen.threadId === null ? undefined : yield* branchOf(ctx, seen.threadId);
+  const quiet = seen.threadId === null ? null : yield* quietFor(ctx, seen.threadId, now);
   const prepared = branch === undefined ? "" : prepareSessionText(branch);
   const stop: Stop = {
-    reason: TIME_LIMIT,
+    reason: timeLimitReason(worked, quiet),
     ...(prepared !== "" && { branch: prepared, commitsAhead: null }),
   };
   // Called by the pass before any step, so the pass is what decided.

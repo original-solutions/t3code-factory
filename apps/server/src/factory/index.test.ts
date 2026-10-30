@@ -87,6 +87,7 @@ const stubSessions = Sessions.FactorySessions.of({
   brokenWorktrees: Effect.succeed([]),
   runningThreads: Effect.succeed(0),
   liveBranches: Effect.succeed(new Set()),
+  lastActivity: () => Effect.succeed(null),
   worktreesDirectory: (defaultDir) => Effect.succeed(defaultDir),
 });
 const noSessions = Layer.succeed(Sessions.FactorySessions, stubSessions);
