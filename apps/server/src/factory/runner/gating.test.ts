@@ -598,6 +598,7 @@ class FakeT3 {
       this.calls.push(`worktreeCheckout ${path}`);
       return Effect.succeed(this.checkout);
     },
+    lastActivity: () => Effect.succeed(null),
   };
 }
 

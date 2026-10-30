@@ -18,7 +18,7 @@ The factory gave up. The comment gives the reason and, when the session had made
 | Reason                                                        | What to do                                                                                                                         |
 | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | The gate failed after the allowed attempts                    | Read the gate output on the [run's page](/guide/watching-runs#a-run-s-page), fix the cause or the issue, then set `factory:ready`. |
-| The run passed its time limit                                 | Split the issue, or raise `limits.minutes` in `.dw/config.yml`.                                                                    |
+| The run passed its time limit                                 | See [the time limit](#the-time-limit): split the issue or raise `limits.minutes`, unless the session looked idle.                  |
 | The session gave up, or ended without a result line           | Read the session in its T3 thread.                                                                                                 |
 | The issue text was changed by someone who isn't an instructor | Review the text, then set `factory:ready`.                                                                                         |
 | The session ran as the wrong GitHub account                   | Restart the server so it has the right `GH_CONFIG_DIR` (see [the machine config](/guide/machine-config#changing-it)).              |
@@ -30,7 +30,7 @@ Fix the cause, then an instructor sets `factory:ready` to start a new run. If an
 
 ## The time limit
 
-Each run may spend `limits.minutes` (180 by default) claimed and building. Time waiting at `factory:pr-open` doesn't count, and neither does the factory's own gate: from the session reporting its pull request until the gate sends it back, queued or running. Past the limit, the factory stops the session and sets `factory:stuck` with the reason "the run passed its time limit".
+Each run may spend `limits.minutes` (180 by default) claimed and building. Time waiting at `factory:pr-open` doesn't count, and neither does the factory's own gate: from the session reporting its pull request until the gate sends it back, queued or running. Past the limit, the factory stops the session and sets `factory:stuck` with the reason "the run passed its time limit", followed by the minutes the run worked and how long before the stop the session's agent last did anything, for example "(92 min worked; last session activity 3 min before the stop)". When that was more than 15 minutes before the stop, the reason ends with ": the session looked idle". A busy session needed more time: split the issue or raise the limit. An idle one had stalled: read its T3 thread before starting a new run. When T3 can't say, the reason is the plain sentence.
 
 Other limits in the repo's [factory block](/guide/add-a-repo#_1-commit-the-factory-block) cap the gate retries and the wait for required checks. Each ends the run with `factory:stuck` when it runs out.
 

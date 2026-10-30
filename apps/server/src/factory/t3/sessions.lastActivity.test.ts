@@ -1,0 +1,110 @@
+// @effect-diagnostics nodeBuiltinImport:off - the database is a real file in a temp directory.
+import * as NodePath from "node:path";
+
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
+import { describe } from "vite-plus/test";
+
+import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
+import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
+import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
+import * as ServerSettings from "../../serverSettings.ts";
+import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
+import { useTempDirs } from "../ledger/testSupport.ts";
+import * as Sessions from "./sessions.ts";
+
+const tempDir = useTempDirs();
+
+const layerSessions = () =>
+  Sessions.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        ProjectStore.layer,
+        ServerSettings.layerTest(),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+        Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
+        Layer.mock(ThreadManagement.ThreadManagementService)({}),
+        Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+        NodeServices.layer,
+      ),
+    ),
+    Layer.provideMerge(
+      SqlitePersistence.layerFromPath(NodePath.join(tempDir("activity"), "state.sqlite")).pipe(
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
+  );
+
+/** Appends an event of `threadId` that happened at `occurredAt`, as the event store writes one. */
+const event = (
+  id: string,
+  threadId: string,
+  version: number,
+  occurredAt: string,
+  {
+    applicationVersion = 2,
+    type = "turn-item.updated",
+    itemType = "command_execution",
+  }: { applicationVersion?: number; type?: string; itemType?: string } = {},
+) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO orchestration_events (
+        event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+        actor_kind, payload_json, metadata_json, application_event_version
+      )
+      VALUES (
+        ${id}, 'thread', ${threadId}, ${version}, ${type}, ${occurredAt},
+        'server', ${JSON.stringify({ type: itemType })}, '{}', ${applicationVersion}
+      )
+    `;
+  });
+
+describe("FactorySessions.lastActivity", () => {
+  it.effect("is when the thread's newest event happened, not another thread's", () =>
+    Effect.gen(function* () {
+      yield* event("e1", "thread-1", 1, "2026-10-31T01:00:00.000Z");
+      yield* event("e2", "thread-1", 2, "2026-10-31T01:05:00.000Z");
+      yield* event("e3", "thread-2", 1, "2026-10-31T02:00:00.000Z");
+      // A legacy (V1) event on the same stream is not the agent's.
+      yield* event("e4", "thread-1", 3, "2026-10-31T03:00:00.000Z", { applicationVersion: 1 });
+      const sessions = yield* Sessions.FactorySessions;
+      assert.strictEqual(
+        yield* sessions.lastActivity("thread-1"),
+        Date.parse("2026-10-31T01:05:00.000Z"),
+      );
+      assert.isNull(yield* sessions.lastActivity("thread-3"));
+    }).pipe(Effect.provide(layerSessions())),
+  );
+
+  it.effect("counts what the agent did, not what was sent into its thread", () =>
+    Effect.gen(function* () {
+      yield* event("e1", "thread-1", 1, "2026-10-31T01:00:00.000Z", { itemType: "reasoning" });
+      yield* event("e2", "thread-1", 2, "2026-10-31T01:05:00.000Z", { type: "subagent.updated" });
+      // The factory's own messages and the thread's other changes come after it.
+      yield* event("e3", "thread-1", 3, "2026-10-31T01:10:00.000Z", { itemType: "user_message" });
+      yield* event("e4", "thread-1", 4, "2026-10-31T01:15:00.000Z", { itemType: "system_notice" });
+      yield* event("e5", "thread-1", 5, "2026-10-31T01:20:00.000Z", { type: "run.updated" });
+      const sessions = yield* Sessions.FactorySessions;
+      assert.strictEqual(
+        yield* sessions.lastActivity("thread-1"),
+        Date.parse("2026-10-31T01:05:00.000Z"),
+      );
+    }).pipe(Effect.provide(layerSessions())),
+  );
+
+  it.effect("fails as a sessions error when the events cannot be read", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`DROP TABLE orchestration_events`;
+      const error = yield* Effect.flip((yield* Sessions.FactorySessions).lastActivity("thread-1"));
+      assert.strictEqual(error.operation, "last-activity");
+    }).pipe(Effect.provide(layerSessions())),
+  );
+});

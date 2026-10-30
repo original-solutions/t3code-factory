@@ -5,6 +5,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type ModelSelection,
+  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -205,6 +206,7 @@ export class SessionsError extends Schema.TaggedError<SessionsError>()("FactoryS
     "running-threads",
     "live-branches",
     "worktrees-directory",
+    "last-activity",
   ]),
   cause: Schema.Defect(),
 }) {
@@ -257,6 +259,20 @@ const threadOf = (thread: ThreadFields): Thread => ({
   branch: thread.branch,
   archived: thread.archivedAt !== null && thread.archivedAt !== undefined,
 });
+
+/** The turn items a session's agent makes, unlike the messages and notices sent into its thread. */
+const AGENT_ITEM_TYPES = [
+  "assistant_message",
+  "reasoning",
+  "proposed_plan",
+  "todo_list",
+  "file_change",
+  "command_execution",
+  "file_search",
+  "web_search",
+  "dynamic_tool",
+  "subagent",
+] satisfies ReadonlyArray<OrchestrationV2TurnItem["type"]>;
 
 /** A message queued behind a working run and cancelled before it started. */
 const isCancelledUnstarted = (run: ThreadSnapshot["runs"][number]) =>
@@ -397,6 +413,11 @@ export class FactorySessions extends Context.Service<
     readonly runningThreads: Effect.Effect<number, SessionsError>;
     /** The branches of the threads that are neither archived nor deleted, a person's or the factory's. */
     readonly liveBranches: Effect.Effect<ReadonlySet<string>, SessionsError>;
+    /**
+     * When the thread's agent last did anything (a message, reasoning, tool call or subagent), as
+     * epoch milliseconds; null when it has done nothing. What is sent into the thread is not counted.
+     */
+    readonly lastActivity: (threadId: string) => Effect.Effect<number | null, SessionsError>;
     /**
      * The folder T3 makes a new thread's worktree under now: the one Settings → Storage names,
      * else `defaultDir`. Null for a setting T3 cannot make a worktree under.
@@ -808,6 +829,30 @@ const make = Effect.gen(function* () {
     Effect.mapError((cause) => new SessionsError({ operation: "live-branches", cause })),
   );
 
+  // The thread's newest agent event in the shared event log (`OrchestrationEventStore`). Pinned to
+  // the stream index as `latestAgentSequence` is: the planner otherwise walks every newer V2 event.
+  const lastActivity: FactorySessions["Service"]["lastActivity"] = (threadId) =>
+    sql<{ readonly occurred_at: string }>`
+      SELECT occurred_at
+      FROM orchestration_events INDEXED BY idx_orchestration_events_agent_stream_sequence
+      WHERE aggregate_kind = 'thread'
+        AND stream_id = ${threadId}
+        AND application_event_version = 2
+        AND (
+          event_type = 'subagent.updated'
+          OR (
+            event_type = 'turn-item.updated'
+            AND json_extract(payload_json, '$.type') IN ${sql.in(AGENT_ITEM_TYPES)}
+          )
+        )
+      ORDER BY sequence DESC
+      LIMIT 1
+    `.pipe(
+      Effect.map((rows) => msOf(rows[0]?.occurred_at)),
+      NodeSqliteClient.readOnly,
+      Effect.mapError((cause) => new SessionsError({ operation: "last-activity", cause })),
+    );
+
   const worktreesDirectory: FactorySessions["Service"]["worktreesDirectory"] = Effect.fn(
     "Sessions.worktreesDirectory",
   )(
@@ -830,6 +875,7 @@ const make = Effect.gen(function* () {
     brokenWorktrees,
     runningThreads,
     liveBranches,
+    lastActivity,
     worktreesDirectory,
   });
 });

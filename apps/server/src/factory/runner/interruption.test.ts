@@ -516,6 +516,7 @@ const rigFor = (
       return Effect.void;
     },
     worktreeCheckout: () => Effect.die("no worktree head"),
+    lastActivity: () => Effect.succeed(null),
     removeWorktree: (path) => {
       t3.push(`removeWorktree ${path}`);
       return Effect.void;

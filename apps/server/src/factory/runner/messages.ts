@@ -261,6 +261,21 @@ export const WRONG_ACCOUNT =
 /** The public reason of a run stopped for taking longer than `limits.minutes`. */
 export const TIME_LIMIT = "the run passed its time limit";
 
+/** How long a session may do nothing before a time-limit stop says it looked idle. */
+const IDLE_MS = 15 * 60_000;
+
+/**
+ * The reason of a time-limit stop: `TIME_LIMIT` with the minutes the run worked and how long
+ * before the stop the session last did anything, so a busy session reads apart from a stalled
+ * one. Plain `TIME_LIMIT` when that is unknown: no session, or T3 could not say.
+ */
+export const timeLimitReason = (workedMs: number, quietMs: number | null): string => {
+  if (quietMs === null) return TIME_LIMIT;
+  const minutes = (ms: number) => Math.floor(Math.max(0, ms) / 60_000);
+  const idle = quietMs > IDLE_MS ? ": the session looked idle" : "";
+  return `${TIME_LIMIT} (${minutes(workedMs)} min worked; last session activity ${minutes(quietMs)} min before the stop${idle})`;
+};
+
 /** The public reason when T3 no longer has the session's thread. */
 export const THREAD_GONE = "the T3 thread no longer exists";
 

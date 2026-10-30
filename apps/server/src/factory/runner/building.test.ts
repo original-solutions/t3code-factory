@@ -185,7 +185,7 @@ const STOP_CALLS = [
 ];
 
 const ghFailure = () => new GitHubFailed({ args: ["pr", "view", "12"], status: 1, stderr: "boom" });
-const sessionsFailure = (operation: "status" | "send" | "archive" = "status") =>
+const sessionsFailure = (operation: "status" | "send" | "archive" | "last-activity" = "status") =>
   new SessionsError({ operation, cause: "timeout" });
 
 const isThreadNotFound = Schema.is(ThreadNotFoundError);
@@ -257,6 +257,8 @@ interface World {
   archiveFails: SessionsError | null;
   /** The next read of the thread fails, once. */
   threadOnce: SessionsError | null;
+  /** When the session last did anything, as epoch milliseconds, or the failed read of it. */
+  lastActivity: number | null | SessionsError;
   /** The text of each message T3 took, by command id. */
   delivered: Map<string, string>;
   archived: Array<string>;
@@ -339,6 +341,7 @@ const rigFor = (
     sendFailure: null,
     archiveFails: null,
     threadOnce: null,
+    lastActivity: null,
     delivered: new Map(),
     archived: [],
   };
@@ -471,6 +474,11 @@ const rigFor = (
     removeWorktree: (path) => {
       t3Call(`removeWorktree ${path}`);
       return Effect.void;
+    },
+    // A read for the stop's reason only: kept out of `t3`, whose calls are the stop's own.
+    lastActivity: () => {
+      const answer = world.lastActivity;
+      return isSessionsError(answer) ? Effect.fail(answer) : Effect.succeed(answer);
     },
     worktreeCheckout: (path) => {
       t3Call(`worktreeCheckout ${path}`);
@@ -2178,6 +2186,101 @@ describe("timeLimit", () => {
     }),
   );
 
+  it.effect("says how long the run worked and how recently a busy session was active", () =>
+    Effect.gen(function* () {
+      const rig = limitedRig();
+      const stopAt = T0 + LIMIT_MS + 1;
+      // Three and a half minutes: whole minutes, rounded down.
+      rig.world.lastActivity = stopAt - 3.5 * MINUTE;
+      rig.clock.now = stopAt;
+      const reason = `${TIME_LIMIT} (90 min worked; last session activity 3 min before the stop)`;
+      assert.deepStrictEqual(yield* timeLimit(rig.ctx, rig.run), { kind: "stopped", reason });
+      assert.deepStrictEqual(
+        linesOf(rig).find((line) => line.event === "stuck"),
+        { event: "stuck", data: { reason, branch: "t3code/abc" } },
+      );
+      assert.include(rig.gh[0]!, `Reason: ${reason}\n`);
+    }),
+  );
+
+  it.effect("says the session looked idle when it did nothing for more than 15 minutes", () =>
+    Effect.gen(function* () {
+      const rig = limitedRig();
+      const stopAt = T0 + LIMIT_MS + 1;
+      rig.world.lastActivity = stopAt - 15 * MINUTE - 1;
+      rig.clock.now = stopAt;
+      const reason = `${TIME_LIMIT} (90 min worked; last session activity 15 min before the stop: the session looked idle)`;
+      assert.deepStrictEqual(yield* timeLimit(rig.ctx, rig.run), { kind: "stopped", reason });
+      assert.include(rig.gh[0]!, `Reason: ${reason}\n`);
+    }),
+  );
+
+  it.effect("does not call a session idle that was active 15 minutes before the stop", () =>
+    Effect.gen(function* () {
+      const rig = limitedRig();
+      const stopAt = T0 + LIMIT_MS + 1;
+      rig.world.lastActivity = stopAt - 15 * MINUTE;
+      rig.clock.now = stopAt;
+      assert.deepStrictEqual(yield* timeLimit(rig.ctx, rig.run), {
+        kind: "stopped",
+        reason: `${TIME_LIMIT} (90 min worked; last session activity 15 min before the stop)`,
+      });
+    }),
+  );
+
+  it.effect("stops a run with no session thread with the plain reason", () =>
+    Effect.gen(function* () {
+      const triage = [STARTED[0]!, STARTED[1]!, moved("ready", "triage")];
+      const rig = rigFor(triage);
+      // A read would put minutes in the reason: none is made without a thread.
+      rig.world.lastActivity = T0;
+      rig.clock.now = T0 + LIMIT_MS + 1;
+      assert.deepStrictEqual(yield* timeLimit(rig.ctx, rig.run), {
+        kind: "stopped",
+        reason: TIME_LIMIT,
+      });
+      assert.deepStrictEqual(
+        linesOf(rig).find((line) => line.event === "stuck"),
+        { event: "stuck", data: { reason: TIME_LIMIT } },
+      );
+      assert.deepStrictEqual(rig.t3, []);
+    }),
+  );
+
+  it.effect("stops with the plain reason when the thread is already archived", () =>
+    Effect.gen(function* () {
+      // A stop retried after its archive: the session ended at the first try, not at this one.
+      const rig = limitedRig();
+      rig.world.thread = { worktreePath: "/t3/wt", branch: "t3code/abc", archived: true };
+      rig.world.lastActivity = T0 + LIMIT_MS;
+      const elapsed = yield* stopAtTheLimit(rig);
+      assert.deepStrictEqual(linesOf(rig), limitEvents(elapsed, "t3code/abc"));
+    }),
+  );
+
+  it.effect("reads the last activity at the stop time even when T3 records it later", () =>
+    Effect.gen(function* () {
+      const rig = limitedRig();
+      const stopAt = T0 + LIMIT_MS + 1;
+      // T3's clock runs two minutes ahead of the runner's.
+      rig.world.lastActivity = stopAt + 2 * MINUTE;
+      rig.clock.now = stopAt;
+      assert.deepStrictEqual(yield* timeLimit(rig.ctx, rig.run), {
+        kind: "stopped",
+        reason: `${TIME_LIMIT} (90 min worked; last session activity 0 min before the stop)`,
+      });
+    }),
+  );
+
+  it.effect("stops with the plain reason when T3 cannot say when the session was last active", () =>
+    Effect.gen(function* () {
+      const rig = limitedRig();
+      rig.world.lastActivity = sessionsFailure("last-activity");
+      const elapsed = yield* stopAtTheLimit(rig);
+      assert.deepStrictEqual(linesOf(rig), limitEvents(elapsed, "t3code/abc"));
+    }),
+  );
+
   it.effect(
     "stops a run past its limit whose thread has no branch as it would without the work",
     () =>
@@ -2198,6 +2301,8 @@ describe("timeLimit", () => {
         const rig = limitedRig();
         // The first read of the thread is the branch; the stop path's own read goes through.
         rig.world.threadOnce = sessionsFailure();
+        // A read of its activity would put minutes in the reason: none is made.
+        rig.world.lastActivity = T0 + LIMIT_MS;
         const elapsed = yield* stopAtTheLimit(rig);
         assert.deepStrictEqual(linesOf(rig), limitEvents(elapsed));
         assert.deepStrictEqual(rig.gh[0], `comment 10 ${limitComment()}`);
