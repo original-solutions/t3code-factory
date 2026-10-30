@@ -1,6 +1,7 @@
 import {
   CommandId,
   isOrchestrationV2WorkActive,
+  PullRequestOperationError,
   type OrchestrationV2TurnItem,
   type PullRequestSummary,
   type ThreadId,
@@ -44,6 +45,10 @@ const SLOW_SYNC_INTERVAL_MS = 15 * 60 * 1_000;
 // requested refreshes, watches and a host CLI's merge command still read it at once.
 const QUIET_AFTER_MS = 30 * 60 * 1_000;
 const QUIET_SYNC_INTERVAL_MS = 5 * 60 * 1_000;
+// A pull request the host cannot find, or the credential cannot see, stays that way for a while.
+// Each failed read doubles the wait before the next one, from one minute up to an hour.
+const NOT_FOUND_FIRST_RETRY_MS = 60 * 1_000;
+const NOT_FOUND_MAX_RETRY_MS = 60 * 60 * 1_000;
 
 const isChangeRequestCloseCommand = (command: string) =>
   sourceControlDefinitions.definitions.some(
@@ -172,6 +177,7 @@ export function changeRequestsCreatedBy(input: string, output: string) {
 }
 
 const isPullRequestProviderError = Schema.is(PullRequestProviderError);
+const isPullRequestOperationError = Schema.is(PullRequestOperationError);
 
 type SnapshotFields = Omit<ThreadPullRequestSnapshot, "syncedAt">;
 
@@ -296,6 +302,20 @@ function rateLimitRetryAt(cause: Cause.Cause<unknown>): number | undefined {
   return undefined;
 }
 
+function isNotFound(cause: Cause.Cause<unknown>): boolean {
+  let error: unknown = Cause.squash(cause);
+  while (error instanceof Error) {
+    if (
+      (isPullRequestOperationError(error) || isPullRequestProviderError(error)) &&
+      error.reason === "not-found"
+    ) {
+      return true;
+    }
+    error = error.cause;
+  }
+  return false;
+}
+
 function isUnsettled(thread: ProjectionStore.ProjectionThreadPullRequests): boolean {
   return thread.settledOverride !== "settled" && thread.settledAt === null;
 }
@@ -328,6 +348,11 @@ export const make = Effect.gen(function* () {
   const retryStacks = new Set<string>();
   // Pause per project and host because credentials are project-specific; leave paused PRs due until reset.
   const pausedUntil = new Map<string, number>();
+  // Back-off per PR key while its host answers not-found; any answer from the host clears it.
+  const notFoundRetries = new Map<
+    string,
+    { readonly delayMs: number; readonly retryAtMs: number }
+  >();
 
   const isDue = (key: string, entries: ReadonlyArray<LinkEntry>, nowMs: number): boolean => {
     if (requested.has(key) || retryStacks.has(key)) return true;
@@ -385,6 +410,7 @@ export const make = Effect.gen(function* () {
     for (const key of lastSyncedAt.keys()) if (!groups.has(key)) lastSyncedAt.delete(key);
     for (const key of retryStacks) if (!groups.has(key)) retryStacks.delete(key);
     for (const key of requested.keys()) if (!groups.has(key)) requested.delete(key);
+    for (const key of notFoundRetries.keys()) if (!groups.has(key)) notFoundRetries.delete(key);
 
     const linkedThisSweep = new Set<string>();
     // Fresh stack reads by group, so a member flagged by a sibling is compared against what the
@@ -539,6 +565,7 @@ export const make = Effect.gen(function* () {
       // The host answered, so the cadence clock ticks even if a dispatch below is rejected.
       lastSyncedAt.set(key, nowMs);
       requested.delete(key);
+      notFoundRetries.delete(key);
       yield* Effect.forEach(
         entries,
         (entry) =>
@@ -565,6 +592,22 @@ export const make = Effect.gen(function* () {
             pausedUntil.set(pauseKey, Math.max(retryAt, pausedUntil.get(pauseKey) ?? 0));
           }
           const reason = skipReason(cause);
+          if (isNotFound(cause)) {
+            const previous = notFoundRetries.get(key)?.delayMs;
+            const delayMs =
+              previous === undefined
+                ? NOT_FOUND_FIRST_RETRY_MS
+                : Math.min(previous * 2, NOT_FOUND_MAX_RETRY_MS);
+            const retryAtMs = nowMs + delayMs;
+            notFoundRetries.set(key, { delayMs, retryAtMs });
+            // The host answered the refresh, so it is not asked again before the back-off ends.
+            requested.delete(key);
+            return Effect.logWarning("pull request sync skipped", {
+              key,
+              reason,
+              retryAt: DateTime.formatIso(DateTime.makeUnsafe(retryAtMs)),
+            });
+          }
           const skip = skips.get(reason);
           if (skip === undefined) skips.set(reason, { count: 1, key });
           else skip.count += 1;
@@ -575,6 +618,10 @@ export const make = Effect.gen(function* () {
       groups,
       ([key, entries]) => {
         if (!((scope === "all" || requested.has(key)) && isDue(key, entries, nowMs))) {
+          return Effect.void;
+        }
+        // A requested refresh reads through the back-off, so access granted since is seen at once.
+        if (!requested.has(key) && (notFoundRetries.get(key)?.retryAtMs ?? 0) > nowMs) {
           return Effect.void;
         }
         const first = entries[0]!;

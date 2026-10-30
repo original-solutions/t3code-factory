@@ -1458,7 +1458,7 @@ describe("PullRequestSyncReactor", () => {
                 "2026-08-28T13:03:00.000Z",
               ],
             );
-          }).pipe(Effect.provide(Layer.merge(fixture.layer, logger)));
+          }).pipe(Effect.provide(fixture.layer.pipe(Layer.provideMerge(logger))));
         }),
       ),
     );
@@ -1538,12 +1538,20 @@ describe("PullRequestSyncReactor", () => {
           yield* Effect.gen(function* () {
             const reactor = yield* startAndSweep(fixture);
             yield* sweepAgain(fixture, reactor);
+            // Still hidden: the refresh reads once, then the sweeps wait out the back-off again.
+            yield* reactor.requestSync(link);
+            yield* Queue.take(fixture.snapshotReads);
+            yield* reactor.drain;
+            assert.strictEqual(callsFor(yield* Ref.get(fixture.summaryCalls), 719), 3);
+            yield* sweepAgain(fixture, reactor);
+            assert.strictEqual(callsFor(yield* Ref.get(fixture.summaryCalls), 719), 3);
+
             visible = true;
             yield* reactor.requestSync(link);
             yield* Queue.take(fixture.snapshotReads);
             yield* reactor.drain;
 
-            assert.strictEqual(callsFor(yield* Ref.get(fixture.summaryCalls), 719), 3);
+            assert.strictEqual(callsFor(yield* Ref.get(fixture.summaryCalls), 719), 4);
             assert.deepStrictEqual(
               (yield* Ref.get(fixture.syncCommands)).map((command) => command.number),
               [719],
@@ -1574,8 +1582,10 @@ describe("PullRequestSyncReactor", () => {
             for (let minute = 0; minute < 10; minute++) yield* sweepAgain(fixture, reactor);
 
             assert.strictEqual(callsFor(yield* Ref.get(fixture.summaryCalls), 719), 11);
-            assert.isTrue(skippedFor(warnings, 719).every((fields) => !("retryAt" in fields)));
-          }).pipe(Effect.provide(Layer.merge(fixture.layer, logger)));
+            const skipped = skippedFor(warnings, 719);
+            assert.strictEqual(skipped.length, 11);
+            assert.isTrue(skipped.every((fields) => !("retryAt" in fields)));
+          }).pipe(Effect.provide(fixture.layer.pipe(Layer.provideMerge(logger))));
         }),
       ),
     );
