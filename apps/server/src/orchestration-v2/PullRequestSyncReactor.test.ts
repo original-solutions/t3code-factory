@@ -31,6 +31,7 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
@@ -1402,6 +1403,183 @@ describe("PullRequestSyncReactor", () => {
       }),
     ),
   );
+
+  describe("a pull request the host cannot find or the credential cannot see", () => {
+    const notFound = () =>
+      new PullRequestOperationError({
+        operation: "summary",
+        detail: "GitHub could not find the requested resource, or the credential cannot see it.",
+        reason: "not-found",
+      });
+    const callsFor = (calls: ReadonlyArray<PullRequestRef>, number: number) =>
+      calls.filter((call) => call.number === number).length;
+    const skippedFor = (warnings: ReadonlyArray<Record<string, unknown>>, number: number) =>
+      warnings.filter((fields) => String(fields.key).endsWith(`#${number}`));
+    const captureSkips = () => {
+      const warnings: Array<Record<string, unknown>> = [];
+      const logger = Logger.layer([
+        Logger.make(({ message }) => {
+          const [text, fields] = message as ReadonlyArray<unknown>;
+          if (text === "pull request sync skipped") {
+            warnings.push(fields as Record<string, unknown>);
+          }
+        }),
+      ]);
+      return { warnings, logger };
+    };
+
+    it.effect("backs off per key and logs the skip once per back-off step", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          const { warnings, logger } = captureSkips();
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot([makeThread("hidden", { pullRequests: [makeLink(719)] })]),
+            summary: () => Effect.fail(notFound()),
+          });
+
+          yield* Effect.gen(function* () {
+            const reactor = yield* startAndSweep(fixture);
+            for (let minute = 0; minute < 60; minute++) yield* sweepAgain(fixture, reactor);
+
+            const calls = callsFor(yield* Ref.get(fixture.summaryCalls), 719);
+            assert.isAtMost(calls, 8);
+            const skipped = skippedFor(warnings, 719);
+            assert.strictEqual(skipped.length, calls);
+            for (const fields of skipped) assert.isString(fields.retryAt);
+            assert.deepStrictEqual(
+              skipped.map((fields) => fields.retryAt),
+              [
+                "2026-08-28T12:01:00.000Z",
+                "2026-08-28T12:03:00.000Z",
+                "2026-08-28T12:07:00.000Z",
+                "2026-08-28T12:15:00.000Z",
+                "2026-08-28T12:31:00.000Z",
+                "2026-08-28T13:03:00.000Z",
+              ],
+            );
+          }).pipe(Effect.provide(Layer.merge(fixture.layer, logger)));
+        }),
+      ),
+    );
+
+    it.effect("starts again from the first step after the host answers", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          let visible = false;
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot([makeThread("hidden", { pullRequests: [makeLink(719)] })]),
+            summary: (input) =>
+              visible ? Effect.succeed(makeSummary(input)) : Effect.fail(notFound()),
+          });
+
+          yield* Effect.gen(function* () {
+            // Fails at 12:00 and 12:01; the next read waits for 12:03.
+            const reactor = yield* startAndSweep(fixture);
+            yield* sweepAgain(fixture, reactor);
+            yield* sweepAgain(fixture, reactor);
+            assert.strictEqual(callsFor(yield* Ref.get(fixture.summaryCalls), 719), 2);
+
+            visible = true;
+            yield* sweepAgain(fixture, reactor);
+            assert.strictEqual(callsFor(yield* Ref.get(fixture.summaryCalls), 719), 3);
+
+            // The link still has no snapshot here, so it stays due on every sweep.
+            visible = false;
+            yield* sweepAgain(fixture, reactor);
+            yield* sweepAgain(fixture, reactor);
+            assert.strictEqual(callsFor(yield* Ref.get(fixture.summaryCalls), 719), 5);
+          }).pipe(Effect.provide(fixture.layer));
+        }),
+      ),
+    );
+
+    it.effect("keeps reading other pull requests, including ones in the same repository", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot([
+              makeThread("hidden", { pullRequests: [makeLink(719), makeLink(720)] }),
+              makeThread("other", {
+                pullRequests: [makeLink(5, null, { repository: "owner/other" })],
+              }),
+            ]),
+            summary: (input) =>
+              input.number === 719 ? Effect.fail(notFound()) : Effect.succeed(makeSummary(input)),
+          });
+
+          yield* Effect.gen(function* () {
+            const reactor = yield* startAndSweep(fixture);
+            for (let minute = 0; minute < 10; minute++) yield* sweepAgain(fixture, reactor);
+
+            const calls = yield* Ref.get(fixture.summaryCalls);
+            assert.strictEqual(callsFor(calls, 719), 4);
+            assert.strictEqual(callsFor(calls, 720), 11);
+            assert.strictEqual(callsFor(calls, 5), 11);
+          }).pipe(Effect.provide(fixture.layer));
+        }),
+      ),
+    );
+
+    it.effect("reads through the back-off when a refresh is requested", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          let visible = false;
+          const link = makeLink(719);
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot([makeThread("hidden", { pullRequests: [link] })]),
+            summary: (input) =>
+              visible ? Effect.succeed(makeSummary(input)) : Effect.fail(notFound()),
+          });
+
+          yield* Effect.gen(function* () {
+            const reactor = yield* startAndSweep(fixture);
+            yield* sweepAgain(fixture, reactor);
+            visible = true;
+            yield* reactor.requestSync(link);
+            yield* Queue.take(fixture.snapshotReads);
+            yield* reactor.drain;
+
+            assert.strictEqual(callsFor(yield* Ref.get(fixture.summaryCalls), 719), 3);
+            assert.deepStrictEqual(
+              (yield* Ref.get(fixture.syncCommands)).map((command) => command.number),
+              [719],
+            );
+          }).pipe(Effect.provide(fixture.layer));
+        }),
+      ),
+    );
+
+    it.effect("keeps retrying a transient failure every sweep", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          const { warnings, logger } = captureSkips();
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot([makeThread("offline", { pullRequests: [makeLink(719)] })]),
+            summary: () =>
+              Effect.fail(
+                new PullRequestOperationError({
+                  operation: "summary",
+                  detail: "Could not reach GitHub at github.com.",
+                }),
+              ),
+          });
+
+          yield* Effect.gen(function* () {
+            const reactor = yield* startAndSweep(fixture);
+            for (let minute = 0; minute < 10; minute++) yield* sweepAgain(fixture, reactor);
+
+            assert.strictEqual(callsFor(yield* Ref.get(fixture.summaryCalls), 719), 11);
+            assert.isTrue(skippedFor(warnings, 719).every((fields) => !("retryAt" in fields)));
+          }).pipe(Effect.provide(Layer.merge(fixture.layer, logger)));
+        }),
+      ),
+    );
+  });
 
   it.effect.each([
     "gh pr merge 7 --squash 2>&1 | tail -3",
