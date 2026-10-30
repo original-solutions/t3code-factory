@@ -1463,6 +1463,70 @@ describe("PullRequestSyncReactor", () => {
       ),
     );
 
+    it.effect("waits no longer than an hour between reads", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          const { warnings, logger } = captureSkips();
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot([makeThread("hidden", { pullRequests: [makeLink(719)] })]),
+            summary: () => Effect.fail(notFound()),
+          });
+
+          yield* Effect.gen(function* () {
+            const reactor = yield* startAndSweep(fixture);
+            for (let minute = 0; minute < 4 * 60; minute++) yield* sweepAgain(fixture, reactor);
+
+            assert.deepStrictEqual(
+              skippedFor(warnings, 719)
+                .slice(-4)
+                .map((fields) => fields.retryAt),
+              [
+                "2026-08-28T13:03:00.000Z",
+                "2026-08-28T14:03:00.000Z",
+                "2026-08-28T15:03:00.000Z",
+                "2026-08-28T16:03:00.000Z",
+              ],
+            );
+          }).pipe(Effect.provide(fixture.layer.pipe(Layer.provideMerge(logger))));
+        }),
+      ),
+    );
+
+    it.effect(
+      "starts again from the first step once the host answers, even if the stack read fails",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            yield* TestClock.setTime(Date.parse(NOW));
+            let visible = false;
+            const fixture = yield* makeHarness({
+              snapshot: makeSnapshot([makeThread("hidden", { pullRequests: [makeLink(719)] })]),
+              summary: (input) =>
+                visible ? Effect.succeed(makeSummary(input)) : Effect.fail(notFound()),
+              stack: () =>
+                Effect.fail(new PullRequestOperationError({ operation: "stack", detail: "flaky" })),
+            });
+
+            yield* Effect.gen(function* () {
+              // Fails at 12:00 and 12:01; the summary answers at 12:03 but its stack read fails.
+              const reactor = yield* startAndSweep(fixture);
+              yield* sweepAgain(fixture, reactor);
+              yield* sweepAgain(fixture, reactor);
+              visible = true;
+              yield* sweepAgain(fixture, reactor);
+              assert.strictEqual(callsFor(yield* Ref.get(fixture.summaryCalls), 719), 3);
+
+              // Hidden again at 12:04, so the next read is one minute later, not four.
+              visible = false;
+              yield* sweepAgain(fixture, reactor);
+              yield* sweepAgain(fixture, reactor);
+              assert.strictEqual(callsFor(yield* Ref.get(fixture.summaryCalls), 719), 5);
+            }).pipe(Effect.provide(fixture.layer));
+          }),
+        ),
+    );
+
     it.effect("starts again from the first step after the host answers", () =>
       Effect.scoped(
         Effect.gen(function* () {
