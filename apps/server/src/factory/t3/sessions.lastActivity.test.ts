@@ -41,7 +41,13 @@ const layerSessions = () =>
   );
 
 /** Appends an agent event of `threadId` that happened at `occurredAt`, as the event store writes one. */
-const event = (id: string, threadId: string, version: number, occurredAt: string) =>
+const event = (
+  id: string,
+  threadId: string,
+  version: number,
+  occurredAt: string,
+  applicationVersion = 2,
+) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`
@@ -51,7 +57,7 @@ const event = (id: string, threadId: string, version: number, occurredAt: string
       )
       VALUES (
         ${id}, 'thread', ${threadId}, ${version}, 'turn-item.updated', ${occurredAt},
-        'server', '{}', '{}', 2
+        'server', '{}', '{}', ${applicationVersion}
       )
     `;
   });
@@ -62,6 +68,8 @@ describe("FactorySessions.lastActivity", () => {
       yield* event("e1", "thread-1", 1, "2026-10-31T01:00:00.000Z");
       yield* event("e2", "thread-1", 2, "2026-10-31T01:05:00.000Z");
       yield* event("e3", "thread-2", 1, "2026-10-31T02:00:00.000Z");
+      // A legacy (V1) event on the same stream is not the agent's.
+      yield* event("e4", "thread-1", 3, "2026-10-31T03:00:00.000Z", 1);
       const sessions = yield* Sessions.FactorySessions;
       assert.strictEqual(
         yield* sessions.lastActivity("thread-1"),

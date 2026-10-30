@@ -2231,7 +2231,8 @@ describe("timeLimit", () => {
     Effect.gen(function* () {
       const triage = [STARTED[0]!, STARTED[1]!, moved("ready", "triage")];
       const rig = rigFor(triage);
-      rig.world.lastActivity = sessionsFailure("last-activity");
+      // A read would put minutes in the reason: none is made without a thread.
+      rig.world.lastActivity = T0;
       rig.clock.now = T0 + LIMIT_MS + 1;
       assert.deepStrictEqual(yield* timeLimit(rig.ctx, rig.run), {
         kind: "stopped",
@@ -2242,6 +2243,17 @@ describe("timeLimit", () => {
         { event: "stuck", data: { reason: TIME_LIMIT } },
       );
       assert.deepStrictEqual(rig.t3, []);
+    }),
+  );
+
+  it.effect("stops with the plain reason when the thread is already archived", () =>
+    Effect.gen(function* () {
+      // A stop retried after its archive: the archive is the thread's newest event, not the session's.
+      const rig = limitedRig();
+      rig.world.thread = { worktreePath: "/t3/wt", branch: "t3code/abc", archived: true };
+      rig.world.lastActivity = T0 + LIMIT_MS;
+      const elapsed = yield* stopAtTheLimit(rig);
+      assert.deepStrictEqual(linesOf(rig), limitEvents(elapsed, "t3code/abc"));
     }),
   );
 
