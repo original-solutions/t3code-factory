@@ -662,7 +662,7 @@ export const make = Effect.gen(function* () {
       yield* git.subscribePullRequestStateChanges,
     );
     yield* forkParked(
-      Stream.runForEach(stateChanges, refreshSync).pipe(
+      Stream.runForEach(stateChanges, requestSync).pipe(
         Effect.catchCause(logSkipped("pull request state change stream failed", {})),
       ),
     );
@@ -719,8 +719,8 @@ export const make = Effect.gen(function* () {
       return worker.enqueue("requested");
     });
 
-  // A refresh someone asked for, or a reader that saw the pull request, reads even a key the
-  // host stopped finding; the reactor's own requests above do not.
+  // A refresh a person asked for through the service reads even a key the host stopped finding.
+  // The reactor's own requests and state changes above do not.
   const refreshSync: PullRequestSyncReactor["Service"]["requestSync"] = (key) =>
     Effect.suspend(() => {
       notFound.refresh(threadPullRequestKeyOf(key));
@@ -742,9 +742,9 @@ export const layer = Layer.effect(PullRequestSyncReactor, make);
 const NOT_FOUND_FIRST_RETRY_MS = 60 * 1_000;
 const NOT_FOUND_MAX_RETRY_MS = 60 * 60 * 1_000;
 // After this many not-found answers in a row the key is unreachable: only `refreshSync` (a
-// requested refresh, or a reader that saw the pull request) reads it, and an answer clears the
-// mark. The reactor's own requests (a link change asks again for every link without a snapshot)
-// do not. Kept in memory, so a restart starts over.
+// person's refresh or pull request action) reads it, and an answer clears the mark. Link changes
+// and state changes do not, since a state change can be another environment's read. Kept in
+// memory, so a restart starts over.
 const NOT_FOUND_UNREACHABLE_AFTER = 3;
 
 const isPullRequestOperationError = Schema.is(PullRequestOperationError);

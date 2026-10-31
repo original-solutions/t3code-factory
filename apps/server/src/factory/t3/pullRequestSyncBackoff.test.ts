@@ -491,28 +491,8 @@ describe("pull request sync for a pull request the host cannot find or the crede
           // Any link change on the thread asks again for every link that has no snapshot yet.
           yield* linkChanged(fixture, reactor, link);
           yield* sweep(fixture, reactor, 60);
-
-          assert.strictEqual(yield* callsFor(fixture, 719), 3);
-          assert.strictEqual(skippedFor(fixture, 719).length, 3);
-        }),
-    );
-  });
-
-  it.effect("reads an unreachable key when a reader sees the pull request again", () => {
-    let visible = false;
-    return withReactor(
-      {
-        threads: [thread("hidden", [makeLink(719)])],
-        summary: (input) =>
-          visible ? Effect.succeed(makeSummary(input)) : Effect.fail(notFound()),
-      },
-      (fixture, reactor) =>
-        Effect.gen(function* () {
-          yield* sweep(fixture, reactor, 60);
-          assert.strictEqual(yield* callsFor(fixture, 719), 3);
-
-          // Access granted since: a detail read elsewhere reports the pull request's state.
-          visible = true;
+          // A state change can be another environment's read reported here, which says nothing
+          // about this server's credential.
           yield* Queue.offer(fixture.stateChanges, {
             host: "github.com",
             repository: "owner/repository",
@@ -521,11 +501,8 @@ describe("pull request sync for a pull request the host cannot find or the crede
           yield* Queue.take(fixture.snapshotReads);
           yield* reactor.drain;
 
-          assert.strictEqual(yield* callsFor(fixture, 719), 4);
-          assert.deepStrictEqual(
-            (yield* Ref.get(fixture.syncCommands)).map((command) => command.number),
-            [719],
-          );
+          assert.strictEqual(yield* callsFor(fixture, 719), 3);
+          assert.strictEqual(skippedFor(fixture, 719).length, 3);
         }),
     );
   });
