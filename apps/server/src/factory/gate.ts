@@ -32,6 +32,8 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_GIT_TIMEOUT_MS = 30_000;
 const DEFAULT_CHECKOUT_TIMEOUT_MS = 10 * 60 * 1000;
 const GIT_TAIL_BYTES = 1024 * 1024;
+/** Provision and gate commands load the host; at this niceness the server's event loop still gets the CPU. */
+const COMMAND_NICENESS = 10;
 /** The `gate_command` line of an attempt that ran no command because the head conflicts with the base. */
 export const MERGE_COMMAND = "softfac: merge the base branch into the head";
 
@@ -891,6 +893,7 @@ const runGate = (runner: Runner, input: GateInput): Effect.Effect<GateResult, Ga
                 shell: true,
                 cwd: dir,
                 timeoutMs: options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS,
+                niceness: COMMAND_NICENESS,
               })
               .pipe(
                 Effect.mapError(
