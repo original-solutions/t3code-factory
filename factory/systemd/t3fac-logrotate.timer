@@ -1,0 +1,9 @@
+[Unit]
+Description=Rotate the t3fac server log every 10 minutes
+
+[Timer]
+OnActiveSec=10s
+OnUnitActiveSec=10min
+
+[Install]
+WantedBy=timers.target

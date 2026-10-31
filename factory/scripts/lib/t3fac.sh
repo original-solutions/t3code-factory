@@ -1,17 +1,23 @@
-# Sourced by install.sh and rollback.sh: where versions live, the LaunchAgent jobs (the server,
-# the log rotator and the autodeploy timer), how to restart them and how to tell the server came up.
+# Sourced by install.sh and rollback.sh: where versions live, the jobs (the server, the log rotator
+# and the autodeploy timer; LaunchAgents on macOS, systemd user units on Linux), how to restart
+# them and how to tell the server came up.
+
+source "$(dirname "${BASH_SOURCE[0]}")/platform.sh"
 
 root="$HOME/.local/share/t3fac"
-label=io.github.rawphp.t3fac
-template="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../launchd" && pwd)/$label.plist"
-plist="$HOME/Library/LaunchAgents/$label.plist"
+label=$server_job
+# launchd/ holds the plists, systemd/ the units.
+templates="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/systemd"
+[[ $host_os != Darwin ]] || templates="$(dirname "$templates")/launchd"
+units="$HOME/.config/systemd/user"
 # The second job rotates $log on a timer, so a crash-looping server cannot outgrow the disk.
-logrotate_label=io.github.rawphp.t3fac.logrotate
+logrotate_label=$logrotate_job
 # The third runs autodeploy.sh on a timer, which installs origin/main when it moves.
-autodeploy_label=io.github.rawphp.t3fac.autodeploy
-log="$HOME/Library/Logs/t3fac/t3fac.log"
-# The log and port the plist template writes to and serves on; change them together. T3FAC_PORT
-# exists only so tests can point the health check at a stub listener; the plist still says 3876.
+autodeploy_label=$autodeploy_job
+log="$logs/t3fac.log"
+# The log and port the server's template writes to and serves on; change them together.
+# T3FAC_PORT exists only so tests can point the health check at a stub listener; the template still
+# says 3876.
 port=${T3FAC_PORT:-3876}
 
 source "$(dirname "${BASH_SOURCE[0]}")/lock.sh"
@@ -55,8 +61,8 @@ wait_unloaded() {
   return 1
 }
 
-# Writes plist $2 from template $1, filling in @HOME@.
-render_plist() {
+# Writes job file $2 from template $1, filling in @HOME@.
+render_template() {
   mkdir -p "$(dirname "$2")" && sed "s|@HOME@|$HOME|g" "$1" > "$2"
 }
 
@@ -72,22 +78,42 @@ reload_job() {
   launchctl bootstrap "gui/$uid" "$file"
 }
 
+# Writes job $1's files from their templates and (re)starts it. A LaunchAgent is booted out and
+# back in. A systemd job's units are rewritten and reread, then its timer, or the server's service
+# when it has none, is enabled and restarted. Returns non-zero on any failure, even where set -e
+# is off.
+load_job() {
+  local job=$1 unit
+  if [[ $host_os == Darwin ]]; then
+    render_template "$templates/$job.plist" "$HOME/Library/LaunchAgents/$job.plist" &&
+      reload_job "$job" "$HOME/Library/LaunchAgents/$job.plist"
+    return
+  fi
+  unit=$job.service
+  render_template "$templates/$job.service" "$units/$job.service" || return 1
+  if [[ -f $templates/$job.timer ]]; then
+    render_template "$templates/$job.timer" "$units/$job.timer" || return 1
+    unit=$job.timer
+  fi
+  systemctl --user daemon-reload &&
+    systemctl --user enable --quiet "$unit" &&
+    systemctl --user restart "$unit"
+}
+
 # The inode of file $1, or nothing when it is missing. rotate-log.sh moves a fresh copy onto
 # $log.1, so a different inode there means a rotation has happened since it was noted.
 file_id() {
   { ls -di "$1" 2> /dev/null || true; } | awk '{print $1}'
 }
 
-# Writes the server's plist from the template, boots the job out when it is loaded, waits for
-# it to unload and bootstraps it. Notes the log size and $log.1's inode first (log_before,
-# rotated_before) so wait_healthy reads only what the restarted job writes. Leaves the logrotate
-# job alone.
+# Restarts the server's job with load_job. Notes the log size and $log.1's inode first
+# (log_before, rotated_before) so wait_healthy reads only what the restarted job writes. Leaves the
+# timer jobs alone.
 restart_job() {
   log_before=$(($(wc -c 2> /dev/null < "$log" || echo 0)))
   rotated_before=$(file_id "$log.1")
-  mkdir -p "$HOME/Library/Logs/t3fac" "$HOME/.config/t3fac"
-  render_plist "$template" "$plist"
-  reload_job "$label" "$plist"
+  mkdir -p "$logs" "$HOME/.config/t3fac"
+  load_job "$label"
 }
 
 # Copies file $1, relative to this script directory, to the same path under $root, which outlives
@@ -110,32 +136,30 @@ install_script() {
   fi
 }
 
-# Installs script $1 with install_script, writes job $2's plist from its template and reloads that
-# job the way restart_job does the server's. Call it before restart_job so the server's restart
-# stays the last launchd action before wait_healthy. A timer job is best effort: callers run it
+# Installs script $1 with install_script and loads job $2 with load_job. Call it before restart_job
+# so the server's restart stays the last job action before wait_healthy. A timer job is best effort: callers run it
 # through restart_timer_jobs_or_warn, so a failure must never stop the server restart. set -e is
 # off for the whole body in that context, hence the && chain: any failing step makes the function
 # return non-zero.
 # T3FAC_SKIP_RELOAD=<label> copies the script but leaves that job loaded as it is: autodeploy.sh
 # sets it for its own job, since booting it out would kill the deploy that called install.sh. The
-# new script takes effect on the job's next tick; a changed plist waits for the next install run
+# new script takes effect on the job's next tick; a changed template waits for the next install run
 # by hand.
 restart_timer_job() {
   local script=$1 job=$2
-  local job_plist="$HOME/Library/LaunchAgents/$job.plist"
-  mkdir -p "$HOME/Library/Logs/t3fac" || return 1
+  mkdir -p "$logs" || return 1
   install_script "$script" || return 1
   [[ ${T3FAC_SKIP_RELOAD:-} != "$job" ]] || return 0
-  render_plist "$(dirname "$template")/$job.plist" "$job_plist" &&
-    reload_job "$job" "$job_plist"
+  load_job "$job"
 }
 
 # The best-effort wrapper install.sh and rollback.sh call: the log rotator, then autodeploy, which
-# sources lib/lock.sh from beside it.
+# sources lib/lock.sh and lib/platform.sh from beside it.
 restart_timer_jobs_or_warn() {
   restart_timer_job rotate-log.sh "$logrotate_label" ||
     echo "warning: could not reload $logrotate_label; log rotation is not running" >&2
-  { install_script lib/lock.sh && restart_timer_job autodeploy.sh "$autodeploy_label"; } ||
+  { install_script lib/lock.sh && install_script lib/platform.sh &&
+    restart_timer_job autodeploy.sh "$autodeploy_label"; } ||
     echo "warning: could not reload $autodeploy_label; autodeploy is not running" >&2
 }
 

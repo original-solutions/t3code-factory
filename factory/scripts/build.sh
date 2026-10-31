@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Builds the fork with upstream's own build scripts, smoke-tests the archive and only then
-# moves it to release/t3fac-<version>-darwin-arm64.tar.gz. Refuses a tree with uncommitted
-# changes, so the version always names exactly what was built. `build.sh --print-version`
-# only prints the version and `build.sh --print-node-version` only the Node version the SEA
-# build uses. T3FAC_SMOKE_TIMEOUT sets the smoke test's deadline in seconds (60).
+# moves it to release/t3fac-<version>-<os>-<arch>.tar.gz, the host's (lib/platform.sh). Refuses
+# a tree with uncommitted changes, so the version always names exactly what was built.
+# `build.sh --print-version` only prints the version and `build.sh --print-node-version` only the
+# Node version the SEA build uses. T3FAC_SMOKE_TIMEOUT sets the smoke test's deadline in seconds
+# (60).
 set -euo pipefail
 
 root=${T3FAC_REPO_ROOT:-$(git rev-parse --show-toplevel)}
+source "$(dirname "${BASH_SOURCE[0]}")/lib/platform.sh"
 cd "$root"
 
 read -r tag _sha < factory/UPSTREAM
@@ -81,13 +83,13 @@ mkdir -p "$cargo_home"
 VP_NODE_VERSION="$sea_node" vp node apps/server/scripts/cli.ts build-exe
 
 stage=$(mktemp -d)
-mkdir -p "$stage/monitor/darwin-arm64" "$stage/out"
-cp native/resource-monitor/target/release/t3-resource-monitor "$stage/monitor/darwin-arm64/t3-resource-monitor"
+mkdir -p "$stage/monitor/$archive_suffix" "$stage/out"
+cp native/resource-monitor/target/release/t3-resource-monitor "$stage/monitor/$archive_suffix/t3-resource-monitor"
 VP_NODE_VERSION="$sea_node" vp node scripts/build-cli-archive.ts \
-  --platform mac --arch arm64 --version "$version" \
+  --platform "$archive_platform" --arch "$archive_arch" --version "$version" \
   --resource-monitor-dir "$stage/monitor" --output-dir "$stage/out"
 
-built="$stage/out/t3-${version}-darwin-arm64.tar.gz"
+built="$stage/out/t3-${version}-${archive_suffix}.tar.gz"
 
 # Smoke test: start the built server on a free port with a throwaway HOME and base dir.
 smoke_timeout=${T3FAC_SMOKE_TIMEOUT:-60}
@@ -130,7 +132,7 @@ grep -q 'no factory config' "$smoke/server.log" || fail 'server log does not hol
 echo 'smoke: log holds "no factory config"'
 
 mkdir -p release
-archive="release/t3fac-${version}-darwin-arm64.tar.gz"
+archive="release/t3fac-${version}-${archive_suffix}.tar.gz"
 mv "$built" "$archive"
 
 cleanup

@@ -30,15 +30,15 @@ Fails when a committed file differs from the upstream commit in `factory/UPSTREA
 
 `build.sh`, then `install.sh` on the archive.
 
-|                |                                                                                       |
-| -------------- | ------------------------------------------------------------------------------------- |
-| Usage          | `factory/scripts/deploy.sh [--rebuild] [--build-only]`                                |
-| `--rebuild`    | Build even when `release/t3fac-<version>-darwin-arm64.tar.gz` exists for this commit. |
-| `--build-only` | Stop after the build.                                                                 |
-| 0              | Installed, or built with `--build-only`.                                              |
-| 1              | Uncommitted changes; or the build left no archive.                                    |
-| 2              | Unknown argument.                                                                     |
-| other          | `build.sh` or `install.sh` failed with that code.                                     |
+|                |                                                                                      |
+| -------------- | ------------------------------------------------------------------------------------ |
+| Usage          | `factory/scripts/deploy.sh [--rebuild] [--build-only]`                               |
+| `--rebuild`    | Build even when `release/t3fac-<version>-<os>-<arch>.tar.gz` exists for this commit. |
+| `--build-only` | Stop after the build.                                                                |
+| 0              | Installed, or built with `--build-only`.                                             |
+| 1              | Uncommitted changes; or the build left no archive.                                   |
+| 2              | Unknown argument.                                                                    |
+| other          | `build.sh` or `install.sh` failed with that code.                                    |
 
 ## build.sh
 
@@ -47,7 +47,7 @@ Builds the server archive and smoke-tests it.
 |         |                                                                                                                                          |
 | ------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | Usage   | `factory/scripts/build.sh [--print-version \| --print-node-version]`                                                                     |
-| Output  | `release/t3fac-<version>-darwin-arm64.tar.gz`; its absolute path is the last line printed                                                |
+| Output  | `release/t3fac-<version>-<os>-<arch>.tar.gz`; its absolute path is the last line printed                                                 |
 | Version | `<upstream nightly version>+fac.<short sha>`; the `apps/server/package.json` version when `factory/UPSTREAM` names no nightly tag        |
 | Env     | `T3FAC_REPO_ROOT` (default: git top level), `T3FAC_SMOKE_TIMEOUT` (default 60 seconds)                                                   |
 | Needs   | `node`, `vp`, stable Rust (`cargo`)                                                                                                      |
@@ -59,7 +59,7 @@ Builds the server archive and smoke-tests it.
 
 |         |                                                                                                                                                                                                                                                                                                                                       |
 | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Usage   | `factory/scripts/install.sh <t3fac-<version>-darwin-arm64.tar.gz>`                                                                                                                                                                                                                                                                    |
+| Usage   | `factory/scripts/install.sh <t3fac-<version>-<os>-<arch>.tar.gz>`                                                                                                                                                                                                                                                                     |
 | Does    | Unpacks to `~/.local/share/t3fac/versions/<version>`, sets `previous` to the old `current`, points `current` at the new version, reloads `io.github.rawphp.t3fac.logrotate` and `io.github.rawphp.t3fac.autodeploy`, restarts `io.github.rawphp.t3fac`, waits for health.                                                             |
 | Healthy | Port accepts connections and the log gains `factory started` or `no factory config` after the restart.                                                                                                                                                                                                                                |
 | Env     | `T3FAC_HEALTH_WAIT` (default 90 seconds), `T3FAC_UNLOAD_WAIT` (default 10 seconds)                                                                                                                                                                                                                                                    |

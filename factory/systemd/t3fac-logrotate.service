@@ -1,0 +1,10 @@
+# Runs the copy of factory/scripts/rotate-log.sh that install.sh puts in ~/.local/share/t3fac. To
+# change the limits, add <max_mb> and <keep> after the log path (defaults 20 and 5).
+[Unit]
+Description=Rotate the t3fac server log
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash @HOME@/.local/share/t3fac/rotate-log.sh @HOME@/.local/state/t3fac/t3fac.log
+StandardOutput=append:@HOME@/.local/state/t3fac/logrotate.log
+StandardError=append:@HOME@/.local/state/t3fac/logrotate.log

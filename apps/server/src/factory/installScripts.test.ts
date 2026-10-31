@@ -59,6 +59,7 @@ const logPath = () => NodePath.join(home, "Library/Logs/t3fac/t3fac.log");
 const run = (script: string, ...args: Array<string>) => runWith({}, script, ...args);
 
 const scriptEnv = (extraEnv: Record<string, string>) => ({
+  T3FAC_PLATFORM: "Darwin",
   HOME: home,
   PATH: `${bin}:/usr/bin:/bin`,
   LAUNCHCTL_LOG: launchctlLog,
@@ -85,16 +86,20 @@ const runWith = (extraEnv: Record<string, string>, script: string, ...args: Arra
   };
 };
 
-const makeArchive = (version: string, options: { binary?: boolean; label?: string } = {}) => {
+const makeArchive = (
+  version: string,
+  options: { binary?: boolean; label?: string; suffix?: string } = {},
+) => {
   const base = options.label ? NodePath.join(tmp, options.label) : tmp;
-  const dir = `t3-${version}-darwin-arm64`;
+  const suffix = options.suffix ?? "darwin-arm64";
+  const dir = `t3-${version}-${suffix}`;
   const src = NodePath.join(base, "src", dir);
   NodeFS.mkdirSync(NodePath.join(src, "client"), { recursive: true });
   if (options.binary !== false) {
     NodeFS.writeFileSync(NodePath.join(src, "t3"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   }
   NodeFS.writeFileSync(NodePath.join(src, "client/index.html"), "<html></html>\n");
-  const archive = NodePath.join(base, `t3fac-${version}-darwin-arm64.tar.gz`);
+  const archive = NodePath.join(base, `t3fac-${version}-${suffix}.tar.gz`);
   const result = NodeChildProcess.spawnSync(
     "tar",
     ["-czf", archive, "-C", NodePath.join(base, "src"), dir],
@@ -910,6 +915,119 @@ describe("install.sh and rollback.sh health check", () => {
   });
 });
 
+// On Linux the jobs are systemd user units. The stub logs each call; restarting the server's unit
+// writes the start line when `current` is one of SYSTEMCTL_HEALTHY, as the launchd stub does.
+describe("install.sh and rollback.sh on Linux", () => {
+  // lib/platform.sh names the host's arch from `uname -m`.
+  const machine = NodeChildProcess.spawnSync("uname", ["-m"], { encoding: "utf8" }).stdout.trim();
+  const suffix = `linux-${machine === "aarch64" || machine === "arm64" ? "arm64" : "x64"}`;
+  const units = () => NodePath.join(home, ".config/systemd/user");
+  const linuxLog = () => NodePath.join(home, ".local/state/t3fac/t3fac.log");
+  let systemctlLog: string;
+
+  const runLinux = (extraEnv: Record<string, string>, script: string, ...args: Array<string>) => {
+    NodeFS.writeFileSync(systemctlLog, "");
+    const result = NodeChildProcess.spawnSync("bash", [NodePath.join(scripts, script), ...args], {
+      env: scriptEnv({
+        T3FAC_PLATFORM: "Linux",
+        SYSTEMCTL_LOG: systemctlLog,
+        SYSTEMCTL_HEALTHY: `versions/${v1}`,
+        ...extraEnv,
+      }),
+      encoding: "utf8",
+    });
+    return {
+      status: result.status,
+      output: result.stdout + result.stderr,
+      calls: NodeFS.readFileSync(systemctlLog, "utf8").split("\n").filter(Boolean),
+    };
+  };
+
+  beforeEach(() => {
+    setupSandbox();
+    systemctlLog = NodePath.join(tmp, "systemctl.log");
+    NodeFS.writeFileSync(
+      NodePath.join(bin, "systemctl"),
+      [
+        "#!/bin/sh",
+        'echo "$@" >> "$SYSTEMCTL_LOG"',
+        'if [ "$2" = restart ] && [ "$3" = t3fac.service ]; then',
+        '  target=$(readlink "$HOME/.local/share/t3fac/current")',
+        "  for entry in $SYSTEMCTL_HEALTHY; do",
+        '    if [ "$entry" = "$target" ]; then',
+        '      mkdir -p "$HOME/.local/state/t3fac"',
+        '      echo "factory started" >> "$HOME/.local/state/t3fac/t3fac.log"',
+        "    fi",
+        "  done",
+        "fi",
+        "exit 0",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    for (const version of [v1, v2]) archives[version] = makeArchive(version, { suffix });
+  });
+
+  afterEach(() => {
+    NodeFS.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("writes the units and restarts the timers, then the server last", () => {
+    const result = runLinux({}, "install.sh", archives[v1]!);
+    expect(result.status, result.output).toBe(0);
+    expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v1}`);
+
+    const server = NodeFS.readFileSync(NodePath.join(units(), "t3fac.service"), "utf8");
+    expect(server).not.toContain("@HOME@");
+    for (const part of [
+      // `$$` reaches sh as `$`, so T3FAC_LAUNCH_PATH is the PATH after the env file.
+      `export T3FAC_LAUNCH_PATH="$$PATH"; exec "${home}/.local/share/t3fac/current/t3" serve --base-dir "${home}/.config/t3fac" --port 3876'`,
+      `StandardOutput=append:${linuxLog()}`,
+    ]) {
+      expect(server).toContain(part);
+    }
+    for (const unit of ["t3fac-logrotate", "t3fac-autodeploy"]) {
+      expect(NodeFS.existsSync(NodePath.join(units(), `${unit}.service`))).toBe(true);
+      expect(NodeFS.existsSync(NodePath.join(units(), `${unit}.timer`))).toBe(true);
+    }
+    // autodeploy.sh sources both from beside itself.
+    for (const lib of ["lib/lock.sh", "lib/platform.sh"]) {
+      expect(NodeFS.readFileSync(NodePath.join(root(), lib), "utf8")).toBe(
+        NodeFS.readFileSync(NodePath.join(scripts, lib), "utf8"),
+      );
+    }
+
+    expect(result.calls.filter((c) => c.includes(" restart "))).toEqual([
+      "--user restart t3fac-logrotate.timer",
+      "--user restart t3fac-autodeploy.timer",
+      "--user restart t3fac.service",
+    ]);
+    expect(result.calls).toContain("--user enable --quiet t3fac.service");
+  });
+
+  it("leaves the autodeploy timer alone when autodeploy.sh runs the install", () => {
+    const result = runLinux({ T3FAC_SKIP_RELOAD: "t3fac-autodeploy" }, "install.sh", archives[v1]!);
+    expect(result.status, result.output).toBe(0);
+    expect(result.calls.filter((c) => c.includes("t3fac-autodeploy"))).toEqual([]);
+    expect(result.calls.at(-1)).toBe("--user restart t3fac.service");
+  });
+
+  it("rolls back an unhealthy install by restarting the server on the previous version", () => {
+    expect(runLinux({}, "install.sh", archives[v1]!).status).toBe(0);
+    const result = runLinux({}, "install.sh", archives[v2]!);
+    expect(result.status).toBe(1);
+    expect(result.output).toContain(`rolled back to ${v1}`);
+    expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v1}`);
+    expect(result.calls.filter((c) => c === "--user restart t3fac.service")).toHaveLength(2);
+  });
+
+  it("refuses an archive built for macOS", () => {
+    const result = runLinux({}, "install.sh", makeArchive(v1));
+    expect(result.status).toBe(1);
+    expect(result.output).toContain(`want t3fac-<version>-${suffix}.tar.gz`);
+  });
+});
+
 describe("build.sh --print-version", () => {
   let repo: string;
 
@@ -1102,6 +1220,7 @@ describe("build.sh smoke test", () => {
         PATH: `${NodePath.join(sandbox, "bin")}:${process.env.PATH}`,
         TMPDIR: tmpdir,
         T3FAC_REPO_ROOT: repo,
+        T3FAC_PLATFORM: "Darwin",
         FAKE_WORK: NodePath.join(sandbox, "work"),
         FAKE_T3: NodePath.join(sandbox, "t3"),
         FAKE_T3_MODE: mode,

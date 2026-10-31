@@ -1,0 +1,20 @@
+# The systemd user unit lib/t3fac.sh writes to ~/.config/systemd/user on Linux, the counterpart of
+# launchd/io.github.rawphp.t3fac.plist. The --port and log path are repeated in lib/t3fac.sh and
+# lib/platform.sh for the health check. `$$` is a literal `$` for sh: systemd would otherwise
+# expand $PATH itself, before ~/.config/t3fac/env is sourced.
+[Unit]
+Description=t3fac factory server
+
+[Service]
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:@HOME@/.local/bin:@HOME@/.local/share/vite-plus/bin
+Environment=GH_CONFIG_DIR=@HOME@/.config/t3fac/gh
+ExecStart=/bin/sh -c 'if [ -f "@HOME@/.config/t3fac/env" ]; then . "@HOME@/.config/t3fac/env"; fi; export T3FAC_LAUNCH_PATH="$$PATH"; exec "@HOME@/.local/share/t3fac/current/t3" serve --base-dir "@HOME@/.config/t3fac" --port 3876'
+WorkingDirectory=@HOME@
+Restart=always
+RestartSec=10
+# append: opens with O_APPEND, which rotate-log.sh's copy and truncate relies on.
+StandardOutput=append:@HOME@/.local/state/t3fac/t3fac.log
+StandardError=append:@HOME@/.local/state/t3fac/t3fac.log
+
+[Install]
+WantedBy=default.target

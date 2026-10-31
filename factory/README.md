@@ -29,7 +29,7 @@ vp i
 factory/scripts/check.sh
 ```
 
-Build and install the darwin-arm64 binary on this Mac (LaunchAgent `io.github.rawphp.t3fac`, port 3876) in one step:
+Build and install the binary on this machine (LaunchAgent `io.github.rawphp.t3fac` on macOS, systemd user unit `t3fac.service` on Linux; port 3876) in one step. [Install and run](site/guide/install.md#on-linux) maps the macOS names below to their Linux ones:
 
 ```sh
 factory/scripts/deploy.sh                     # build.sh then install.sh; reuses release/ for this commit, --rebuild to build again, --build-only to stop before install
@@ -40,7 +40,7 @@ The build needs current stable Rust, the toolchain upstream's CI uses; `rustup u
 The steps on their own:
 
 ```sh
-factory/scripts/build.sh                      # clean tree only: build, smoke test, then -> release/t3fac-<version>-darwin-arm64.tar.gz
+factory/scripts/build.sh                      # clean tree only: build, smoke test, then -> release/t3fac-<version>-<os>-<arch>.tar.gz
 factory/scripts/install.sh <archive>          # unpack, point `current` at it, restart the job, wait for it to come up, roll back if it does not
 factory/scripts/rollback.sh                   # point `current` at the previous version, restart the job and check it comes up
 ```

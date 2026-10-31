@@ -150,6 +150,7 @@ const runAutodeploy = (extraEnv: Record<string, string> = {}) =>
     const child = NodeChildProcess.spawn("bash", [script], {
       stdio: ["pipe", "pipe", "pipe", "pipe"],
       env: {
+        T3FAC_PLATFORM: "Darwin",
         HOME: home,
         PATH: "/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin",
         DEPLOY_LOG: deployLog,
@@ -1197,7 +1198,14 @@ describe("autodeploy.sh pruning old versions", () => {
       const child = NodeChildProcess.spawn(
         "bash",
         [NodePath.join(NodePath.dirname(script), "rollback.sh")],
-        { env: { HOME: home, PATH: `${bin}:/usr/bin:/bin`, T3FAC_PORT: String(port) } },
+        {
+          env: {
+            T3FAC_PLATFORM: "Darwin",
+            HOME: home,
+            PATH: `${bin}:/usr/bin:/bin`,
+            T3FAC_PORT: String(port),
+          },
+        },
       );
       let output = "";
       child.stdout.on("data", (chunk) => (output += chunk));

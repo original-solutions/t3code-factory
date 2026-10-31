@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Rotates a log file that launchd keeps appending to. Usage: rotate-log.sh <file> [max_mb] [keep]
+# Rotates a log file that launchd or systemd keeps appending to. Usage: rotate-log.sh <file> [max_mb] [keep]
 # (defaults 20 and 5). Does nothing, silently, when the file is missing or no bigger than max_mb.
 # Over it, copies <file> aside, deletes anything numbered <keep> or higher, shifts <file>.1 ..
 # <file>.<keep-1> up one place, moves the copy to <file>.1, truncates <file> in place and gzips
 # .2 and older. When the copy fails (a full disk, say) it exits 1 having moved, deleted and
 # truncated nothing, and the next run tries again.
 #
-# It copies and truncates rather than renaming because launchd holds the file open as the
-# job's StandardOutPath and never reopens it. That is safe only because launchd opens it with
-# O_APPEND: the writer's next write lands at the new end of the file, offset 0. Lines written
-# between the copy and the truncate are lost; a few at most.
+# It copies and truncates rather than renaming because launchd (StandardOutPath) and systemd
+# (StandardOutput=append:) hold the file open and never reopen it. That is safe only because both
+# open it with O_APPEND: the writer's next write lands at the new end of the file, offset 0. Lines
+# written between the copy and the truncate are lost; a few at most.
 set -euo pipefail
 
 file=${1:-}
