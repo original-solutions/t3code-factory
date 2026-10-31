@@ -406,6 +406,7 @@ const IssueSummaries = Schema.Array(
     number: Schema.Number,
     title: Schema.String,
     assignees: Schema.Array(Login),
+    labels: Schema.Array(Schema.Struct({ name: Schema.String })),
   }),
 );
 
@@ -668,6 +669,8 @@ export interface IssueSummary {
   readonly number: number;
   readonly title: string;
   readonly assignees: ReadonlyArray<string>;
+  /** The label names. */
+  readonly labels: ReadonlyArray<string>;
 }
 
 /** `cut` is set when the listing had more than {@link LIST_LIMIT} issues. */
@@ -1183,7 +1186,7 @@ export const makeGitHub = (options: GitHubOptions) => {
       "--limit",
       String(LIST_LIMIT + 1),
       "--json",
-      "number,title,assignees",
+      "number,title,assignees,labels",
     ];
     const raw = yield* ghJson(args, IssueSummaries, "a JSON array of issues");
     return {
@@ -1191,6 +1194,7 @@ export const makeGitHub = (options: GitHubOptions) => {
         number: item.number,
         title: item.title,
         assignees: item.assignees.map((assignee) => assignee.login),
+        labels: item.labels.map((label) => label.name),
       })),
       cut: raw.length > LIST_LIMIT,
     };

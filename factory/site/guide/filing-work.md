@@ -51,19 +51,19 @@ An instructor is a GitHub login listed under `instructors` in the repo's `.dw/co
 
 An issue carries one `factory:*` label at a time. People set two of them; the factory sets the rest.
 
-| Label                | Set by                          | Meaning                                                                                                                                             |
-| -------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `factory:proposed`   | a person, a bot, or the factory | Parked. The factory ignores it. It moves an issue here when it refuses to start one, with a comment saying why.                                     |
-| `factory:ready`      | an instructor                   | Build this. The factory claims it on its next pass, unless someone is assigned, a dependency is open, claims are paused or every run slot is taken. |
-| `factory:triage`     | the factory                     | Claimed. The issue is assigned to the factory's login and a session is being launched.                                                              |
-| `factory:building`   | the factory                     | A session is building it.                                                                                                                           |
-| `factory:needs-info` | the factory                     | The session asked questions, posted as a comment. The issue is unassigned.                                                                          |
-| `factory:pr-open`    | the factory                     | A pull request passed the gate and is ready for review.                                                                                             |
-| `factory:stuck`      | the factory                     | The factory gave up and said why in a comment. The issue is unassigned.                                                                             |
+| Label                | Set by                          | Meaning                                                                                                                                                                         |
+| -------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `factory:proposed`   | a person, a bot, or the factory | Parked. The factory ignores it. It moves an issue here when it refuses to start one, with a comment saying why.                                                                 |
+| `factory:ready`      | an instructor                   | Build this. The factory claims it on its next pass, unless someone is assigned, it is labelled `postponed`, a dependency is open, claims are paused or every run slot is taken. |
+| `factory:triage`     | the factory                     | Claimed. The issue is assigned to the factory's login and a session is being launched.                                                                                          |
+| `factory:building`   | the factory                     | A session is building it.                                                                                                                                                       |
+| `factory:needs-info` | the factory                     | The session asked questions, posted as a comment. The issue is unassigned.                                                                                                      |
+| `factory:pr-open`    | the factory                     | A pull request passed the gate and is ready for review.                                                                                                                         |
+| `factory:stuck`      | the factory                     | The factory gave up and said why in a comment. The issue is unassigned.                                                                                                         |
 
 To start again after `needs-info` or `stuck`, an instructor sets `factory:ready` again. Each time is a new run.
 
-Don't assign the issue to anyone if you want the factory to take it. An assigned `factory:ready` issue is skipped.
+Don't assign the issue to anyone if you want the factory to take it. An assigned `factory:ready` issue is skipped. A `factory:ready` issue labelled `postponed` is skipped too, until the label is removed; a claim or run already in progress is not stopped.
 
 ## Dependency links
 

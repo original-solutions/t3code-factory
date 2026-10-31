@@ -974,16 +974,28 @@ describe("liveWorld", () => {
     }),
   );
 
-  it.effect("a ready issue anyone is assigned to is not listed", () =>
-    Effect.gen(function* () {
-      const { process } = ghWith((args) =>
-        isList(args, "factory:ready")
-          ? '[{"number":3,"title":"c","assignees":[]},{"number":2,"title":"b","assignees":[{"login":"eve"}]},{"number":1,"title":"a","assignees":[]}]'
-          : null,
-      );
-      const listing = yield* worldOf(process).readyIssues(repo);
-      assert.deepStrictEqual(listing, { items: [1, 3], cut: false });
-    }),
+  it.effect(
+    "a ready issue anyone is assigned to is not listed, and each one keeps its labels",
+    () =>
+      Effect.gen(function* () {
+        const { process } = ghWith((args) =>
+          isList(args, "factory:ready")
+            ? JSON.stringify([
+                { number: 3, title: "c", assignees: [], labels: [{ name: "Postponed" }] },
+                { number: 2, title: "b", assignees: [{ login: "eve" }], labels: [] },
+                { number: 1, title: "a", assignees: [], labels: [] },
+              ])
+            : null,
+        );
+        const listing = yield* worldOf(process).readyIssues(repo);
+        assert.deepStrictEqual(listing, {
+          items: [
+            { number: 1, labels: [] },
+            { number: 3, labels: ["Postponed"] },
+          ],
+          cut: false,
+        });
+      }),
   );
 
   it.effect(
@@ -993,10 +1005,15 @@ describe("liveWorld", () => {
         const { process } = ghWith((args) =>
           isList(args, "factory:triage")
             ? JSON.stringify([
-                { number: 4, title: "d", assignees: [{ login: "RawPhp" }] },
-                { number: 5, title: "e", assignees: [{ login: "rawphp" }, { login: "eve" }] },
-                { number: 6, title: "f", assignees: [{ login: "eve" }] },
-                { number: 7, title: "g", assignees: [] },
+                { number: 4, title: "d", assignees: [{ login: "RawPhp" }], labels: [] },
+                {
+                  number: 5,
+                  title: "e",
+                  assignees: [{ login: "rawphp" }, { login: "eve" }],
+                  labels: [],
+                },
+                { number: 6, title: "f", assignees: [{ login: "eve" }], labels: [] },
+                { number: 7, title: "g", assignees: [], labels: [] },
               ])
             : null,
         );

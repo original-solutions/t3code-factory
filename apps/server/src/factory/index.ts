@@ -186,12 +186,12 @@ const asTrackerPassError = (error: GitHubError): PassError => ({
 
 const byNumber = (a: number, b: number) => a - b;
 
-/** The numbers of the issues nobody is assigned to, by number. */
+/** The issues nobody is assigned to, with their label names, by number. */
 const unassignedByNumber = (items: ReadonlyArray<IssueSummary>) =>
   items
     .filter((item) => item.assignees.length === 0)
-    .map((item) => item.number)
-    .sort(byNumber);
+    .map((item) => ({ number: item.number, labels: item.labels }))
+    .sort((a, b) => byNumber(a.number, b.number));
 
 /** The numbers of the issues `user` is the only assignee of, by number. */
 const assignedOnlyTo = (items: ReadonlyArray<IssueSummary>, user: string) =>

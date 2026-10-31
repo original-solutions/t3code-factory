@@ -19,15 +19,15 @@
 
 One `factory:*` label at a time. Matched exactly, case-sensitive.
 
-| Label                | Set by               | Colour   | Factory action                                                                |
-| -------------------- | -------------------- | -------- | ----------------------------------------------------------------------------- |
-| `factory:proposed`   | person, bot, factory | `c5def5` | None. Refused approvals land here.                                            |
-| `factory:ready`      | instructor           | `0e8a16` | Claim on next pass if unassigned, approved, unblocked, not paused, slot free. |
-| `factory:triage`     | factory              | `fbca04` | Assigned to the factory login; session launching.                             |
-| `factory:building`   | factory              | `1d76db` | Session running; instructor comments and edits forwarded.                     |
-| `factory:needs-info` | factory              | `d93f0b` | Questions posted; issue unassigned; run finished.                             |
-| `factory:pr-open`    | factory              | `5319e7` | PR passed the gate and is ready; instructor feedback relaunches.              |
-| `factory:stuck`      | factory              | `b60205` | Reason posted; issue unassigned; run finished.                                |
+| Label                | Set by               | Colour   | Factory action                                                                               |
+| -------------------- | -------------------- | -------- | -------------------------------------------------------------------------------------------- |
+| `factory:proposed`   | person, bot, factory | `c5def5` | None. Refused approvals land here.                                                           |
+| `factory:ready`      | instructor           | `0e8a16` | Claim on next pass if unassigned, not postponed, approved, unblocked, not paused, slot free. |
+| `factory:triage`     | factory              | `fbca04` | Assigned to the factory login; session launching.                                            |
+| `factory:building`   | factory              | `1d76db` | Session running; instructor comments and edits forwarded.                                    |
+| `factory:needs-info` | factory              | `d93f0b` | Questions posted; issue unassigned; run finished.                                            |
+| `factory:pr-open`    | factory              | `5319e7` | PR passed the gate and is ready; instructor feedback relaunches.                             |
+| `factory:stuck`      | factory              | `b60205` | Reason posted; issue unassigned; run finished.                                               |
 
 Restart from `needs-info` or `stuck`: an instructor sets `factory:ready`. That is a new run.
 
@@ -35,13 +35,14 @@ Restart from `needs-info` or `stuck`: an instructor sets `factory:ready`. That i
 
 A claim needs all of:
 
-| Rule                                                                                                             | Failing it                                     |
-| ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| The latest `factory:ready` label event was applied by a login in `instructors` (case-insensitive), of type User. | Moved to `factory:proposed` with a comment.    |
-| No body edit or title change by a non-instructor at or after that label event.                                   | Moved to `factory:proposed` with a comment.    |
-| The edit history is short enough to judge.                                                                       | Moved to `factory:proposed`; file a new issue. |
-| No assignee.                                                                                                     | Skipped.                                       |
-| Issue open.                                                                                                      | Skipped.                                       |
+| Rule                                                                                                             | Failing it                                                                    |
+| ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| The latest `factory:ready` label event was applied by a login in `instructors` (case-insensitive), of type User. | Moved to `factory:proposed` with a comment.                                   |
+| No body edit or title change by a non-instructor at or after that label event.                                   | Moved to `factory:proposed` with a comment.                                   |
+| The edit history is short enough to judge.                                                                       | Moved to `factory:proposed`; file a new issue.                                |
+| No assignee.                                                                                                     | Skipped.                                                                      |
+| No `postponed` label (any case).                                                                                 | Skipped; `claim_skipped` reason `postponed`; nothing is written to the issue. |
+| Issue open.                                                                                                      | Skipped.                                                                      |
 
 ## Dependencies
 

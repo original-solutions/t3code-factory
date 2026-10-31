@@ -149,6 +149,8 @@ class Fake implements PassWorld {
   runsError = false;
   ready: Answers<Array<number>> = {};
   readyCut: Array<string> = [];
+  /** The label names a ready issue is listed with, by `<repo>#<n>`; none when absent. */
+  labels: Record<string, Array<string>> = {};
   triage: Answers<Array<number>> = {};
   triageCut: Array<string> = [];
   unassigned: Answers<Array<{ issue: number; state: State }>> = {};
@@ -344,8 +346,17 @@ class Fake implements PassWorld {
   }
 
   readyIssues(repo: Repo) {
-    this.calls.push(`ready ${repo.watched.repo}`);
-    return this.listing(this.ready, this.readyCut, repo);
+    const name = repo.watched.repo;
+    this.calls.push(`ready ${name}`);
+    const found = this.ready[name];
+    if (found === "error") return Effect.fail(trackerFailure());
+    return Effect.succeed({
+      items: (found ?? []).map((number) => ({
+        number,
+        labels: this.labels[`${name}#${number}`] ?? [],
+      })),
+      cut: this.readyCut.includes(name),
+    });
   }
 
   triageIssues(repo: Repo) {
@@ -2327,6 +2338,106 @@ describe("a repo whose factory.owner is another machine", () => {
       const { lines } = yield* pass(fake, [REPO], 5);
       const line = runLine(lines, "not owner:");
       assert.ok(!/[\u0000-\u001f\u007f]/.test(line), JSON.stringify(line));
+    }),
+  );
+});
+
+describe("issues labelled postponed", () => {
+  const POSTPONED_LINE = `${REPO}#14 ready: postponed, not claimed`;
+
+  it.effect("a ready issue labelled postponed is not claimed and its blockers are not read", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [14];
+      fake.labels[`${REPO}#14`] = ["factory:ready", "postponed"];
+      const { report, lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(starts(fake), []);
+      assert.ok(
+        !fake.calls.some((c) => c.endsWith(`${REPO}#14`) && /^(blockers|depends) /.test(c)),
+      );
+      assert.equal(runLine(lines, `${REPO}#14 `), POSTPONED_LINE);
+      assert.deepEqual([report.claimed, report.errors, report.attention], [0, 0, 0]);
+      const skipped = fake.events.filter((e) => e.event === "claim_skipped");
+      assert.deepEqual(skipped, [claimSkipped(14, "postponed")]);
+    }),
+  );
+
+  it.effect("the same issue without the label is claimed", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [14];
+      fake.labels[`${REPO}#14`] = ["factory:ready"];
+      fake.pushStart(`${REPO}#14`, started(14));
+      yield* pass(fake, [REPO], 5);
+      assert.deepEqual(starts(fake), [`start ${REPO}#14`]);
+      assert.ok(!fake.events.some((e) => e.event === "claim_skipped"));
+    }),
+  );
+
+  it.effect("the label matches in any case, and only as the whole name", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [14, 15, 16, 17];
+      fake.labels[`${REPO}#14`] = ["Postponed"];
+      fake.labels[`${REPO}#15`] = ["POSTPONED"];
+      fake.labels[`${REPO}#16`] = ["postponed-q4"];
+      fake.labels[`${REPO}#17`] = ["not-postponed"];
+      fake.pushStart(`${REPO}#16`, started(16));
+      fake.pushStart(`${REPO}#17`, started(17));
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(starts(fake), [`start ${REPO}#16`, `start ${REPO}#17`]);
+      assert.equal(runLine(lines, `${REPO}#14 `), POSTPONED_LINE);
+      assert.equal(runLine(lines, `${REPO}#15 `), `${REPO}#15 ready: postponed, not claimed`);
+      assert.deepEqual(
+        fake.events.filter((e) => e.event === "claim_skipped"),
+        [claimSkipped(14, "postponed"), claimSkipped(15, "postponed")],
+      );
+    }),
+  );
+
+  it.effect("a postponed issue takes no slot and is not counted against the limit", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [14, 20];
+      fake.labels[`${REPO}#14`] = ["postponed"];
+      fake.pushStart(`${REPO}#20`, started(20));
+      const { lines } = yield* pass(fake, [REPO], 1);
+      assert.deepEqual(starts(fake), [`start ${REPO}#20`]);
+      assert.ok(!fake.events.some((e) => JSON.stringify(e).includes('"reason":"limit"')));
+      assert.ok(!lines.some((l) => l.startsWith("limit reached")), lines.join("\n"));
+    }),
+  );
+
+  it.effect("a building run on an issue that is now postponed goes on as before", () =>
+    Effect.gen(function* () {
+      // Listed as ready too, so the label reaches the pass while the run is building.
+      const fake = new Fake();
+      fake.runIn(14, BUILDING, REPO, true);
+      fake.ready[REPO] = [14];
+      fake.labels[`${REPO}#14`] = ["postponed"];
+      const before = new Fake();
+      before.runIn(14, BUILDING, REPO, true);
+      yield* pass(fake, [REPO], 5);
+      yield* pass(before, [REPO], 5);
+      const following = (f: Fake) =>
+        f.calls.filter((c) => !/^(ready|start|blockers|depends) /.test(c));
+      assert.deepEqual(following(fake), following(before));
+      assert.deepEqual(starts(fake), []);
+    }),
+  );
+
+  it.effect("while claims are paused a postponed issue gets no line and no event of its own", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [14];
+      fake.labels[`${REPO}#14`] = ["postponed"];
+      fake.pause = { sinceMs: T0 - 60 * 60 * 1000 };
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.ok(!lines.some((l) => l.startsWith(`${REPO}#14 `)), lines.join("\n"));
+      assert.deepEqual(
+        fake.events.filter((e) => e.event === "claim_skipped"),
+        [{ event: "claim_skipped", data: { reason: "paused" } }],
+      );
     }),
   );
 });
