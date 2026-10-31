@@ -8,6 +8,7 @@ import {
   type OrchestrationV2DomainEvent,
   type PullRequestRef,
   type PullRequestSummary,
+  type ThreadPullRequestKey,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
@@ -98,6 +99,7 @@ const makeHarness = Effect.fn("makePullRequestSyncBackoffHarness")(function* (
   const activation = yield* Deferred.make<void>();
   const snapshotReads = yield* Queue.unbounded<void>();
   const domainEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+  const stateChanges = yield* Queue.unbounded<ThreadPullRequestKey>();
   const summaryCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
   const syncCommands = yield* Ref.make<ReadonlyArray<SyncCommand>>([]);
   const skipped: Array<Record<string, unknown>> = [];
@@ -117,7 +119,7 @@ const makeHarness = Effect.fn("makePullRequestSyncBackoffHarness")(function* (
         ),
       stack: () => options.stack?.() ?? Effect.succeed(null),
       invalidate: () => Effect.void,
-      subscribeStateChanges: Effect.succeed(Stream.empty),
+      subscribeStateChanges: Effect.succeed(Stream.fromQueue(stateChanges)),
       withSharedProjectReads: (effect) => effect,
     }),
     Layer.mock(GitManager.GitManager)({
@@ -165,6 +167,7 @@ const makeHarness = Effect.fn("makePullRequestSyncBackoffHarness")(function* (
     activation,
     snapshotReads,
     domainEvents,
+    stateChanges,
     summaryCalls,
     syncCommands,
     skipped,
@@ -205,6 +208,23 @@ const refresh = Effect.fn("refreshPullRequestSyncBackoffHarness")(function* (
   link: ThreadPullRequestLink,
 ) {
   yield* reactor.requestSync(link);
+  yield* Queue.take(fixture.snapshotReads);
+  yield* reactor.drain;
+});
+
+/** Sends the event a link change on the thread emits, and waits for the read it asks for. */
+const linkChanged = Effect.fn("linkChangedPullRequestSyncBackoffHarness")(function* (
+  fixture: Harness,
+  reactor: PullRequestSyncReactor.PullRequestSyncReactor["Service"],
+  link: ThreadPullRequestLink,
+) {
+  yield* Queue.offer(fixture.domainEvents, {
+    type: "thread.pull-request-link-updated",
+    id: EventId.make(`event:link:${link.number}`),
+    threadId: ThreadId.make("hidden"),
+    occurredAt: DateTime.makeUnsafe(Date.parse(NOW)),
+    payload: link,
+  });
   yield* Queue.take(fixture.snapshotReads);
   yield* reactor.drain;
 });
@@ -443,6 +463,8 @@ describe("pull request sync for a pull request the host cannot find or the crede
             yield* refresh(fixture, reactor, link);
             assert.strictEqual(yield* callsFor(fixture, 719), 4);
             yield* sweep(fixture, reactor, 60);
+            // The answered refresh is spent, so a later link change does not read again.
+            yield* linkChanged(fixture, reactor, link);
             assert.strictEqual(yield* callsFor(fixture, 719), 4);
 
             visible = true;
@@ -467,19 +489,43 @@ describe("pull request sync for a pull request the host cannot find or the crede
           assert.strictEqual(yield* callsFor(fixture, 719), 3);
 
           // Any link change on the thread asks again for every link that has no snapshot yet.
-          yield* Queue.offer(fixture.domainEvents, {
-            type: "thread.pull-request-link-updated",
-            id: EventId.make("event:hidden:link"),
-            threadId: ThreadId.make("hidden"),
-            occurredAt: DateTime.makeUnsafe(Date.parse(NOW)),
-            payload: link,
-          });
-          yield* Queue.take(fixture.snapshotReads);
-          yield* reactor.drain;
+          yield* linkChanged(fixture, reactor, link);
           yield* sweep(fixture, reactor, 60);
 
           assert.strictEqual(yield* callsFor(fixture, 719), 3);
           assert.strictEqual(skippedFor(fixture, 719).length, 3);
+        }),
+    );
+  });
+
+  it.effect("reads an unreachable key when a reader sees the pull request again", () => {
+    let visible = false;
+    return withReactor(
+      {
+        threads: [thread("hidden", [makeLink(719)])],
+        summary: (input) =>
+          visible ? Effect.succeed(makeSummary(input)) : Effect.fail(notFound()),
+      },
+      (fixture, reactor) =>
+        Effect.gen(function* () {
+          yield* sweep(fixture, reactor, 60);
+          assert.strictEqual(yield* callsFor(fixture, 719), 3);
+
+          // Access granted since: a detail read elsewhere reports the pull request's state.
+          visible = true;
+          yield* Queue.offer(fixture.stateChanges, {
+            host: "github.com",
+            repository: "owner/repository",
+            number: 719,
+          });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+
+          assert.strictEqual(yield* callsFor(fixture, 719), 4);
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.syncCommands)).map((command) => command.number),
+            [719],
+          );
         }),
     );
   });
