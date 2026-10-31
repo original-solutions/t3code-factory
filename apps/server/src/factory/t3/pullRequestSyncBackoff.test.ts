@@ -112,6 +112,7 @@ const makeHarness = Effect.fn("makePullRequestSyncBackoffHarness")(function* (
       stack: () => options.stack?.() ?? Effect.succeed(null),
       invalidate: () => Effect.void,
       subscribeStateChanges: Effect.succeed(Stream.empty),
+      withSharedProjectReads: (effect) => effect,
     }),
     Layer.mock(GitManager.GitManager)({
       subscribePullRequestStateChanges: Effect.succeed(Stream.empty),
