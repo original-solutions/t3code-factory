@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Installs a t3fac archive under ~/.local/share/t3fac/versions, points `current` at it,
-# writes the LaunchAgent plist and restarts the job, then waits for it to come up and runs
-# rollback.sh when it does not. It also installs rotate-log.sh and autodeploy.sh with their
-# LaunchAgents, which keep the log from growing without bound and follow origin/main.
+# writes the server's job (a LaunchAgent on macOS, a systemd user unit on Linux) and restarts it,
+# then waits for it to come up and runs rollback.sh when it does not. It also installs rotate-log.sh
+# and autodeploy.sh with their timer jobs, which keep the log from growing without bound and follow
+# origin/main.
 # Usage: install.sh <archive>
 set -euo pipefail
 
@@ -10,17 +11,17 @@ source "$(dirname "$0")/lib/t3fac.sh"
 
 archive=${1:-}
 if [[ -z $archive || ! -f $archive ]]; then
-  echo "usage: install.sh <t3fac-<version>-darwin-arm64.tar.gz>" >&2
+  echo "usage: install.sh <t3fac-<version>-$archive_suffix.tar.gz>" >&2
   exit 1
 fi
 
 name=$(basename "$archive")
-if [[ $name != t3fac-*-darwin-arm64.tar.gz ]]; then
-  echo "unexpected archive name: $name (want t3fac-<version>-darwin-arm64.tar.gz)" >&2
+if [[ $name != t3fac-*-"$archive_suffix".tar.gz ]]; then
+  echo "unexpected archive name: $name (want t3fac-<version>-$archive_suffix.tar.gz)" >&2
   exit 1
 fi
 version=${name#t3fac-}
-version=${version%-darwin-arm64.tar.gz}
+version=${version%-"$archive_suffix".tar.gz}
 if [[ -z $version || $version == */* || $version == . || $version == .. ]]; then
   echo "invalid version in archive name: $name" >&2
   exit 1

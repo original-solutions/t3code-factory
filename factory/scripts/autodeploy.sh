@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Keeps the LaunchAgent server on origin/main. The io.github.rawphp.t3fac.autodeploy job runs the
-# copy install.sh puts in ~/.local/share/t3fac every 10 minutes, so it never runs from a tree that
-# its own checkout changes. Each tick:
+# Keeps the server on origin/main. The autodeploy job (the io.github.rawphp.t3fac.autodeploy
+# LaunchAgent, or the t3fac-autodeploy systemd timer on Linux) runs the copy install.sh puts in
+# ~/.local/share/t3fac every 10 minutes, so it never runs from a tree that its own checkout
+# changes. Each tick:
 #
 # - reads T3FAC_AUTODEPLOY_CLONE (a clone used for nothing else) and T3FAC_AUTODEPLOY_TOKEN (scope
 #   orchestration:read) from ~/.config/t3fac/env; with no clone set it does nothing but remove
@@ -53,7 +54,7 @@ now_file="$data_dir/deploy-now"
 # same number, change both together.
 deploy_wait_default=120
 said_overdue=""
-logs="$HOME/Library/Logs/t3fac"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/platform.sh"
 build_log="$logs/autodeploy-build.log"
 failed_file="$root/autodeploy.failed"
 hold_file="$root/autodeploy.hold"
@@ -62,7 +63,7 @@ attempts_file="$root/autodeploy.attempts"
 build_attempts=3
 tick_lock="$root/autodeploy.lock"
 deploy_lock="$root/deploy.lock"
-job=io.github.rawphp.t3fac.autodeploy
+job=$autodeploy_job
 # T3FAC_PORT exists only so tests can point at a stub API; the server listens on 3876.
 port=${T3FAC_PORT:-3876}
 # How long a build may take. T3FAC_BUILD_LIMIT exists only so tests can make a build time out.

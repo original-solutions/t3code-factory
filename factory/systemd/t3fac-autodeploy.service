@@ -1,0 +1,14 @@
+# Runs the copy of factory/scripts/autodeploy.sh that install.sh puts in ~/.local/share/t3fac. It
+# reads its clone and token from ~/.config/t3fac/env and does nothing until the clone is set there.
+# PATH has what build.sh needs, cargo from rustup included. autodeploy.sh limits its own build, so
+# systemd does not.
+[Unit]
+Description=Install origin/main of the t3fac fork when it moves
+
+[Service]
+Type=oneshot
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:@HOME@/.local/bin:@HOME@/.local/share/vite-plus/bin:@HOME@/.cargo/bin
+ExecStart=/bin/bash @HOME@/.local/share/t3fac/autodeploy.sh
+TimeoutStartSec=infinity
+StandardOutput=append:@HOME@/.local/state/t3fac/autodeploy.log
+StandardError=append:@HOME@/.local/state/t3fac/autodeploy.log

@@ -1,0 +1,9 @@
+[Unit]
+Description=Check for a new t3fac build every 10 minutes
+
+[Timer]
+OnActiveSec=10s
+OnUnitActiveSec=10min
+
+[Install]
+WantedBy=timers.target

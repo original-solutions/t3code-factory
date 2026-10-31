@@ -1,6 +1,6 @@
 # Install and run
 
-The factory runs in a T3 server started by a macOS LaunchAgent. The desktop app is optional: it is a window onto that server. The server is built from a clone of this repo on an Apple silicon Mac; the app comes signed from the repo's releases.
+The factory runs in a T3 server started by a macOS LaunchAgent, or by a systemd user unit [on Linux](#on-linux). The desktop app is optional: it is a window onto that server. The server is built from a clone of this repo on the machine that runs it; the app comes signed from the repo's releases.
 
 ## Before you start
 
@@ -74,6 +74,23 @@ When the token expires, the log says it cannot read the status and nothing deplo
 A deploy or rollback you run by hand stays until `main` moves: the next tick leaves it in place and logs that it is doing so.
 
 To turn it off, remove `T3FAC_AUTODEPLOY_CLONE` from `~/.config/t3fac/env`. To stop the job until the next install or rollback, run `launchctl bootout gui/$(id -u)/io.github.rawphp.t3fac.autodeploy`. To remove it, run that, then delete `~/Library/LaunchAgents/io.github.rawphp.t3fac.autodeploy.plist` and `~/.local/share/t3fac/autodeploy.sh`; a later install puts them back. If a build was waiting when you stopped the job, also delete `~/.config/t3fac/factory/deploy-pending`, or every pass logs it as stale.
+
+## On Linux
+
+The same scripts install and update the server on an x64 or arm64 Linux machine. Each name below stands in for the macOS one above:
+
+| macOS                                                              | Linux                                                                       |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------------- |
+| `t3fac-<version>-darwin-arm64.tar.gz`                              | `t3fac-<version>-linux-x64.tar.gz` (or `linux-arm64`)                       |
+| LaunchAgent `io.github.rawphp.t3fac`                               | `~/.config/systemd/user/t3fac.service`                                      |
+| `io.github.rawphp.t3fac.logrotate`, `.autodeploy`                  | `t3fac-logrotate.timer`, `t3fac-autodeploy.timer`, each with its `.service` |
+| `~/Library/Logs/t3fac/`                                            | `~/.local/state/t3fac/`                                                     |
+| `launchctl print gui/$(id -u)/io.github.rawphp.t3fac`              | `systemctl --user status t3fac`                                             |
+| `launchctl bootout gui/$(id -u)/io.github.rawphp.t3fac.autodeploy` | `systemctl --user disable --now t3fac-autodeploy.timer`                     |
+
+The Linux build also needs `patchelf` on the `PATH`, which bundles `libatomic` into the binary: `sudo apt install patchelf`, or without root, `apt-get download patchelf` and copy `usr/bin/patchelf` out of the package with `dpkg -x` into `~/.local/bin`.
+
+For the server to run while you are logged out, and to start at boot, turn on lingering once: `loginctl enable-linger $USER`. The install overwrites `t3fac.service` from its template, so put machine settings in `~/.config/t3fac/env`, not in the unit. **Update now** on the Factory page starts `t3fac-autodeploy.service` at once.
 
 ## Install the desktop app
 

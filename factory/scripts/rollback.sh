@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Points `current` at the version installed before it, restarts the LaunchAgent job and
+# Points `current` at the version installed before it, restarts the server's job and
 # checks it comes up. Also reinstalls the log rotation and autodeploy jobs. Exits 1 when there
 # is no earlier version or the restored one is unhealthy.
 set -euo pipefail
