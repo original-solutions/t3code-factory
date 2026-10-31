@@ -339,9 +339,7 @@ describe("ghCredentialProcess in the server graph", () => {
               ),
             ),
             SourceControlRateLimit.layer,
-            NodeCrypto.layer,
-            NodeServices.layer,
-          ),
+          ).pipe(Layer.provideMerge(Layer.mergeAll(NodeCrypto.layer, NodeServices.layer))),
         ),
         Effect.provideService(
           HttpClient.HttpClient,
