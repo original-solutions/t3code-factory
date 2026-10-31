@@ -9,6 +9,7 @@ import {
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -19,6 +20,8 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
+
+import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 
 import * as GitManager from "../../git/GitManager.ts";
 import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
@@ -233,41 +236,48 @@ const iso = (offsetMinutes: number) =>
   DateTime.formatIso(DateTime.makeUnsafe(Date.parse(NOW) + offsetMinutes * 60_000));
 
 describe("pull request sync for a pull request the host cannot find or the credential cannot see", () => {
-  it.effect("backs off per key and logs the skip once per back-off step", () =>
+  it.effect("stops reading a key after three not-found answers in a row, for good", () =>
     withReactor(
       { threads: [thread("hidden", [makeLink(719)])], summary: () => Effect.fail(notFound()) },
       (fixture, reactor) =>
         Effect.gen(function* () {
-          yield* sweep(fixture, reactor, 60);
+          yield* sweep(fixture, reactor, 48 * 60);
 
-          const calls = yield* callsFor(fixture, 719);
-          assert.isAtMost(calls, 8);
-          const skipped = skippedFor(fixture, 719);
-          assert.strictEqual(skipped.length, calls);
-          // Read at 12:00, 12:01, 12:03, 12:07, 12:15 and 12:31.
+          // Read at 12:00, 12:01 and 12:03, then never again.
+          assert.strictEqual(yield* callsFor(fixture, 719), 3);
           assert.deepStrictEqual(
-            skipped.map((fields) => fields.retryAt),
-            [iso(1), iso(3), iso(7), iso(15), iso(31), iso(63)],
+            skippedFor(fixture, 719).map((fields) => fields.retryAt ?? fields.unreachable),
+            [iso(1), iso(3), true],
           );
         }),
     ),
   );
 
-  it.effect("waits no longer than an hour between reads", () =>
-    withReactor(
-      { threads: [thread("hidden", [makeLink(719)])], summary: () => Effect.fail(notFound()) },
-      (fixture, reactor) =>
-        Effect.gen(function* () {
-          yield* sweep(fixture, reactor, 4 * 60);
+  it.effect(
+    "keeps the one-minute doubling back-off when not-found runs are broken by an answer",
+    () => {
+      // Not found, not found, answered, then not found.
+      let call = 0;
+      return withReactor(
+        {
+          threads: [thread("hidden", [makeLink(719)])],
+          summary: (input) =>
+            ++call === 3 ? Effect.succeed(makeSummary(input)) : Effect.fail(notFound()),
+        },
+        (fixture, reactor) =>
+          Effect.gen(function* () {
+            // Read at 12:00, 12:01 and 12:03 (answered). The 12:04 miss starts a new run, so
+            // 12:05 and 12:07 are still read, and only 12:07 makes the key unreachable.
+            yield* sweep(fixture, reactor, 60);
 
-          assert.deepStrictEqual(
-            skippedFor(fixture, 719)
-              .slice(-4)
-              .map((fields) => fields.retryAt),
-            [iso(63), iso(123), iso(183), iso(243)],
-          );
-        }),
-    ),
+            assert.strictEqual(yield* callsFor(fixture, 719), 6);
+            assert.deepStrictEqual(
+              skippedFor(fixture, 719).map((fields) => fields.retryAt ?? fields.unreachable),
+              [iso(1), iso(3), iso(5), iso(7), true],
+            );
+          }),
+      );
+    },
   );
 
   it.effect("starts again from the first step after the host answers", () => {
@@ -372,7 +382,7 @@ describe("pull request sync for a pull request the host cannot find or the crede
         Effect.gen(function* () {
           yield* sweep(fixture, reactor, 10);
 
-          assert.strictEqual(yield* callsFor(fixture, 719), 4);
+          assert.strictEqual(yield* callsFor(fixture, 719), 3);
           assert.strictEqual(yield* callsFor(fixture, 720), 11);
           assert.strictEqual(yield* callsFor(fixture, 5), 11);
         }),
@@ -404,6 +414,97 @@ describe("pull request sync for a pull request the host cannot find or the crede
             (yield* Ref.get(fixture.syncCommands)).map((command) => command.number),
             [719],
           );
+        }),
+    );
+  });
+
+  it.effect(
+    "reads an unreachable key on request, and an answer brings back scheduled reads",
+    () => {
+      let visible = false;
+      const link = makeLink(719);
+      return withReactor(
+        {
+          threads: [thread("hidden", [link])],
+          summary: (input) =>
+            visible ? Effect.succeed(makeSummary(input)) : Effect.fail(notFound()),
+        },
+        (fixture, reactor) =>
+          Effect.gen(function* () {
+            // Unreachable after the 12:03 read.
+            yield* sweep(fixture, reactor, 60);
+            assert.strictEqual(yield* callsFor(fixture, 719), 3);
+
+            // Still hidden: the refresh reads, and the key stays unreachable.
+            yield* refresh(fixture, reactor, link);
+            assert.strictEqual(yield* callsFor(fixture, 719), 4);
+            yield* sweep(fixture, reactor, 60);
+            assert.strictEqual(yield* callsFor(fixture, 719), 4);
+
+            visible = true;
+            yield* refresh(fixture, reactor, link);
+            assert.strictEqual(yield* callsFor(fixture, 719), 5);
+
+            // Scheduled reads are back: the harness never stores a snapshot, so every sweep reads.
+            yield* sweep(fixture, reactor, 10);
+            assert.strictEqual(yield* callsFor(fixture, 719), 15);
+          }),
+      );
+    },
+  );
+
+  it.effect("never counts a rate-limited answer toward the not-found run", () => {
+    let answers: ReadonlyArray<"not-found" | "rate-limited"> = [
+      "not-found",
+      "not-found",
+      "rate-limited",
+      "not-found",
+      "not-found",
+    ];
+    const link = makeLink(719);
+    const rateLimited = (nowMs: number) =>
+      new PullRequestOperationError({
+        operation: "summary",
+        detail: "GitHub rate limit reached.",
+        cause: new PullRequestProviderError({
+          provider: SourceControlProviderKind.make("github"),
+          operation: "summary",
+          reason: "rate-limited",
+          detail: "GitHub rate limit reached.",
+          retryAt: nowMs + 60_000,
+        }),
+      });
+    return withReactor(
+      {
+        threads: [thread("hidden", [link])],
+        summary: () =>
+          Clock.currentTimeMillis.pipe(
+            Effect.flatMap((nowMs) => {
+              const [answer = "not-found", ...rest] = answers;
+              answers = rest;
+              return Effect.fail(answer === "rate-limited" ? rateLimited(nowMs) : notFound());
+            }),
+          ),
+      },
+      (fixture, reactor) =>
+        Effect.gen(function* () {
+          // Not found at 12:00 and 12:01, rate-limited at 12:03, then not found at 12:04,
+          // 12:05 and 12:07. Only the last three are a run.
+          yield* sweep(fixture, reactor, 60);
+          assert.strictEqual(yield* callsFor(fixture, 719), 6);
+          assert.deepStrictEqual(
+            skippedFor(fixture, 719)
+              .filter((fields) => !("count" in fields))
+              .map((fields) => fields.retryAt ?? fields.unreachable),
+            [iso(1), iso(3), iso(5), iso(7), true],
+          );
+
+          // Once unreachable, a rate-limited refresh does not bring back scheduled reads.
+          answers = ["rate-limited"];
+          yield* refresh(fixture, reactor, link);
+          assert.strictEqual(yield* callsFor(fixture, 719), 7);
+          yield* sweep(fixture, reactor, 60);
+          assert.strictEqual(yield* callsFor(fixture, 719), 7);
         }),
     );
   });
