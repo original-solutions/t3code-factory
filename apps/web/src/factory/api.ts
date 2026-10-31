@@ -55,6 +55,8 @@ export interface FactoryStatus {
     readonly for_ms: number | null;
     readonly pr_url: string | null;
     readonly thread_id: string | null;
+    /** Its session reported a pull request and it waits for the gate; absent from older servers. */
+    readonly pr_reported?: boolean;
     readonly unreadable: boolean;
   }>;
   readonly attention: ReadonlyArray<FactoryAttentionItem>;
