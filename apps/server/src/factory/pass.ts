@@ -136,6 +136,8 @@ export interface PassWorld {
   readonly watchedRepos: Effect.Effect<WatchedListing, PassError>;
   /** The repo's project config, from `.dw/config.yml` at the tip of its default branch. */
   readonly project: (repo: WatchedRepo) => Effect.Effect<ProjectConfig, PassError>;
+  /** This machine's host name: the `Machine:` line of a status comment, and what `factory.owner` names. */
+  readonly machineName: string;
   /** The login the repo's tracker knows the factory by. */
   readonly trackerUser: (repo: WatchedRepo) => Effect.Effect<string, PassError>;
   /** Every run that is not finished, oldest first; with `only`, the runs of that one issue. */
@@ -716,10 +718,12 @@ export const runPass = Effect.fn("Pass.runPass")(function* (
   if (infos !== null) {
     const known = new Known(infos);
     yield* workRuns(world, repos, known, pass);
-    yield* untrackedClaims(world, repos, known, pass);
-    yield* unassignedClaims(world, repos, known, pass);
+    // The runs this machine holds go on above; a repo another machine owns gets nothing new.
+    const owned = yield* ownedRepos(world, repos, pass);
+    yield* untrackedClaims(world, owned, known, pass);
+    yield* unassignedClaims(world, owned, known, pass);
     yield* sayCooldowns(world, pass);
-    yield* claim(world, repos, known, machine, pass);
+    yield* claim(world, owned, known, machine, pass);
     // Last: a claim of an issue put back to `ready` ends its older pr-open run, and a re-gate
     // takes a gate slot.
     yield* prOpenRuns(world, repos, known, pass);
@@ -1955,6 +1959,39 @@ class Known {
 }
 
 /**
+ * The loaded repos this machine may claim on: those with no `factory.owner`, or one that names
+ * this machine ignoring ASCII case. On any other no issue is listed, claimed, resumed or
+ * released, so it is left as the owner's pass finds it. Each says so in one line and one
+ * `claim_skipped` event per pass, with no attention item: the owner is a setting, not trouble.
+ */
+const ownedRepos = Effect.fn("Pass.ownedRepos")(function* (
+  world: PassWorld,
+  repos: ReadonlyArray<Loaded>,
+  pass: Pass,
+) {
+  const owned: Array<Loaded> = [];
+  for (const loaded of repos) {
+    const owner = loaded.kind === "ready" ? loaded.repo.project.owner : null;
+    if (
+      loaded.kind !== "ready" ||
+      owner === null ||
+      asciiLower(owner) === asciiLower(world.machineName)
+    ) {
+      owned.push(loaded);
+      continue;
+    }
+    const name = loaded.repo.watched.repo;
+    pass.line(
+      plain(
+        `not owner: ${name}: factory.owner is ${owner}, this machine is ${world.machineName}; no issue is claimed`,
+      ),
+    );
+    yield* pass.record({ event: "claim_skipped", data: { repo: name, reason: "not-owner" } });
+  }
+  return owned;
+});
+
+/**
  * Claims `start` began that left no run it can go on from: the issue is `factory:triage`,
  * assigned to the factory's login alone, with no confirmed unfinished run (`RunInfo`). `resume`
  * finishes such an issue every pass until it is done. They are claims already made, so the limit
@@ -2174,8 +2211,8 @@ const claim = Effect.fn("Pass.claim")(function* (
   // Said once by `drainingForDeploy`: a build is waiting for the runs in progress to end.
   if (pass.draining) return;
   const paused = world.handPause();
-  // Ready issues that were not tried because the limit was reached. Every repo is still
-  // listed, so the count is the whole machine's.
+  // Ready issues that were not tried because the limit was reached. Every repo this machine
+  // may claim on is still listed, so the count is the whole machine's.
   let left = 0;
   const queues: Array<Queue> = [];
   for (const loaded of repos) {

@@ -25,6 +25,7 @@ factory:
     checks_minutes: 30 # optional
     interruption_resumes: 2 # optional
   autonomy: pr # required
+  owner: t3fac # optional
 ```
 
 | Key                                   | Type            | Required | Default | Rule                                                                         |
@@ -42,8 +43,11 @@ factory:
 | `factory.limits.checks_minutes`       | integer ≥ 1     | no       | `30`    |                                                                              |
 | `factory.limits.interruption_resumes` | integer ≥ 0     | no       | `2`     |                                                                              |
 | `factory.autonomy`                    | string          | yes      |         | Only `pr`.                                                                   |
+| `factory.owner`                       | string          | no       |         | Non-empty. The one machine that may claim the repo's issues: see below.      |
 
 Keys the server does not read are ignored.
+
+`factory.owner` is the machine name from the `Machine:` line of a factory status comment, matched ignoring ASCII case. Absent, any machine that watches the repo claims its issues. Set, every other machine lists, claims, resumes and releases nothing there, and writes nothing to an issue it holds no run for. Each pass it prints `not owner: <repo>: factory.owner is <owner>, this machine is <name>; no issue is claimed` and writes `claim_skipped` with reason `not-owner`. Runs a machine already holds go on. A misspelt owner means no machine claims; moving the repo to another machine is a one-line commit on the default branch.
 
 ## Limits
 
@@ -66,6 +70,7 @@ With the machine config's `default_project` set, a T3 project whose GitHub-origi
 | `base`              | The repo's default branch on GitHub                                                                           |
 | `required_checks`   | `[]`                                                                                                          |
 | `autonomy`          | `pr`                                                                                                          |
+| `owner`             | None: any machine that watches the repo claims                                                                |
 | `provision`, `gate` | Inferred from the files committed at the root of `origin/HEAD`, read with `git` in the checkout on every pass |
 
 | Found on the default branch                   | provision                                         | gate                                                                                                                      |

@@ -2232,10 +2232,10 @@ export const makeGitHub = (options: GitHubOptions) => {
   });
 
   /**
-   * Assigns the issue to `user` and swaps `from` for `to`, in one `gh issue edit`. An issue with
-   * any assignee is left alone. View and edit are two calls, so two machines claiming at once can
-   * both win. An error does not mean nothing changed: GitHub may have applied the labels and not
-   * answered. A failure GitHub never received retries the view too, so a stale edit cannot land.
+   * Assigns the issue to `user` and swaps `from` for `to` in one `gh issue edit`, unless it has an
+   * assignee. View then edit still races: two machines can both win, and `factory.owner` is what
+   * keeps a second one from claiming. An error may follow labels GitHub applied; a failure GitHub
+   * never received retries the view too, so a stale edit cannot land.
    */
   const claim = Effect.fn("GitHub.claim")(function* (
     number: number,

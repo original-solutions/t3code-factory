@@ -133,5 +133,6 @@ export const resolveDefault = (
     requiredChecks: [],
     limits: defaultProject.limits,
     autonomy: "pr",
+    owner: null,
   });
 };

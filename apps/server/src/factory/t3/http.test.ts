@@ -1455,6 +1455,7 @@ repos:
     requiredChecks: ["ci"],
     limits: { minutes: 5, gateRetries: 1, checksMinutes: 3, interruptionResumes: 4 },
     autonomy: "pr",
+    owner: null,
   } as const;
 
   it.effect("GET lists the watched projects, each with what the loop last read of it", () =>

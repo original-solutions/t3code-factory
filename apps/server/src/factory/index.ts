@@ -823,6 +823,7 @@ export const liveWorld = (
     },
     prunedAt,
     nowMs: clock,
+    machineName: host,
     attention,
     record: (event: MachineEvent) =>
       ledger(() => {

@@ -1380,6 +1380,7 @@ describe("liveWorld", () => {
             requiredChecks: [],
             limits: { minutes: 1, gateRetries: 0, checksMinutes: 30, interruptionResumes: 2 },
             autonomy: "pr",
+            owner: null,
           });
         }
       }),
@@ -1415,6 +1416,7 @@ describe("liveWorld", () => {
           requiredChecks: [],
           limits: { minutes: 180, gateRetries: 2, checksMinutes: 30, interruptionResumes: 2 },
           autonomy: "pr" as const,
+          owner: null,
         };
         assert.deepStrictEqual(Result.isSuccess(result) && result.success, expected);
         assert.deepStrictEqual(readings, [{ kind: "ok", project: expected, onDefault: true }]);

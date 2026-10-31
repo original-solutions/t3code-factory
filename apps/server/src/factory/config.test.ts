@@ -229,6 +229,25 @@ describe("project config", () => {
     });
   });
 
+  describe("the owner", () => {
+    const OWNER = "factory.owner";
+
+    it("project owner is kept as given", () => {
+      expect(project(edit(PROJECT, (t) => set(t, OWNER, "T3fac"))).owner).toBe("T3fac");
+    });
+
+    it("project owner is null when the key is absent", () => {
+      expect(project(PROJECT).owner).toBeNull();
+      expect(timeLimitOnlyProjectConfig().owner).toBeNull();
+    });
+
+    it("project owner must be a non-empty string", () => {
+      for (const bad of ['""', "5", "null", "[t3fac]", "{ name: t3fac }", "true"]) {
+        assertOne(projectErr(edit(PROJECT, (t) => set(t, OWNER, bad))), OWNER, PFILE);
+      }
+    });
+  });
+
   it("project ignores the needs-info limits an older version read", () => {
     const t = PROJECT.replace(
       "limits: { minutes: 90, gate_retries: 2 }",

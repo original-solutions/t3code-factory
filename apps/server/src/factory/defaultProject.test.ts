@@ -158,6 +158,7 @@ describe("resolveDefault", () => {
       requiredChecks: [],
       limits: DEFAULT.limits,
       autonomy: "pr",
+      owner: null,
     });
   });
 
