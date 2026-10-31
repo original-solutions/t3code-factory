@@ -1,9 +1,11 @@
 import {
+  EventId,
   ProjectId,
   PullRequestOperationError,
   SourceControlProviderKind,
   ThreadId,
   type OrchestrationV2Command,
+  type OrchestrationV2DomainEvent,
   type PullRequestRef,
   type PullRequestSummary,
   type ThreadPullRequestLink,
@@ -95,6 +97,7 @@ const makeHarness = Effect.fn("makePullRequestSyncBackoffHarness")(function* (
 ) {
   const activation = yield* Deferred.make<void>();
   const snapshotReads = yield* Queue.unbounded<void>();
+  const domainEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
   const summaryCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
   const syncCommands = yield* Ref.make<ReadonlyArray<SyncCommand>>([]);
   const skipped: Array<Record<string, unknown>> = [];
@@ -146,7 +149,7 @@ const makeHarness = Effect.fn("makePullRequestSyncBackoffHarness")(function* (
               Effect.as({ sequence: 1, storedEvents: [] }),
             )
           : Effect.die(new Error(`Unexpected command: ${command.type}`)),
-      streamDomainEvents: Stream.empty,
+      streamDomainEvents: Stream.fromQueue(domainEvents),
     }),
     Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
     Layer.succeed(
@@ -161,6 +164,7 @@ const makeHarness = Effect.fn("makePullRequestSyncBackoffHarness")(function* (
   return {
     activation,
     snapshotReads,
+    domainEvents,
     summaryCalls,
     syncCommands,
     skipped,
@@ -452,6 +456,33 @@ describe("pull request sync for a pull request the host cannot find or the crede
       );
     },
   );
+
+  it.effect("leaves an unreachable key alone when the server itself asks for a read", () => {
+    const link = makeLink(719);
+    return withReactor(
+      { threads: [thread("hidden", [link])], summary: () => Effect.fail(notFound()) },
+      (fixture, reactor) =>
+        Effect.gen(function* () {
+          yield* sweep(fixture, reactor, 60);
+          assert.strictEqual(yield* callsFor(fixture, 719), 3);
+
+          // Any link change on the thread asks again for every link that has no snapshot yet.
+          yield* Queue.offer(fixture.domainEvents, {
+            type: "thread.pull-request-link-updated",
+            id: EventId.make("event:hidden:link"),
+            threadId: ThreadId.make("hidden"),
+            occurredAt: DateTime.makeUnsafe(Date.parse(NOW)),
+            payload: link,
+          });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          yield* sweep(fixture, reactor, 60);
+
+          assert.strictEqual(yield* callsFor(fixture, 719), 3);
+          assert.strictEqual(skippedFor(fixture, 719).length, 3);
+        }),
+    );
+  });
 
   it.effect("never counts a rate-limited answer toward the not-found run", () => {
     let answers: ReadonlyArray<"not-found" | "rate-limited"> = [
