@@ -6,6 +6,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as NodeChildProcess from "node:child_process";
+import * as NodeOS from "node:os";
 
 /**
  * Runs commands the way softfac does: a known environment, a hard time limit that kills the whole
@@ -67,6 +68,11 @@ export interface RunInput {
    * stdout is data (gh's JSON) that stderr text must not end up in.
    */
   readonly separateStderr?: boolean;
+  /**
+   * Run the command, and everything it starts, at this niceness, so it cannot starve the
+   * server. A process already nicer keeps its own. Unset: the server's priority.
+   */
+  readonly niceness?: number;
 }
 
 export interface RunResult {
@@ -166,9 +172,13 @@ const run = Effect.fn("FactoryProcess.run")(function* (input: RunInput) {
   // there are two pipes and no merge. /bin/sh is absolute because the caller
   // may override PATH.
   const merge = separate ? "" : "exec 2>&1\n";
+  // With a niceness the wrapper waits for stdin to close, which happens once its priority is
+  // set, so nothing it starts can fork at the server's priority first.
+  const nice = input.niceness !== undefined;
+  const hold = nice ? "read -r _\nexec </dev/null\n" : "";
   const script = input.shell
-    ? ["-c", `${merge}${input.command}`, ...args]
-    : ["-c", `${merge}exec "$0" "$@"`, input.command, ...args];
+    ? ["-c", `${merge}${hold}${input.command}`, ...args]
+    : ["-c", `${merge}${hold}exec "$0" "$@"`, input.command, ...args];
 
   const exited = Deferred.makeUnsafe<
     readonly [number | null, NodeJS.Signals | null],
@@ -188,9 +198,11 @@ const run = Effect.fn("FactoryProcess.run")(function* (input: RunInput) {
       const child = NodeChildProcess.spawn("/bin/sh", script, {
         cwd: input.cwd,
         env: buildEnv(input.env),
-        stdio: ["ignore", "pipe", separate ? "pipe" : "ignore"],
+        stdio: [nice ? "pipe" : "ignore", "pipe", separate ? "pipe" : "ignore"],
         detached: true,
       });
+      // A wrapper that died early closes the pipe; the write then fails and nothing is lost.
+      child.stdin?.on("error", () => {});
       child.once("error", (cause) => Deferred.doneUnsafe(exited, Exit.fail(spawnError(cause))));
       child.once("exit", (code, signal) =>
         Deferred.doneUnsafe(exited, Exit.succeed([code, signal] as const)),
@@ -227,11 +239,28 @@ const run = Effect.fn("FactoryProcess.run")(function* (input: RunInput) {
   const release = (child: NodeChildProcess.ChildProcess) =>
     Effect.sync(() => {
       killGroup(child, "SIGKILL");
+      child.stdin?.destroy();
       child.stdout?.destroy();
       child.stderr?.destroy();
     });
 
+  // Lowers the wrapper's priority, then lets it go on. Failing to lower it only costs the
+  // server some CPU, so the command runs anyway.
+  const lowerPriority = (child: NodeChildProcess.ChildProcess, niceness: number) =>
+    Effect.try(() => {
+      const pid = child.pid;
+      if (pid !== undefined && NodeOS.getPriority(pid) < niceness) {
+        NodeOS.setPriority(pid, niceness);
+      }
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning(`could not run a command at niceness ${niceness}: ${error.cause}`),
+      ),
+      Effect.ensuring(Effect.sync(() => child.stdin?.end())),
+    );
+
   const use = Effect.fn("FactoryProcess.use")(function* (child: NodeChildProcess.ChildProcess) {
+    if (input.niceness !== undefined) yield* lowerPriority(child, input.niceness);
     const pid = child.pid;
     // Like softfac's group_exists: signal 0 throws ESRCH once the group is empty.
     const groupExists = (): boolean => {

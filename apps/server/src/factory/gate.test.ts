@@ -1500,6 +1500,7 @@ it.live("provision and gate commands, and what they start, run at niceness 10", 
       gate: ["ps -o nice= -p $$", "sh -c 'ps -o nice= -p $$; true'"],
     });
     assert.strictEqual(result._tag, "pass");
+    if (result._tag !== "pass") return;
     // A host whose server already runs above 10 keeps its own floor.
     const expected = String(Math.max(10, own));
     assert.deepStrictEqual(
