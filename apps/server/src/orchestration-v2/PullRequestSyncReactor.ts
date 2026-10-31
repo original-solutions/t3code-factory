@@ -388,6 +388,7 @@ export const make = Effect.gen(function* () {
     for (const key of retryStacks) if (!groups.has(key)) retryStacks.delete(key);
     for (const key of requested.keys()) if (!groups.has(key)) requested.delete(key);
     notFound.prune(groups);
+    notFound.claimRefreshes(groups);
 
     const linkedThisSweep = new Set<string>();
     // Fresh stack reads by group, so a member flagged by a sibling is compared against what the
@@ -718,17 +719,28 @@ export const make = Effect.gen(function* () {
       return worker.enqueue("requested");
     });
 
-  return { start, drain: worker.drain, requestSync } satisfies PullRequestSyncReactor["Service"];
+  return {
+    start,
+    drain: worker.drain,
+    requestSync: (key) =>
+      Effect.suspend(() => {
+        notFound.refresh(threadPullRequestKeyOf(key));
+        return requestSync(key);
+      }),
+  } satisfies PullRequestSyncReactor["Service"];
 });
 
 export const layer = Layer.effect(PullRequestSyncReactor, make);
 
 // Fork back-off for pull requests the host cannot find or the credential cannot see (factory/SEAMS).
-// Each failed read doubles the wait before the next one, from one minute up to an hour.
+// Each failed read doubles the wait before the next one, from one minute, until the key is
+// unreachable. The hour cap only matters if the threshold below is raised.
 const NOT_FOUND_FIRST_RETRY_MS = 60 * 1_000;
 const NOT_FOUND_MAX_RETRY_MS = 60 * 60 * 1_000;
-// After this many not-found answers in a row the key is unreachable: scheduled sweeps stop
-// reading it until a requested refresh gets an answer. Kept in memory, so a restart starts over.
+// After this many not-found answers in a row the key is unreachable: only a refresh asked for
+// through the service reads it, and an answer clears the mark. The reactor's own requests (a link
+// change asks again for every link without a snapshot) do not. Kept in memory, so a restart
+// starts over.
 const NOT_FOUND_UNREACHABLE_AFTER = 3;
 
 const isPullRequestOperationError = Schema.is(PullRequestOperationError);
@@ -752,6 +764,10 @@ function makeNotFoundBackoff() {
     string,
     { readonly delayMs: number; readonly retryAtMs: number; readonly misses: number }
   >();
+  // Pull request keys refreshed through the service, waiting for the next sweep to scope them.
+  const pendingRefreshes = new Set<string>();
+  // Sweep keys with such a refresh the host has not answered yet.
+  const refreshes = new Set<string>();
   const record = (key: string, nowMs: number) => {
     const previous = retries.get(key);
     const delayMs =
@@ -772,11 +788,21 @@ function makeNotFoundBackoff() {
       nowMs: number,
       requested: Set<string>,
       read: Effect.Effect<void, E, R>,
-    ): Effect.Effect<void, E, R> =>
-      !requested.has(key) && (retries.get(key)?.retryAtMs ?? 0) > nowMs
+    ): Effect.Effect<void, E, R> => {
+      const retryAtMs = retries.get(key)?.retryAtMs ?? 0;
+      if (retryAtMs === Number.POSITIVE_INFINITY && !refreshes.has(key)) {
+        requested.delete(key);
+        return Effect.void;
+      }
+      return !requested.has(key) && retryAtMs > nowMs
         ? Effect.void
         : read.pipe(
-            Effect.tap(() => Effect.sync(() => retries.delete(key))),
+            Effect.tap(() =>
+              Effect.sync(() => {
+                retries.delete(key);
+                refreshes.delete(key);
+              }),
+            ),
             Effect.catchCause((cause) => {
               if (!isNotFound(cause)) {
                 // Another failure ends a not-found run, but only an answer clears unreachable.
@@ -790,6 +816,7 @@ function makeNotFoundBackoff() {
               }
               // The host answered the refresh, so it is not asked again before the back-off ends.
               requested.delete(key);
+              refreshes.delete(key);
               // Logged per key, not batched with other skips, so each line carries its own retryAt.
               const retryAtMs = record(key, nowMs);
               return Effect.logWarning("pull request sync skipped", {
@@ -800,9 +827,21 @@ function makeNotFoundBackoff() {
                   : { retryAt: DateTime.formatIso(DateTime.makeUnsafe(retryAtMs)) }),
               });
             }),
-          ),
+          );
+    },
+    refresh: (pullRequestKey: string) => {
+      pendingRefreshes.add(pullRequestKey);
+    },
+    // Called once per sweep, beside the upstream hand-off of pending requests to `requested`.
+    claimRefreshes: (groups: ReadonlyMap<string, ReadonlyArray<LinkEntry>>) => {
+      for (const [key, entries] of groups) {
+        if (pendingRefreshes.has(threadPullRequestKeyOf(entries[0]!.link))) refreshes.add(key);
+      }
+      pendingRefreshes.clear();
+    },
     prune: (live: ReadonlyMap<string, unknown>) => {
       for (const key of retries.keys()) if (!live.has(key)) retries.delete(key);
+      for (const key of refreshes) if (!live.has(key)) refreshes.delete(key);
     },
   };
 }
