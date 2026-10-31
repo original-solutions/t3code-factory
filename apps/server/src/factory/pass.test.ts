@@ -2307,6 +2307,28 @@ describe("a repo whose factory.owner is another machine", () => {
       ]);
     }),
   );
+
+  it.effect("a pr-open run this machine holds there still has its feedback read and is gated", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.projects[REPO] = owned("trilogy-mac");
+      fake.runIn(41, "pr-open", REPO, false);
+      fake.openHeads[`${REPO}#12`] = PUSHED;
+      yield* pass(fake, [REPO], 5);
+      assert.deepEqual(fake.feedbacks, [runIdToString(rid(41))]);
+      assert.ok(fake.calls.includes(`gate ${REPO}#41`), fake.calls.join("\n"));
+    }),
+  );
+
+  it.effect("an owner with control characters is printed plain", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.projects[REPO] = owned("x\u001b[2K\rclaimed #412\nATTENTION");
+      const { lines } = yield* pass(fake, [REPO], 5);
+      const line = runLine(lines, "not owner:");
+      assert.ok(!/[\u0000-\u001f\u007f]/.test(line), JSON.stringify(line));
+    }),
+  );
 });
 
 describe("issues blocked by an open issue", () => {
