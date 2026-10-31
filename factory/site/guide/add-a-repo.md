@@ -57,7 +57,7 @@ The factory names the repo by the clone's `origin` remote. Watch out for these:
 
 - A clone with an `upstream` remote is named after that remote by T3, so the factory doesn't watch it. Use a clone without one.
 - Two projects whose `origin` is the same repo leave it unwatched: the factory can't tell which checkout is its own. Settings → Factory names them.
-- One factory per repo. Two factories on different machines, or a second factory of another kind, watching the same repo would claim each other's issues. On any repo that more than one machine might watch, set [`factory.owner`](/agents/repo-config) to the one machine that should claim, so the others claim nothing there.
+- One factory per repo. Two factories on different machines, or a second factory of another kind, watching the same repo would claim each other's issues. On any repo that more than one machine running this factory might watch, set [`factory.owner`](/agents/repo-config) to the one machine that should claim, so the others claim nothing there. A factory of another kind ignores the key.
 
 ## 3. Check it is watched
 

@@ -47,7 +47,7 @@ factory:
 
 Keys the server does not read are ignored.
 
-`factory.owner` is the machine name from the `Machine:` line of a factory status comment, matched ignoring ASCII case. Absent, any machine that watches the repo claims its issues. Set, every other machine lists, claims, resumes and releases nothing there, and writes nothing to its issues. Each pass it prints `not owner: <repo>: factory.owner is <owner>, this machine is <name>; no issue is claimed` and writes `claim_skipped` with reason `not-owner`. Runs a machine already holds go on. A misspelt owner means no machine claims; moving the repo to another machine is a one-line commit on the default branch.
+`factory.owner` is the machine name from the `Machine:` line of a factory status comment, matched ignoring ASCII case. Absent, any machine that watches the repo claims its issues. Set, every other machine lists, claims, resumes and releases nothing there, and writes nothing to an issue it holds no run for. Each pass it prints `not owner: <repo>: factory.owner is <owner>, this machine is <name>; no issue is claimed` and writes `claim_skipped` with reason `not-owner`. Runs a machine already holds go on. A misspelt owner means no machine claims; moving the repo to another machine is a one-line commit on the default branch.
 
 ## Limits
 

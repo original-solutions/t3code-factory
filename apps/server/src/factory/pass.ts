@@ -1982,7 +1982,9 @@ const ownedRepos = Effect.fn("Pass.ownedRepos")(function* (
     }
     const name = loaded.repo.watched.repo;
     pass.line(
-      `not owner: ${name}: factory.owner is ${owner}, this machine is ${world.machineName}; no issue is claimed`,
+      plain(
+        `not owner: ${name}: factory.owner is ${owner}, this machine is ${world.machineName}; no issue is claimed`,
+      ),
     );
     yield* pass.record({ event: "claim_skipped", data: { repo: name, reason: "not-owner" } });
   }
@@ -2209,8 +2211,8 @@ const claim = Effect.fn("Pass.claim")(function* (
   // Said once by `drainingForDeploy`: a build is waiting for the runs in progress to end.
   if (pass.draining) return;
   const paused = world.handPause();
-  // Ready issues that were not tried because the limit was reached. Every repo is still
-  // listed, so the count is the whole machine's.
+  // Ready issues that were not tried because the limit was reached. Every repo this machine
+  // may claim on is still listed, so the count is the whole machine's.
   let left = 0;
   const queues: Array<Queue> = [];
   for (const loaded of repos) {
