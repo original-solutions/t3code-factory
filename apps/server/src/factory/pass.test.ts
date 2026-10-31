@@ -2409,15 +2409,34 @@ describe("issues labelled postponed", () => {
 
   it.effect("a building run on an issue that is now postponed goes on as before", () =>
     Effect.gen(function* () {
+      // Listed as ready too, so the label reaches the pass while the run is building.
       const fake = new Fake();
       fake.runIn(14, BUILDING, REPO, true);
+      fake.ready[REPO] = [14];
       fake.labels[`${REPO}#14`] = ["postponed"];
       const before = new Fake();
       before.runIn(14, BUILDING, REPO, true);
       yield* pass(fake, [REPO], 5);
       yield* pass(before, [REPO], 5);
-      assert.deepEqual(fake.calls, before.calls);
-      assert.ok(!fake.events.some((e) => JSON.stringify(e).includes("postponed")));
+      const following = (f: Fake) =>
+        f.calls.filter((c) => !/^(ready|start|blockers|depends) /.test(c));
+      assert.deepEqual(following(fake), following(before));
+      assert.deepEqual(starts(fake), []);
+    }),
+  );
+
+  it.effect("while claims are paused a postponed issue gets no line and no event of its own", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [14];
+      fake.labels[`${REPO}#14`] = ["postponed"];
+      fake.pause = { sinceMs: T0 - 60 * 60 * 1000 };
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.ok(!lines.some((l) => l.startsWith(`${REPO}#14 `)), lines.join("\n"));
+      assert.deepEqual(
+        fake.events.filter((e) => e.event === "claim_skipped"),
+        [{ event: "claim_skipped", data: { reason: "paused" } }],
+      );
     }),
   );
 });
