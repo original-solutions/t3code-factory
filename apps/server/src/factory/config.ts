@@ -48,6 +48,11 @@ export interface ProjectConfig {
   readonly requiredChecks: ReadonlyArray<string>;
   readonly limits: Limits;
   readonly autonomy: Autonomy;
+  /**
+   * `factory.owner`: the one machine, by its host name, that may claim the repo's issues,
+   * matched ignoring ASCII case. Null when the key is absent: every watching machine may claim.
+   */
+  readonly owner: string | null;
 }
 
 const DEFAULT_MINUTES = 180;
@@ -87,6 +92,7 @@ export const timeLimitOnlyProjectConfig = (): ProjectConfig => ({
     interruptionResumes: DEFAULT_INTERRUPTION_RESUMES,
   },
   autonomy: "pr",
+  owner: null,
 });
 
 export const PROJECT_CONFIG_PATH = ".dw/config.yml";
@@ -435,6 +441,10 @@ const projectFrom = (c: Checker, root: Mapping): ProjectConfig | undefined => {
     undefined,
   );
   const autonomy = c.autonomy(c.child(factory, "factory", "autonomy"), "factory.autonomy");
+  const owner =
+    factory === undefined || !Object.hasOwn(factory, "owner")
+      ? null
+      : c.nonEmptyString(factory["owner"], "factory.owner");
 
   if (
     instructors === undefined ||
@@ -443,7 +453,8 @@ const projectFrom = (c: Checker, root: Mapping): ProjectConfig | undefined => {
     gate === undefined ||
     requiredChecks === undefined ||
     limits === undefined ||
-    autonomy === undefined
+    autonomy === undefined ||
+    owner === undefined
   ) {
     return undefined;
   }
@@ -455,6 +466,7 @@ const projectFrom = (c: Checker, root: Mapping): ProjectConfig | undefined => {
     requiredChecks,
     limits,
     autonomy,
+    owner,
   };
 };
 

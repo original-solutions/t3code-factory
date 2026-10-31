@@ -514,6 +514,7 @@ describe("readMachineConfigReport", () => {
           interruptionResumes: 2,
         },
         autonomy: "pr" as const,
+        owner: null,
       };
       const readings = new Map<string, RepoConfigReading>([["a/b", { kind: "ok", project }]]);
       const { report: r } = yield* report(COMMENTED, of(WATCHED.slice(0, 1)), readings);
@@ -534,6 +535,7 @@ describe("readMachineConfigReport", () => {
         requiredChecks: [],
         limits: { minutes: 180, gateRetries: 2, checksMinutes: 30, interruptionResumes: 2 },
         autonomy: "pr" as const,
+        owner: null,
       };
       const defaulted: WatchedProject = {
         repo: "a/b",
