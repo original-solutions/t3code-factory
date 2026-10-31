@@ -1493,20 +1493,23 @@ it.live("provision and gate commands, and what they start, run at niceness 10", 
     Ledger.create(dataDir, run, { clock: ticking(T0, 1000) }).close();
     const own = NodeOS.getPriority();
     const gate = yield* FactoryGate;
-    // The inner sh runs two commands, so it stays a separate grandchild instead of exec'ing ps.
+    // The trailing `true` stops dash from exec'ing the inner sh in place of the wrapper, so the
+    // inner sh is a process the command forked: its parent is the wrapper.
     const result = yield* gate.run({
       ...baseInput(remote, dataDir, run, sha, sha),
       provision: ["ps -o nice= -p $$"],
-      gate: ["ps -o nice= -p $$", "sh -c 'ps -o nice= -p $$; true'"],
+      gate: ["ps -o nice= -p $$", "echo $$; sh -c 'echo $PPID; ps -o nice= -p $$'; true"],
     });
     assert.strictEqual(result._tag, "pass");
     if (result._tag !== "pass") return;
     // A host whose server already runs above 10 keeps its own floor.
     const expected = String(Math.max(10, own));
-    assert.deepStrictEqual(
-      result.commands.map((c) => c.output.trim()),
-      [expected, expected, expected],
-    );
+    const [provisioned, gated, forked] = result.commands.map((c) => c.output.trim());
+    assert.strictEqual(provisioned, expected);
+    assert.strictEqual(gated, expected);
+    const [wrapper, parent, inner] = forked!.split(/\s+/);
+    assert.strictEqual(parent, wrapper);
+    assert.strictEqual(inner, expected);
     assert.strictEqual(NodeOS.getPriority(), own);
   }).pipe(provided),
 );

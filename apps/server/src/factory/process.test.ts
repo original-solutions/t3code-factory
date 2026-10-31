@@ -452,3 +452,21 @@ it.live("a priority that cannot be set leaves the command running and logs one w
     assert.match(logs[0]!, /^Warn /);
   }),
 );
+
+it.live("a command already nicer than the niceness asked for keeps its own, with no warning", () =>
+  Effect.gen(function* () {
+    const logs: Array<string> = [];
+    const capture = Logger.make(({ message }) => {
+      logs.push(String(Array.isArray(message) ? message[0] : message));
+    });
+    const own = NodeOS.getPriority();
+    // Asking for less niceness than the child inherits must not try to raise its priority.
+    const result = yield* run({
+      command: "ps -o nice= -p $$",
+      shell: true,
+      niceness: own - 1,
+    }).pipe(Effect.provide(Logger.layer([capture], { mergeWithExisting: false })));
+    assert.strictEqual(result.tail.trim(), String(own));
+    assert.deepStrictEqual(logs, []);
+  }),
+);
