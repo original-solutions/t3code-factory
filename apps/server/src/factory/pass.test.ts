@@ -232,6 +232,8 @@ class Fake implements PassWorld {
   watchedFails = false;
   /** The repos `project` was called for, in order. */
   projected: Array<string> = [];
+  /** The name `hostName` gives this machine, which a repo's `factory.owner` is matched with. */
+  machineName = "t3fac";
   now = T0;
   calls: Array<string> = [];
   events: Array<MachineEvent> = [];
@@ -342,12 +344,12 @@ class Fake implements PassWorld {
   }
 
   readyIssues(repo: Repo) {
-    this.calls.push("ready");
+    this.calls.push(`ready ${repo.watched.repo}`);
     return this.listing(this.ready, this.readyCut, repo);
   }
 
   triageIssues(repo: Repo) {
-    this.calls.push("triage");
+    this.calls.push(`triage ${repo.watched.repo}`);
     return this.listing(this.triage, this.triageCut, repo);
   }
 
@@ -2194,6 +2196,115 @@ describe("claims with no run and no assignee", () => {
         lines.join("\n"),
       );
       assert.ok(!fake.events.some((e) => e.event === "claim_repaired"));
+    }),
+  );
+});
+
+describe("a repo whose factory.owner is another machine", () => {
+  const owned = (owner: string | null): ProjectConfig => ({ ...project(), owner });
+  const notOwnerLine = (repo: string, owner: string) =>
+    `not owner: ${repo}: factory.owner is ${owner}, this machine is t3fac; no issue is claimed`;
+  const notOwnerEvent = (repo: string): MachineEvent => ({
+    event: "claim_skipped",
+    data: { repo, reason: "not-owner" },
+  });
+  /** The calls the pass made that name the repo, but for the branch prune, which writes to no issue. */
+  const callsOn = (fake: Fake, repo: string) =>
+    fake.calls.filter(
+      (c) =>
+        !c.startsWith("prune ") &&
+        c.split(" ").some((word) => word === repo || word.startsWith(`${repo}#`)),
+    );
+
+  it.effect("claims no issue there and touches none, while a repo it owns claims as normal", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.projects[REPO] = owned("trilogy-mac");
+      fake.ready[REPO] = [7];
+      fake.pushStart(`${REPO}#7`, started(7));
+      fake.projects[OTHER] = owned("t3fac");
+      fake.ready[OTHER] = [8];
+      fake.pushStart(`${OTHER}#8`, started(8, OTHER));
+      const { report, lines } = yield* pass(fake, [REPO, OTHER], 5);
+      assert.deepEqual(starts(fake), [`start ${OTHER}#8`]);
+      assert.deepEqual(callsOn(fake, REPO), []);
+      assert.ok(fake.calls.includes(`ready ${OTHER}`), fake.calls.join("\n"));
+      assert.equal(report.claimed, 1);
+      assert.deepEqual(
+        lines.filter((l) => l.startsWith("not owner:")),
+        [notOwnerLine(REPO, "trilogy-mac")],
+      );
+      assert.deepEqual(
+        fake.events.filter((e) => e.event === "claim_skipped"),
+        [notOwnerEvent(REPO)],
+      );
+      assert.equal(report.attention, 0);
+      assert.deepEqual(fake.items, []);
+    }),
+  );
+
+  it.effect("resumes no claim there and moves no cut-short claim to proposed", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.projects[REPO] = owned("trilogy-mac");
+      // Another machine on the same login claimed #7, and cut short a claim of #9.
+      fake.triage[REPO] = [7];
+      fake.unassigned[REPO] = [{ issue: 9, state: "triage" }];
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(callsOn(fake, REPO), []);
+      assert.deepEqual(starts(fake), []);
+      assert.deepEqual(releases(fake), []);
+      assert.deepEqual(
+        lines.filter((l) => l.startsWith("not owner:")),
+        [notOwnerLine(REPO, "trilogy-mac")],
+      );
+    }),
+  );
+
+  it.effect("a repo with no owner is claimed from by any machine", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.projects[REPO] = owned(null);
+      fake.ready[REPO] = [7];
+      fake.pushStart(`${REPO}#7`, started(7));
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(starts(fake), [`start ${REPO}#7`]);
+      assert.ok(!lines.some((l) => l.startsWith("not owner:")), lines.join("\n"));
+    }),
+  );
+
+  it.effect("an owner that names this machine in another case claims", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.projects[REPO] = owned("T3FAC");
+      fake.ready[REPO] = [7];
+      fake.pushStart(`${REPO}#7`, started(7));
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(starts(fake), [`start ${REPO}#7`]);
+      assert.ok(!lines.some((l) => l.startsWith("not owner:")), lines.join("\n"));
+      assert.deepEqual(
+        fake.events.filter((e) => e.event === "claim_skipped"),
+        [],
+      );
+    }),
+  );
+
+  it.effect("a run this machine holds there goes on after the owner changed", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.projects[REPO] = owned("trilogy-mac");
+      fake.runIn(40, BUILDING, REPO, true);
+      fake.ready[REPO] = [7];
+      yield* pass(fake, [REPO], 5);
+      const steps = callsOn(fake, REPO).filter(
+        (c) => !c.startsWith("runs ") && !c.startsWith("stop_request "),
+      );
+      assert.deepEqual(steps, [
+        `time_limit ${REPO}#40`,
+        `watch ${REPO}#40`,
+        `forward ${REPO}#40`,
+        `advance ${REPO}#40`,
+      ]);
     }),
   );
 });
