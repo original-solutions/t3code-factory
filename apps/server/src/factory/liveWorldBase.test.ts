@@ -195,6 +195,9 @@ describe("liveWorld: a model that cools down", () => {
         recordRateLimit(cooldowns, cooldownKey(FABLE), FABLE, T0, T0, null);
         yield* world.start(repo, 7);
         const ctx = startContexts.at(-1) as StartContext;
+        // factory.owner is matched against the name a claim records as its machine.
+        assert.strictEqual(ctx.machine, "mac-mini");
+        assert.strictEqual(world.machineName, ctx.machine);
         assert.deepStrictEqual(ctx.launchModel?.(FABLE), OPUS);
         now = T0 + 5 * 60_000;
         assert.deepStrictEqual(ctx.launchModel?.(FABLE), FABLE);
