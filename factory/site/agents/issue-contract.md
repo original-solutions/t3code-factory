@@ -19,15 +19,15 @@
 
 One `factory:*` label at a time. Matched exactly, case-sensitive.
 
-| Label                | Set by               | Colour   | Factory action                                                                |
-| -------------------- | -------------------- | -------- | ----------------------------------------------------------------------------- |
-| `factory:proposed`   | person, bot, factory | `c5def5` | None. Refused approvals land here.                                            |
-| `factory:ready`      | instructor           | `0e8a16` | Claim on next pass if unassigned, approved, unblocked, not paused, slot free. |
-| `factory:triage`     | factory              | `fbca04` | Assigned to the factory login; session launching.                             |
-| `factory:building`   | factory              | `1d76db` | Session running; instructor comments and edits forwarded.                     |
-| `factory:needs-info` | factory              | `d93f0b` | Questions posted; issue unassigned; run finished.                             |
-| `factory:pr-open`    | factory              | `5319e7` | PR passed the gate and is ready; instructor feedback relaunches.              |
-| `factory:stuck`      | factory              | `b60205` | Reason posted; issue unassigned; run finished.                                |
+| Label                | Set by               | Colour   | Factory action                                                                               |
+| -------------------- | -------------------- | -------- | -------------------------------------------------------------------------------------------- |
+| `factory:proposed`   | person, bot, factory | `c5def5` | None. Refused approvals land here.                                                           |
+| `factory:ready`      | instructor           | `0e8a16` | Claim on next pass if unassigned, not postponed, approved, unblocked, not paused, slot free. |
+| `factory:triage`     | factory              | `fbca04` | Assigned to the factory login; session launching.                                            |
+| `factory:building`   | factory              | `1d76db` | Session running; instructor comments and edits forwarded.                                    |
+| `factory:needs-info` | factory              | `d93f0b` | Questions posted; issue unassigned; run finished.                                            |
+| `factory:pr-open`    | factory              | `5319e7` | PR passed the gate and is ready; instructor feedback relaunches.                             |
+| `factory:stuck`      | factory              | `b60205` | Reason posted; issue unassigned; run finished.                                               |
 
 Restart from `needs-info` or `stuck`: an instructor sets `factory:ready`. That is a new run.
 
