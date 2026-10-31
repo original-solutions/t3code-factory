@@ -63,7 +63,7 @@ An issue carries one `factory:*` label at a time. People set two of them; the fa
 
 To start again after `needs-info` or `stuck`, an instructor sets `factory:ready` again. Each time is a new run.
 
-Don't assign the issue to anyone if you want the factory to take it. An assigned `factory:ready` issue is skipped.
+Don't assign the issue to anyone if you want the factory to take it. An assigned `factory:ready` issue is skipped. A `factory:ready` issue labelled `postponed` is skipped too, until the label is removed; a claim or run already in progress is not stopped.
 
 ## Dependency links
 

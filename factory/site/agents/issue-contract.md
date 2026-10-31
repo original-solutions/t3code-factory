@@ -35,13 +35,14 @@ Restart from `needs-info` or `stuck`: an instructor sets `factory:ready`. That i
 
 A claim needs all of:
 
-| Rule                                                                                                             | Failing it                                     |
-| ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| The latest `factory:ready` label event was applied by a login in `instructors` (case-insensitive), of type User. | Moved to `factory:proposed` with a comment.    |
-| No body edit or title change by a non-instructor at or after that label event.                                   | Moved to `factory:proposed` with a comment.    |
-| The edit history is short enough to judge.                                                                       | Moved to `factory:proposed`; file a new issue. |
-| No assignee.                                                                                                     | Skipped.                                       |
-| Issue open.                                                                                                      | Skipped.                                       |
+| Rule                                                                                                             | Failing it                                                                    |
+| ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| The latest `factory:ready` label event was applied by a login in `instructors` (case-insensitive), of type User. | Moved to `factory:proposed` with a comment.                                   |
+| No body edit or title change by a non-instructor at or after that label event.                                   | Moved to `factory:proposed` with a comment.                                   |
+| The edit history is short enough to judge.                                                                       | Moved to `factory:proposed`; file a new issue.                                |
+| No assignee.                                                                                                     | Skipped.                                                                      |
+| No `postponed` label (any case).                                                                                 | Skipped; `claim_skipped` reason `postponed`; nothing is written to the issue. |
+| Issue open.                                                                                                      | Skipped.                                                                      |
 
 ## Dependencies
 

@@ -99,6 +99,21 @@ export type Loaded =
   /** The name of a repo that could not be loaded, already reported. */
   | { readonly kind: "broken"; readonly name: string };
 
+/** An open `factory:ready` issue nobody is assigned to, with its label names. */
+export interface ReadyIssue {
+  readonly number: number;
+  readonly labels: ReadonlyArray<string>;
+}
+
+/**
+ * The label that parks a ready issue: it is not claimed while it has one of this name in any
+ * ASCII case. Checked at claim time only; a run already started goes on.
+ */
+const POSTPONED = "postponed";
+
+const isPostponed = (issue: ReadyIssue) =>
+  issue.labels.some((label) => asciiLower(label) === POSTPONED);
+
 /** What the tracker's cut-short scan found: see `unassignedClaims` on the tracker. */
 export interface ClaimScanResult {
   readonly claims: ReadonlyArray<UnassignedClaim>;
@@ -146,7 +161,7 @@ export interface PassWorld {
     readonly issue: number;
   }) => Effect.Effect<ReadonlyArray<RunInfo>, LedgerError>;
   /** The open `factory:ready` issues nobody is assigned to, and whether the listing was cut. */
-  readonly readyIssues: (repo: Repo) => Effect.Effect<Listing<number>, PassError>;
+  readonly readyIssues: (repo: Repo) => Effect.Effect<Listing<ReadyIssue>, PassError>;
   /** The open `factory:triage` issues the factory's login is the only assignee of. */
   readonly triageIssues: (repo: Repo) => Effect.Effect<Listing<number>, PassError>;
   /**
@@ -2178,6 +2193,8 @@ const noteStart = Effect.fn("Pass.noteStart")(function* (
 interface Queue {
   readonly repo: Repo;
   readonly issues: Array<number>;
+  /** The issues among them labelled `postponed`, which are not claimed. */
+  readonly postponed: ReadonlySet<number>;
   held: number;
 }
 
@@ -2228,9 +2245,11 @@ const claim = Effect.fn("Pass.claim")(function* (
       continue;
     }
     pass.sayIfCut(name, "ready", listing.success.cut);
+    const items = listing.success.items;
     // GitHub numbers go by number, which is the order they were opened in.
-    const issues = [...new Set(listing.success.items)].sort((a, b) => a - b);
-    queues.push({ repo, issues, held: 0 });
+    const issues = [...new Set(items.map((item) => item.number))].sort((a, b) => a - b);
+    const postponed = new Set(items.filter(isPostponed).map((item) => item.number));
+    queues.push({ repo, issues, postponed, held: 0 });
   }
   // A model whose rate limit cools down with no fallback free takes no new session: a repo whose T3
   // project runs on it claims nothing (said once by `sayCooldowns`). Read only while one cools.
@@ -2282,6 +2301,17 @@ const claim = Effect.fn("Pass.claim")(function* (
     // Checked before the blockers: a person paused claims, so no claim is started. The pause is
     // the machine's, said once after the loop.
     if (paused !== null) continue;
+    // A postponed issue is parked by a person: it takes no slot, its blockers are not read, and
+    // nothing is written to it.
+    if (queue.postponed.has(issue)) {
+      notes.parts.push("postponed, not claimed");
+      yield* pass.flush(notes, null);
+      yield* pass.record({
+        event: "claim_skipped",
+        data: { repo: name, issue: String(issue), reason: "postponed" },
+      });
+      continue;
+    }
     // Before the blockers: with no slot free nothing is claimed, so they are not read. The
     // issue's own triage runs end with this claim (`finishOlderRuns`). One with no session leaves
     // its slot to the claim; one whose session may be running keeps it, so no second session
