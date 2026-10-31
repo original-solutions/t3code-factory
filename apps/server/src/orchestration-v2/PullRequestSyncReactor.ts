@@ -388,6 +388,7 @@ export const make = Effect.gen(function* () {
     for (const key of retryStacks) if (!groups.has(key)) retryStacks.delete(key);
     for (const key of requested.keys()) if (!groups.has(key)) requested.delete(key);
     notFound.prune(groups);
+    notFound.claimRefreshes(groups);
 
     const linkedThisSweep = new Set<string>();
     // Fresh stack reads by group, so a member flagged by a sibling is compared against what the
@@ -718,15 +719,33 @@ export const make = Effect.gen(function* () {
       return worker.enqueue("requested");
     });
 
-  return { start, drain: worker.drain, requestSync } satisfies PullRequestSyncReactor["Service"];
+  // A refresh a person asked for through the service reads even a key the host stopped finding.
+  // The reactor's own requests and state changes above do not.
+  const refreshSync: PullRequestSyncReactor["Service"]["requestSync"] = (key) =>
+    Effect.suspend(() => {
+      notFound.refresh(threadPullRequestKeyOf(key));
+      return requestSync(key);
+    });
+
+  return {
+    start,
+    drain: worker.drain,
+    requestSync: refreshSync,
+  } satisfies PullRequestSyncReactor["Service"];
 });
 
 export const layer = Layer.effect(PullRequestSyncReactor, make);
 
 // Fork back-off for pull requests the host cannot find or the credential cannot see (factory/SEAMS).
-// Each failed read doubles the wait before the next one, from one minute up to an hour.
+// Each failed read doubles the wait before the next one, from one minute, until the key is
+// unreachable. The hour cap only matters if the threshold below is raised.
 const NOT_FOUND_FIRST_RETRY_MS = 60 * 1_000;
 const NOT_FOUND_MAX_RETRY_MS = 60 * 60 * 1_000;
+// After this many not-found answers in a row the key is unreachable: only `refreshSync` (a
+// person's refresh or pull request action) reads it, and an answer clears the mark. Link changes
+// and state changes do not, since a state change can be another environment's read. Kept in
+// memory, so a restart starts over.
+const NOT_FOUND_UNREACHABLE_AFTER = 3;
 
 const isPullRequestOperationError = Schema.is(PullRequestOperationError);
 
@@ -745,15 +764,24 @@ function isNotFound(cause: Cause.Cause<unknown>): boolean {
 }
 
 function makeNotFoundBackoff() {
-  const retries = new Map<string, { readonly delayMs: number; readonly retryAtMs: number }>();
+  const retries = new Map<
+    string,
+    { readonly delayMs: number; readonly retryAtMs: number; readonly misses: number }
+  >();
+  // Pull request keys passed to `refreshSync`, waiting for the next sweep to scope them.
+  const pendingRefreshes = new Set<string>();
+  // Sweep keys with such a refresh the host has not answered yet.
+  const refreshes = new Set<string>();
   const record = (key: string, nowMs: number) => {
-    const previous = retries.get(key)?.delayMs;
+    const previous = retries.get(key);
     const delayMs =
       previous === undefined
         ? NOT_FOUND_FIRST_RETRY_MS
-        : Math.min(previous * 2, NOT_FOUND_MAX_RETRY_MS);
-    const retryAtMs = nowMs + delayMs;
-    retries.set(key, { delayMs, retryAtMs });
+        : Math.min(previous.delayMs * 2, NOT_FOUND_MAX_RETRY_MS);
+    const misses = (previous?.misses ?? 0) + 1;
+    const retryAtMs =
+      misses >= NOT_FOUND_UNREACHABLE_AFTER ? Number.POSITIVE_INFINITY : nowMs + delayMs;
+    retries.set(key, { delayMs, retryAtMs, misses });
     return retryAtMs;
   };
   return {
@@ -764,28 +792,60 @@ function makeNotFoundBackoff() {
       nowMs: number,
       requested: Set<string>,
       read: Effect.Effect<void, E, R>,
-    ): Effect.Effect<void, E, R> =>
-      !requested.has(key) && (retries.get(key)?.retryAtMs ?? 0) > nowMs
+    ): Effect.Effect<void, E, R> => {
+      const retryAtMs = retries.get(key)?.retryAtMs ?? 0;
+      if (retryAtMs === Number.POSITIVE_INFINITY && !refreshes.has(key)) {
+        requested.delete(key);
+        return Effect.void;
+      }
+      return !requested.has(key) && retryAtMs > nowMs
         ? Effect.void
         : read.pipe(
-            Effect.tap(() => Effect.sync(() => retries.delete(key))),
+            Effect.tap(() =>
+              Effect.sync(() => {
+                retries.delete(key);
+                refreshes.delete(key);
+              }),
+            ),
             Effect.catchCause((cause) => {
               if (!isNotFound(cause)) {
-                if (!Cause.hasInterruptsOnly(cause)) retries.delete(key);
+                // Another failure ends a not-found run, but only an answer clears unreachable.
+                if (
+                  !Cause.hasInterruptsOnly(cause) &&
+                  retries.get(key)?.retryAtMs !== Number.POSITIVE_INFINITY
+                ) {
+                  retries.delete(key);
+                }
                 return Effect.failCause(cause);
               }
               // The host answered the refresh, so it is not asked again before the back-off ends.
               requested.delete(key);
+              refreshes.delete(key);
               // Logged per key, not batched with other skips, so each line carries its own retryAt.
+              const retryAtMs = record(key, nowMs);
               return Effect.logWarning("pull request sync skipped", {
                 key,
                 reason: skipReason(cause),
-                retryAt: DateTime.formatIso(DateTime.makeUnsafe(record(key, nowMs))),
+                ...(retryAtMs === Number.POSITIVE_INFINITY
+                  ? { unreachable: true }
+                  : { retryAt: DateTime.formatIso(DateTime.makeUnsafe(retryAtMs)) }),
               });
             }),
-          ),
+          );
+    },
+    refresh: (pullRequestKey: string) => {
+      pendingRefreshes.add(pullRequestKey);
+    },
+    // Called once per sweep, beside the upstream hand-off of pending requests to `requested`.
+    claimRefreshes: (groups: ReadonlyMap<string, ReadonlyArray<LinkEntry>>) => {
+      for (const [key, entries] of groups) {
+        if (pendingRefreshes.has(threadPullRequestKeyOf(entries[0]!.link))) refreshes.add(key);
+      }
+      pendingRefreshes.clear();
+    },
     prune: (live: ReadonlyMap<string, unknown>) => {
       for (const key of retries.keys()) if (!live.has(key)) retries.delete(key);
+      for (const key of refreshes) if (!live.has(key)) refreshes.delete(key);
     },
   };
 }
