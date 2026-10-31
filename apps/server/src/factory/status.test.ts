@@ -288,6 +288,7 @@ describe("buildStatus: runs and slots", () => {
         for_ms: 2 * HOUR + 10 * MIN,
         pr_url: "https://github.com/original-solutions/answer-bot/pull/4",
         thread_id: "thread:b",
+        pr_reported: true,
         unreadable: false,
       },
       {
@@ -299,6 +300,7 @@ describe("buildStatus: runs and slots", () => {
         for_ms: 34 * MIN,
         pr_url: "https://github.com/rawphp/softfac/pull/63",
         thread_id: "thread:a",
+        pr_reported: false,
         unreadable: false,
       },
       {
@@ -310,6 +312,7 @@ describe("buildStatus: runs and slots", () => {
         for_ms: 5 * MIN,
         pr_url: null,
         thread_id: null,
+        pr_reported: false,
         unreadable: false,
       },
       {
@@ -321,6 +324,7 @@ describe("buildStatus: runs and slots", () => {
         for_ms: null,
         pr_url: null,
         thread_id: null,
+        pr_reported: false,
         unreadable: false,
       },
       ...(readable
@@ -334,6 +338,7 @@ describe("buildStatus: runs and slots", () => {
               for_ms: null,
               pr_url: null,
               thread_id: null,
+              pr_reported: false,
               unreadable: true,
             },
           ]
@@ -375,6 +380,21 @@ describe("buildStatus: runs and slots", () => {
     const dir = tempDir();
     const readable = runsFixture(dir);
     expect(report(dir).slots).toEqual({ used: readable ? 2 : 1, max: 5 });
+  });
+
+  it("a building run whose session reported its pull request says so and holds no slot", () => {
+    const dir = tempDir();
+    writeRun(dir, "rawphp__softfac__5__1", [
+      claimed(ago(HOUR)),
+      launched(ago(50 * MIN), "thread:a"),
+      state(ago(50 * MIN), "triage", "building"),
+      prOpened(ago(MIN), 9, "https://github.com/rawphp/softfac/pull/9"),
+    ]);
+    const status = report(dir);
+    expect(status.runs.map((row) => [row.id, row.state, row.pr_reported])).toEqual([
+      ["rawphp__softfac__5__1", "building", true],
+    ]);
+    expect(status.slots.used).toBe(0);
   });
 
   it("a run shows the user its claim names and null when there is none", () => {
@@ -719,6 +739,7 @@ describe("buildStatus: the rest of the report", () => {
           for_ms: 34 * MIN,
           pr_url: "https://github.com/rawphp/softfac/pull/63",
           thread_id: "thread:a",
+          pr_reported: false,
           unreadable: false,
         },
       ],

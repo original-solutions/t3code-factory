@@ -90,6 +90,8 @@ describe("stationOf", () => {
     [{ state: "building", last_event: null }, "building"],
     [{ state: "building", last_event: "gate_checkout" }, "gate"],
     [{ state: "building", last_event: "gate_command" }, "gate"],
+    [{ state: "building", last_event: "pr_opened", pr_reported: true }, "gate"],
+    [{ state: "building", last_event: "pr_opened", pr_reported: false }, "building"],
     [{ state: "pr-open", last_event: "gate_checkout" }, "pr"],
     [{ state: "pr-open", last_event: "gate_regate" }, "pr"],
     [{ state: "stuck", last_event: "stuck" }, null],

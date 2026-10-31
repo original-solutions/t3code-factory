@@ -101,6 +101,8 @@ export interface StatusReport {
     readonly for_ms: number | null;
     readonly pr_url: string | null;
     readonly thread_id: string | null;
+    /** Its session reported a pull request since it last entered `building`: it waits for the gate. */
+    readonly pr_reported: boolean;
     readonly unreadable: boolean;
   }>;
   /** The unfinished runs, also in `runs`, whose repo is not in the machine config. */
@@ -246,6 +248,7 @@ const runRow = (read: RunRead, nowMs: number): StatusReport["runs"][number] => {
     for_ms: lastChange === undefined ? null : Math.max(0, nowMs - lastChange.ms),
     pr_url: summary.prUrl,
     thread_id: seen?.threadId ?? null,
+    pr_reported: seen?.prReported ?? false,
     unreadable: summary.unreadable,
   };
 };

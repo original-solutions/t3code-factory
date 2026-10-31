@@ -25,14 +25,16 @@ type StatusRun = FactoryStatus["runs"][number];
  * for a state that is on no post (stuck and needs-info runs are in the bins, once finished).
  */
 export function stationOf(
-  run: Pick<StatusRun, "state" | "last_event">,
+  run: Pick<StatusRun, "state" | "last_event" | "pr_reported">,
 ): Exclude<Station, "done"> | null {
   switch (run.state) {
     case null:
     case "triage":
       return "claimed";
     case "building":
-      return run.last_event === "gate_checkout" || run.last_event === "gate_command"
+      return run.pr_reported === true ||
+        run.last_event === "gate_checkout" ||
+        run.last_event === "gate_command"
         ? "gate"
         : "building";
     case "pr-open":
