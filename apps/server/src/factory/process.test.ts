@@ -3,6 +3,7 @@ import { assert, it, vi } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Logger from "effect/Logger";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -432,5 +433,22 @@ it.live("truncated is true only when a tail dropped bytes", () =>
     assert.strictEqual(stderrCut.tail, "ok\n");
     assert.strictEqual(stderrCut.stderrTail, "efgh");
     assert.strictEqual(stderrCut.truncated, true);
+  }),
+);
+
+it.live("a priority that cannot be set leaves the command running and logs one warning", () =>
+  Effect.gen(function* () {
+    const logs: Array<string> = [];
+    const capture = Logger.make(({ logLevel, message }) => {
+      logs.push(`${logLevel} ${String(Array.isArray(message) ? message[0] : message)}`);
+    });
+    // 100 is outside the range setPriority accepts, so it throws for root too.
+    const result = yield* run({ command: "echo ran", shell: true, niceness: 100 }).pipe(
+      Effect.provide(Logger.layer([capture], { mergeWithExisting: false })),
+    );
+    assert.strictEqual(result.exitCode, 0);
+    assert.strictEqual(result.tail, "ran\n");
+    assert.strictEqual(logs.length, 1, logs.join("\n"));
+    assert.match(logs[0]!, /^Warn /);
   }),
 );

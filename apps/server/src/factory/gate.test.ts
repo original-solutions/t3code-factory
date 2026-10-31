@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { describe } from "vite-plus/test";
 
@@ -1480,6 +1481,32 @@ it.live("provision runs before the gate and a failing provision command stops th
         ["exit 3", 3],
       ],
     );
+  }).pipe(provided),
+);
+
+it.live("provision and gate commands, and what they start, run at niceness 10", () =>
+  Effect.gen(function* () {
+    const remote = makeRemote("gate-nice");
+    const dataDir = tempDir("gate-nice-data");
+    const run = newRunId(REPO, "10", 1);
+    const sha = remote.push([["README", "pushed\n"]]);
+    Ledger.create(dataDir, run, { clock: ticking(T0, 1000) }).close();
+    const own = NodeOS.getPriority();
+    const gate = yield* FactoryGate;
+    // The inner sh runs two commands, so it stays a separate grandchild instead of exec'ing ps.
+    const result = yield* gate.run({
+      ...baseInput(remote, dataDir, run, sha, sha),
+      provision: ["ps -o nice= -p $$"],
+      gate: ["ps -o nice= -p $$", "sh -c 'ps -o nice= -p $$; true'"],
+    });
+    assert.strictEqual(result._tag, "pass");
+    // A host whose server already runs above 10 keeps its own floor.
+    const expected = String(Math.max(10, own));
+    assert.deepStrictEqual(
+      result.commands.map((c) => c.output.trim()),
+      [expected, expected, expected],
+    );
+    assert.strictEqual(NodeOS.getPriority(), own);
   }).pipe(provided),
 );
 
