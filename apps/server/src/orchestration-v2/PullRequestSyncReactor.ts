@@ -662,7 +662,7 @@ export const make = Effect.gen(function* () {
       yield* git.subscribePullRequestStateChanges,
     );
     yield* forkParked(
-      Stream.runForEach(stateChanges, requestSync).pipe(
+      Stream.runForEach(stateChanges, refreshSync).pipe(
         Effect.catchCause(logSkipped("pull request state change stream failed", {})),
       ),
     );
@@ -719,14 +719,18 @@ export const make = Effect.gen(function* () {
       return worker.enqueue("requested");
     });
 
+  // A refresh someone asked for, or a reader that saw the pull request, reads even a key the
+  // host stopped finding; the reactor's own requests above do not.
+  const refreshSync: PullRequestSyncReactor["Service"]["requestSync"] = (key) =>
+    Effect.suspend(() => {
+      notFound.refresh(threadPullRequestKeyOf(key));
+      return requestSync(key);
+    });
+
   return {
     start,
     drain: worker.drain,
-    requestSync: (key) =>
-      Effect.suspend(() => {
-        notFound.refresh(threadPullRequestKeyOf(key));
-        return requestSync(key);
-      }),
+    requestSync: refreshSync,
   } satisfies PullRequestSyncReactor["Service"];
 });
 
@@ -737,10 +741,10 @@ export const layer = Layer.effect(PullRequestSyncReactor, make);
 // unreachable. The hour cap only matters if the threshold below is raised.
 const NOT_FOUND_FIRST_RETRY_MS = 60 * 1_000;
 const NOT_FOUND_MAX_RETRY_MS = 60 * 60 * 1_000;
-// After this many not-found answers in a row the key is unreachable: only a refresh asked for
-// through the service reads it, and an answer clears the mark. The reactor's own requests (a link
-// change asks again for every link without a snapshot) do not. Kept in memory, so a restart
-// starts over.
+// After this many not-found answers in a row the key is unreachable: only `refreshSync` (a
+// requested refresh, or a reader that saw the pull request) reads it, and an answer clears the
+// mark. The reactor's own requests (a link change asks again for every link without a snapshot)
+// do not. Kept in memory, so a restart starts over.
 const NOT_FOUND_UNREACHABLE_AFTER = 3;
 
 const isPullRequestOperationError = Schema.is(PullRequestOperationError);
@@ -764,7 +768,7 @@ function makeNotFoundBackoff() {
     string,
     { readonly delayMs: number; readonly retryAtMs: number; readonly misses: number }
   >();
-  // Pull request keys refreshed through the service, waiting for the next sweep to scope them.
+  // Pull request keys passed to `refreshSync`, waiting for the next sweep to scope them.
   const pendingRefreshes = new Set<string>();
   // Sweep keys with such a refresh the host has not answered yet.
   const refreshes = new Set<string>();
