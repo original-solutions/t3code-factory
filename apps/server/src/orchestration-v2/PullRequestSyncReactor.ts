@@ -727,6 +727,9 @@ export const layer = Layer.effect(PullRequestSyncReactor, make);
 // Each failed read doubles the wait before the next one, from one minute up to an hour.
 const NOT_FOUND_FIRST_RETRY_MS = 60 * 1_000;
 const NOT_FOUND_MAX_RETRY_MS = 60 * 60 * 1_000;
+// After this many not-found answers in a row the key is unreachable: scheduled sweeps stop
+// reading it until a requested refresh gets an answer. Kept in memory, so a restart starts over.
+const NOT_FOUND_UNREACHABLE_AFTER = 3;
 
 const isPullRequestOperationError = Schema.is(PullRequestOperationError);
 
@@ -745,15 +748,20 @@ function isNotFound(cause: Cause.Cause<unknown>): boolean {
 }
 
 function makeNotFoundBackoff() {
-  const retries = new Map<string, { readonly delayMs: number; readonly retryAtMs: number }>();
+  const retries = new Map<
+    string,
+    { readonly delayMs: number; readonly retryAtMs: number; readonly misses: number }
+  >();
   const record = (key: string, nowMs: number) => {
-    const previous = retries.get(key)?.delayMs;
+    const previous = retries.get(key);
     const delayMs =
       previous === undefined
         ? NOT_FOUND_FIRST_RETRY_MS
-        : Math.min(previous * 2, NOT_FOUND_MAX_RETRY_MS);
-    const retryAtMs = nowMs + delayMs;
-    retries.set(key, { delayMs, retryAtMs });
+        : Math.min(previous.delayMs * 2, NOT_FOUND_MAX_RETRY_MS);
+    const misses = (previous?.misses ?? 0) + 1;
+    const retryAtMs =
+      misses >= NOT_FOUND_UNREACHABLE_AFTER ? Number.POSITIVE_INFINITY : nowMs + delayMs;
+    retries.set(key, { delayMs, retryAtMs, misses });
     return retryAtMs;
   };
   return {
@@ -771,16 +779,25 @@ function makeNotFoundBackoff() {
             Effect.tap(() => Effect.sync(() => retries.delete(key))),
             Effect.catchCause((cause) => {
               if (!isNotFound(cause)) {
-                if (!Cause.hasInterruptsOnly(cause)) retries.delete(key);
+                // Another failure ends a not-found run, but only an answer clears unreachable.
+                if (
+                  !Cause.hasInterruptsOnly(cause) &&
+                  retries.get(key)?.retryAtMs !== Number.POSITIVE_INFINITY
+                ) {
+                  retries.delete(key);
+                }
                 return Effect.failCause(cause);
               }
               // The host answered the refresh, so it is not asked again before the back-off ends.
               requested.delete(key);
               // Logged per key, not batched with other skips, so each line carries its own retryAt.
+              const retryAtMs = record(key, nowMs);
               return Effect.logWarning("pull request sync skipped", {
                 key,
                 reason: skipReason(cause),
-                retryAt: DateTime.formatIso(DateTime.makeUnsafe(record(key, nowMs))),
+                ...(retryAtMs === Number.POSITIVE_INFINITY
+                  ? { unreachable: true }
+                  : { retryAt: DateTime.formatIso(DateTime.makeUnsafe(retryAtMs)) }),
               });
             }),
           ),

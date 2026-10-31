@@ -499,12 +499,13 @@ describe("pull request sync for a pull request the host cannot find or the crede
             [iso(1), iso(3), iso(5), iso(7), true],
           );
 
-          // Once unreachable, a rate-limited refresh does not bring back scheduled reads.
+          // Once unreachable, a rate-limited refresh does not bring back scheduled reads. The
+          // refresh itself is still owed an answer, so it reads once more after the limit.
           answers = ["rate-limited"];
           yield* refresh(fixture, reactor, link);
           assert.strictEqual(yield* callsFor(fixture, 719), 7);
           yield* sweep(fixture, reactor, 60);
-          assert.strictEqual(yield* callsFor(fixture, 719), 7);
+          assert.strictEqual(yield* callsFor(fixture, 719), 8);
         }),
     );
   });
