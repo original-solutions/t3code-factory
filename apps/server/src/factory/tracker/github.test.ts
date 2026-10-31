@@ -120,13 +120,13 @@ const fileReply = (kind: string, encoding: string, size: number, content: string
   `{"name":"config.yml","path":".dw/config.yml","sha":"abc","size":${size},"url":"https://api.github.com/repos/rawphp/softfac/contents/.dw/config.yml?ref=main","type":"${kind}","content":${JSON.stringify(content)},"encoding":"${encoding}","_links":{"self":"x"}}`;
 
 const LIST_ONE =
-  '[{"assignees":[{"id":"MDQ6VXNlcjE=","login":"rawphp","name":"Tom"}],"number":6,"title":"GitHub client"}]';
+  '[{"assignees":[{"id":"MDQ6VXNlcjE=","login":"rawphp","name":"Tom"}],"labels":[{"id":"LA_1","name":"factory:needs-info","description":"d","color":"d93f0b"}],"number":6,"title":"GitHub client"}]';
 const LIST_MANY =
-  '[{"assignees":[],"number":6,"title":"GitHub client"},{"assignees":[{"login":"a"},{"login":"b"}],"number":9,"title":"Daemon loop"}]';
+  '[{"assignees":[],"labels":[],"number":6,"title":"GitHub client"},{"assignees":[{"login":"a"},{"login":"b"}],"labels":[{"name":"factory:ready"},{"name":"Postponed"}],"number":9,"title":"Daemon loop"}]';
 
 const listingOf = (count: number) =>
   `[${Array.from({ length: count }, (_, i) => count - i)
-    .map((n) => `{"assignees":[],"number":${n},"title":"issue ${n}"}`)
+    .map((n) => `{"assignees":[],"labels":[],"number":${n},"title":"issue ${n}"}`)
     .join(",")}]`;
 
 const labelsReply = (names: ReadonlyArray<string>) =>
@@ -651,7 +651,7 @@ it.effect("listIssues with none", () =>
         "--limit",
         "201",
         "--json",
-        "number,title,assignees",
+        "number,title,assignees,labels",
       ],
     ]);
   }),
@@ -662,19 +662,24 @@ it.effect("listIssues with one ignores unknown fields", () =>
     const t = setup(reply(LIST_ONE));
     const issues = yield* t.ok(t.github.listIssues("needs-info"));
     assert.deepStrictEqual(issues.items, [
-      { number: 6, title: "GitHub client", assignees: ["rawphp"] },
+      { number: 6, title: "GitHub client", assignees: ["rawphp"], labels: ["factory:needs-info"] },
     ]);
     assert.strictEqual(t.calls()[0]![7], "factory:needs-info");
   }),
 );
 
-it.effect("listIssues with several", () =>
+it.effect("listIssues with several carries each one's label names, or none", () =>
   Effect.gen(function* () {
     const t = setup(reply(LIST_MANY));
     const issues = yield* t.ok(t.github.listIssues("ready"));
     assert.deepStrictEqual(issues.items, [
-      { number: 6, title: "GitHub client", assignees: [] },
-      { number: 9, title: "Daemon loop", assignees: ["a", "b"] },
+      { number: 6, title: "GitHub client", assignees: [], labels: [] },
+      {
+        number: 9,
+        title: "Daemon loop",
+        assignees: ["a", "b"],
+        labels: ["factory:ready", "Postponed"],
+      },
     ]);
   }),
 );
