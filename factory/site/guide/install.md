@@ -88,6 +88,8 @@ The same scripts install and update the server on an x64 or arm64 Linux machine.
 | `launchctl print gui/$(id -u)/io.github.rawphp.t3fac`              | `systemctl --user status t3fac`                                             |
 | `launchctl bootout gui/$(id -u)/io.github.rawphp.t3fac.autodeploy` | `systemctl --user disable --now t3fac-autodeploy.timer`                     |
 
+The Linux build also needs `patchelf` on the `PATH`, which bundles `libatomic` into the binary: `sudo apt install patchelf`, or without root, `apt-get download patchelf` and copy `usr/bin/patchelf` out of the package with `dpkg -x` into `~/.local/bin`.
+
 For the server to run while you are logged out, and to start at boot, turn on lingering once: `loginctl enable-linger $USER`. The install overwrites `t3fac.service` from its template, so put machine settings in `~/.config/t3fac/env`, not in the unit. **Update now** on the Factory page starts `t3fac-autodeploy.service` at once.
 
 ## Install the desktop app
