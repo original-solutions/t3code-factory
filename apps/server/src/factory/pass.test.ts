@@ -346,16 +346,17 @@ class Fake implements PassWorld {
   }
 
   readyIssues(repo: Repo) {
-    this.calls.push(`ready ${repo.watched.repo}`);
-    return this.listing(this.ready, this.readyCut, repo).pipe(
-      Effect.map((listing) => ({
-        items: listing.items.map((number) => ({
-          number,
-          labels: this.labels[`${repo.watched.repo}#${number}`] ?? [],
-        })),
-        cut: listing.cut,
+    const name = repo.watched.repo;
+    this.calls.push(`ready ${name}`);
+    const found = this.ready[name];
+    if (found === "error") return Effect.fail(trackerFailure());
+    return Effect.succeed({
+      items: (found ?? []).map((number) => ({
+        number,
+        labels: this.labels[`${name}#${number}`] ?? [],
       })),
-    );
+      cut: this.readyCut.includes(name),
+    });
   }
 
   triageIssues(repo: Repo) {
