@@ -2355,7 +2355,7 @@ describe("issues labelled postponed", () => {
         !fake.calls.some((c) => c.endsWith(`${REPO}#14`) && /^(blockers|depends) /.test(c)),
       );
       assert.equal(runLine(lines, `${REPO}#14 `), POSTPONED_LINE);
-      assert.deepEqual([report.claimed, report.errors], [0, 0]);
+      assert.deepEqual([report.claimed, report.errors, report.attention], [0, 0, 0]);
       const skipped = fake.events.filter((e) => e.event === "claim_skipped");
       assert.deepEqual(skipped, [claimSkipped(14, "postponed")]);
     }),
