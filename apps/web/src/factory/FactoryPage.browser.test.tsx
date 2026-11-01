@@ -831,12 +831,51 @@ describe("FactoryPage run cards at 375 px", () => {
           !a.closest('[aria-label="Today"]'),
       );
     expect(link).toBeDefined();
-    const text = link!.textContent ?? "";
-    for (const part of ["original-solutions/t3code-factory", "building", "launch-sending", "2h"]) {
+    expect(link!.textContent).toContain("building");
+    const text = link!.closest("li")!.textContent ?? "";
+    for (const part of ["t3code-factory", "launch-sending", "2h"]) {
       expect(text).toContain(part);
     }
     // A card is one link: nothing inside it is another link.
     expect(link!.querySelectorAll("a")).toHaveLength(0);
+    await page.unmount();
+  });
+
+  it("fits a finished run in one title line over one row of repo, age and links", async () => {
+    using _state = setup();
+    state.runs = resource({
+      data: {
+        runs: [
+          runRow({
+            title: "Fix the claim guard",
+            state: "pr-open",
+            pr_end: "merged",
+            step: "finished",
+            finished: true,
+          }),
+        ],
+      },
+    });
+    await using page = await renderAt(375, createElement(FactoryPage));
+    const card = page
+      .all('[data-layout="cards"] a')
+      .find((a) => a.getAttribute("data-to") === "/factory/$environmentId/$runId")!
+      .closest("li")!;
+    expect(card.getBoundingClientRect().height).toBeLessThanOrEqual(80);
+    const text = card.textContent ?? "";
+    expect(text).toContain("t3code-factory");
+    expect(text).not.toContain("original-solutions/");
+    // The badge already says how it ended; "finished" would repeat it.
+    expect(text).not.toContain("finished");
+    const middle = (node: Element) => {
+      const box = node.getBoundingClientRect();
+      return box.top + box.height / 2;
+    };
+    const meta = card.querySelector("[data-run-meta]")!;
+    const issue = Array.from(card.querySelectorAll("a")).find((a) =>
+      a.textContent?.startsWith("Issue"),
+    )!;
+    expect(Math.abs(middle(meta) - middle(issue))).toBeLessThan(4);
     await page.unmount();
   });
 

@@ -69,8 +69,9 @@ const stateBadge = (run: FactoryRunRow) => {
 };
 
 /**
- * One run for a phone: a link to the run that is the card's main tap target, and below it, outside
- * that link so no anchor nests in another, the links to the issue and the pull request.
+ * One run for a phone, as short as a tap list allows: the title and state, then one row of the
+ * repo, age and the run's actions. The run link stretches over the whole card; the actions sit
+ * above it, outside it, so no anchor nests in another.
  */
 function RunCard({
   entry: { environmentId, label, run },
@@ -86,32 +87,34 @@ function RunCard({
   actionsOf: RunActionsOf;
 }) {
   const parsed = parseRunId(run.id);
+  const repo = parsed ? `${parsed.owner}/${parsed.repo}` : null;
+  // The badge already says how a finished run ended.
+  const step = run.finished ? null : (run.step ?? run.last_event);
   return (
-    <li className="flex flex-col rounded-lg border bg-card text-sm">
+    <li className="relative flex flex-col gap-0.5 rounded-lg border bg-card px-3 pt-2 pb-1 text-sm">
       <Link
-        className="flex min-h-11 flex-col gap-1 rounded-lg px-3 py-2 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+        className="flex items-start justify-between gap-2 outline-none after:absolute after:inset-0 after:rounded-lg focus-visible:after:ring-2 focus-visible:after:ring-ring focus-visible:after:ring-inset"
         data-run-link={runLinkKey(environmentId, run.id)}
         params={{ environmentId, runId: run.id }}
         state={{ factoryRunQueue: queue }}
         to="/factory/$environmentId/$runId"
       >
-        <span className="flex items-start justify-between gap-2">
-          <span className="min-w-0 break-words font-medium">
-            {run.title ?? (parsed ? `${parsed.owner}/${parsed.repo}` : run.id)}
-          </span>
-          {stateBadge(run)}
+        <span className="line-clamp-2 min-w-0 break-words font-medium">
+          {run.title ?? repo ?? run.id}
         </span>
-        <span className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-          {run.title && parsed ? (
-            <span className="min-w-0 break-words">{`${parsed.owner}/${parsed.repo}`}</span>
-          ) : null}
-          <span className="min-w-0 break-words">{run.step ?? run.last_event ?? "-"}</span>
-          <span>{formatAge(startedMs(run), nowMs)}</span>
-          {showEnvironment ? <span className="min-w-0 break-words">{label}</span> : null}
-        </span>
+        {stateBadge(run)}
       </Link>
-      <span className="flex px-3 text-xs text-muted-foreground empty:hidden">
-        {actionsOf(environmentId, run, { touch: true })}
+      <span className="flex min-h-8 flex-wrap items-center gap-x-3 text-xs text-muted-foreground">
+        <span className="flex min-w-0 gap-x-2 truncate" data-run-meta="">
+          {run.title && parsed ? <span className="truncate">{parsed.repo}</span> : null}
+          {step ? <span className="truncate">{step}</span> : null}
+          <span className="shrink-0">{formatAge(startedMs(run), nowMs)}</span>
+          {showEnvironment ? <span className="truncate">{label}</span> : null}
+        </span>
+        {actionsOf(environmentId, run, {
+          touch: true,
+          className: "relative z-10 ml-auto -my-1.5 gap-x-4",
+        })}
       </span>
     </li>
   );
