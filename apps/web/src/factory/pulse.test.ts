@@ -51,6 +51,14 @@ const attention = (id: string) => ({
   first_seen: "2026-11-01T00:00:00Z",
 });
 
+const signedOut = (repo: string) => ({
+  ...attention(`config-not-loaded:${repo}`),
+  kind: "attention",
+  repo,
+  issue: null,
+  message: `${repo}: project config not loaded; last error: exited with status 4: please run: gh auth login`,
+});
+
 describe("factoryPulse", () => {
   it("lists runs nearest to done first, then longest at their post, and skips unreadable ones", () => {
     const pulse = factoryPulse([
@@ -98,13 +106,15 @@ describe("factoryPulse", () => {
     [{ health: health(true, false) }, "low disk"],
     [{ health: health(false, true) }, "high load"],
     [{ passes: { at: null, poll_seconds: 600, running: false, stale: true } }, "pass overdue"],
+    [{ attention: [signedOut("acme/widgets")] }, "gh signed out"],
   ] as const)("names the hold %#, and a hold outranks runs in flight", (overrides, hold) => {
     const pulse = factoryPulse([
       { environmentId: ENV_A, label: "mac", status: status({ ...overrides, runs: [run(1)] }) },
     ]);
     expect(pulse.environments[0]!.hold).toBe(hold);
     expect(pulse.tone).toBe("held");
-    expect(pulse.summary).toBe(`1 run in flight · ${hold}`);
+    // A hold raised by an attention item (a signed-out gh) still counts that item as needing you.
+    expect(pulse.summary).toMatch(new RegExp(`^1 run in flight · ${hold}( · 1 needs you)?$`));
   });
 
   it("does not count a snoozed update as a hold", () => {
@@ -137,7 +147,11 @@ describe("factoryPulse", () => {
       {
         environmentId: ENV_B,
         label: "vps",
-        status: status({ ...paused, attention: [attention("b"), attention("c")] }),
+        // One signed-out gh is one thing to fix, however many repos it fails.
+        status: status({
+          ...paused,
+          attention: [attention("b"), signedOut("acme/web"), signedOut("acme/api")],
+        }),
       },
       { environmentId: "env-c" as EnvironmentId, label: "laptop", status: null },
     ]);

@@ -365,9 +365,11 @@ export function FactoryPage() {
       <>
         {scope}
         <FactoryQueue
-          environments={shownEnvironments
-            .filter(({ status }) => status.data !== null)
-            .map(({ environmentId, label }) => ({ environmentId, label }))}
+          environments={shownEnvironments.flatMap(({ environmentId, label, status }) =>
+            status.data === null
+              ? []
+              : [{ environmentId, label, attention: status.data.attention }],
+          )}
           recent={
             new Map(
               answered.map(({ environmentId }) => [

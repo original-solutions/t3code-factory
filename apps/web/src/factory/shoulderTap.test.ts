@@ -25,6 +25,13 @@ const stuck = item({
   message: "acme/web: the gate failed 3 times",
 });
 
+const signedOut = (repo: string | null) =>
+  item({
+    id: repo === null ? "pass-errors" : `config-not-loaded:${repo}`,
+    repo,
+    message: `${repo ?? "the pass"}: last error: exited with status 4: please run: gh auth login`,
+  });
+
 describe("attentionNews", () => {
   it("takes the first read as what was already there, with no news", () => {
     const { fresh, seen } = attentionNews(undefined, [stuck]);
@@ -41,6 +48,14 @@ describe("attentionNews", () => {
     expect(third.fresh).toEqual([]);
     // Dismissed, then raised again: news again.
     expect(attentionNews(third.seen, [stuck, disk]).fresh).toEqual([disk]);
+  });
+
+  it("takes a signed-out gh as news once, not again for each repo it then fails", () => {
+    const first = attentionNews(new Set(), [signedOut("acme/web")]);
+    expect(first.fresh).toEqual([signedOut("acme/web")]);
+    expect(attentionNews(first.seen, [signedOut("acme/web"), signedOut("acme/api")]).fresh).toEqual(
+      [],
+    );
   });
 });
 
@@ -91,6 +106,21 @@ describe("tapOf", () => {
       body: "acme/web #12 is stuck · low disk · and 1 more",
       runId: null,
       environmentId: env,
+    });
+  });
+
+  it("tells a signed-out gh as one sign-in, however many items it raised at once", () => {
+    expect(
+      tapOf(env, null, [signedOut("acme/web"), signedOut("acme/api"), signedOut(null)]),
+    ).toEqual({
+      title: "The factory's gh is signed out",
+      body: "The factory's gh is signed out, so it cannot read any of its 2 repos: web, api.",
+      runId: null,
+      environmentId: env,
+    });
+    expect(tapOf(env, null, [stuck, signedOut("acme/web"), signedOut("acme/api")])).toMatchObject({
+      title: "2 new things need you in the factory",
+      body: "acme/web #12 is stuck · GitHub sign-in",
     });
   });
 

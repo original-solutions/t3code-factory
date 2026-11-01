@@ -15,6 +15,7 @@ import { useBeltNews } from "./beltNews";
 import { BeltChanges } from "./BeltChanges";
 import { BeltRail, type ClaimsHeldWhy } from "./BeltRail";
 import { machineHold } from "./machineHealth";
+import { signedOutCause } from "./attentionCauses";
 import { MachineHealthPanel } from "./MachineHealthPanel";
 import { ControlFoldProvider, DIAL_CELL } from "./ControlFold";
 import { MachineRoster, useSecond } from "./MachineRoster";
@@ -402,7 +403,12 @@ export function FactoryBelt({
             why: "held for low disk",
             since: lowDiskSince === undefined ? null : Date.parse(lowDiskSince),
           }
-        : null;
+        : report && machineHold(report)?.word === "gh signed out"
+          ? {
+              why: "held for GitHub sign-in",
+              since: Date.parse(signedOutCause(report.attention)!.firstSeen),
+            }
+          : null;
   const deployNote = deployNotes.get(selected.environmentId);
 
   return (

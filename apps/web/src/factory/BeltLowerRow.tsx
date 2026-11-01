@@ -10,9 +10,9 @@ import { cn } from "~/lib/utils";
 
 import type { FactoryAttentionItem } from "./api";
 import type { BeltRun } from "./belt";
+import { groupByCause, signedOutLine } from "./attentionCauses";
 import { BeltDot } from "./BeltDot";
 import { FactoryCard, FactoryCardHeader } from "./FactoryCard";
-import { foldSignedOut } from "./gitHubSignIn";
 import { formatAge, issueRef, parseRunId, withoutRepoPrefix } from "./format";
 import { JUMP_TARGET_CLASS, jumpTarget } from "./pageSections";
 import { Ref } from "./Ref";
@@ -115,11 +115,6 @@ function AttentionItem({
   );
 }
 
-const repoNames = (repos: ReadonlyArray<string>) => {
-  const shown = repos.slice(0, 3).map((repo) => repo.split("/").pop() ?? repo);
-  return repos.length > 3 ? `${shown.join(", ")} and ${repos.length - 3} more` : shown.join(", ");
-};
-
 /**
  * One environment's signed-out gh: one item, since every repo read and the pass fail on it, with
  * the way to the sign-in command and one Dismiss for all of them.
@@ -154,14 +149,7 @@ function SignedOutItem({
         </span>
       </div>
       <p className="w-full break-words">
-        {repos.length === 0
-          ? "The factory's gh is signed out, so its passes cannot read GitHub."
-          : `The factory's gh is signed out, so it cannot read ${
-              repos.length === 1
-                ? repos[0]
-                : `any of its ${repos.length} repos: ${repoNames(repos)}`
-            }.`}{" "}
-        No issue is claimed until it signs in.
+        {signedOutLine(repos)} No issue is claimed until it signs in.
       </p>
       {whole ? (
         <ul className="flex flex-col gap-1 text-xs text-muted-foreground">
@@ -204,7 +192,7 @@ function AttentionSection({
   nowMs: number;
   onDismiss: (items: ReadonlyArray<EnvironmentAttention>) => void;
 }) {
-  const rows = foldSignedOut(items);
+  const rows = groupByCause(items);
   return (
     <FactoryCard
       aria-label="Needs attention"

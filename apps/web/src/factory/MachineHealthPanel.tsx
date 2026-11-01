@@ -105,6 +105,11 @@ function Hold({
             </span>
           </div>
         ) : null}
+        {hold.key === "signed-out" ? (
+          <TouchLink render={<Link search={{ machine: environmentId }} to="/settings/factory" />}>
+            Sign in
+          </TouchLink>
+        ) : null}
       </div>
     </li>
   );

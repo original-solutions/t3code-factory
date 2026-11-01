@@ -30,11 +30,16 @@ const run = (id: string, started: string, extra: Partial<FactoryRunRow> = {}): F
   ...extra,
 });
 
-const source = (q: FactoryReadyQueue, runs: ReadonlyArray<FactoryRunRow> = []): QueueSource => ({
+const source = (
+  q: FactoryReadyQueue,
+  runs: ReadonlyArray<FactoryRunRow> = [],
+  attention: QueueSource["attention"] = [],
+): QueueSource => ({
   environmentId: ENV,
   label: "Mac",
   queue: q,
   runs,
+  attention,
 });
 
 const wait = (repo: string, issue: string, reason: string, since: string, passes = 3) => ({
@@ -130,10 +135,51 @@ describe("queueView", () => {
         label: "Mac",
         words: ["free disk space is below min_free_gib", "claims are paused by hand", "new-thing"],
         checkedMs: Date.parse("2026-10-31T14:00:00.000Z"),
+        signedOut: false,
       },
     ]);
     expect(view.skipped.map(({ repo, words }) => [repo, words])).toEqual([
       ["acme/app", "its .dw/config.yml could not be read"],
+    ]);
+  });
+
+  it("tells a signed-out gh as what stops claims, and the repos it failed as signed out", () => {
+    const signedOut = (repo: string) => ({
+      id: `config-not-loaded:${repo.toLowerCase()}`,
+      kind: "attention",
+      repo,
+      issue: null,
+      run: null,
+      message: `${repo}: last error: exited with status 4: please run: gh auth login`,
+      first_seen: "2026-10-31T13:00:00.000Z",
+    });
+    const view = queueView(
+      [
+        source(
+          queue({
+            skipped_repos: [
+              { repo: "acme/app", reason: "config-not-loaded" },
+              { repo: "acme/web", reason: "not-owner" },
+            ],
+          }),
+          [],
+          [signedOut("Acme/App")],
+        ),
+      ],
+      null,
+    );
+    expect(view.holds).toEqual([
+      {
+        environmentId: ENV,
+        label: "Mac",
+        words: ["the factory's gh is signed out, so no repo's ready issues can be read"],
+        checkedMs: null,
+        signedOut: true,
+      },
+    ]);
+    expect(view.skipped.map(({ repo, words }) => [repo, words])).toEqual([
+      ["acme/app", "gh is signed out"],
+      ["acme/web", "factory.owner names another machine"],
     ]);
   });
 

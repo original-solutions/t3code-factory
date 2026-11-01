@@ -85,6 +85,23 @@ describe("machineLine", () => {
       { tone: "held", word: "Held: high load", detail: "1-minute load 30.0, above 24" },
     ],
     [
+      "a signed-out gh, which holds claims with or without health",
+      read(
+        status({
+          attention: ["acme/web", "acme/api"].map((repo) => ({
+            id: `config-not-loaded:${repo}`,
+            kind: "attention",
+            repo,
+            issue: null,
+            run: null,
+            message: `${repo}: project config not loaded; last error: please run: gh auth login`,
+            first_seen: SINCE,
+          })),
+        }),
+      ),
+      { tone: "held", word: "Held: gh signed out", detail: "cannot read 2 repos" },
+    ],
+    [
       "a snoozed update, which holds nothing",
       read(status({ deploy_pending: pending(true) })),
       { tone: "running", word: "Running", detail: null },

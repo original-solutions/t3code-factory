@@ -1,6 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 
-import type { FactoryReadyQueue, FactoryRunRow } from "./api";
+import type { FactoryAttentionItem, FactoryReadyQueue, FactoryRunRow } from "./api";
+import { signedOutCause } from "./attentionCauses";
 import { parseRunId } from "./format";
 
 /** One environment's queue read, with its recent runs to tell a claimed issue and a title by. */
@@ -9,6 +10,8 @@ export interface QueueSource {
   readonly label: string;
   readonly queue: FactoryReadyQueue;
   readonly runs: ReadonlyArray<FactoryRunRow>;
+  /** Its open attention items, to tell a signed-out gh from an unreadable config. */
+  readonly attention: ReadonlyArray<FactoryAttentionItem>;
 }
 
 export interface QueueIssue {
@@ -41,6 +44,8 @@ export interface QueueHold {
   readonly words: ReadonlyArray<string>;
   /** When the ready issues were last read, when that is older than the newest pass. */
   readonly checkedMs: number | null;
+  /** Its gh is signed out, so a sign-in lifts it. */
+  readonly signedOut: boolean;
 }
 
 export interface QueueView {
@@ -94,6 +99,8 @@ const HOLD_WORDS: Readonly<Record<string, string>> = {
   preflight: "the pass failed its preflight checks",
 };
 
+const SIGNED_OUT_WORDS = "the factory's gh is signed out, so no repo's ready issues can be read";
+
 const REPO_WORDS: Readonly<Record<string, string>> = {
   "config-not-loaded": "its .dw/config.yml could not be read",
   "ambiguous-project": "more than one T3 project points at it",
@@ -123,21 +130,30 @@ export function queueView(sources: ReadonlyArray<QueueSource>, repo: string | nu
   const skipped: Array<QueueView["skipped"][number]> = [];
   const turnedAway: Array<QueueView["turnedAway"][number]> = [];
   let checkedMs: number | null = null;
-  for (const { environmentId, label, queue, runs } of sources) {
+  for (const { environmentId, label, queue, runs, attention } of sources) {
     const checked = queue.checked_at === null ? null : Date.parse(queue.checked_at);
     if (checked !== null) checkedMs = Math.max(checkedMs ?? 0, checked);
-    if (queue.holds.length > 0) {
+    const signedOut = signedOutCause(attention);
+    if (queue.holds.length > 0 || signedOut !== null) {
       const last = queue.last_pass_at === null ? null : Date.parse(queue.last_pass_at);
       holds.push({
         environmentId,
         label,
-        words: queue.holds.map((hold) => HOLD_WORDS[hold] ?? hold),
+        words: [
+          ...queue.holds.map((hold) => HOLD_WORDS[hold] ?? hold),
+          ...(signedOut === null ? [] : [SIGNED_OUT_WORDS]),
+        ],
         checkedMs: checked !== null && last !== null && checked < last ? checked : null,
+        signedOut: signedOut !== null,
       });
     }
     for (const { repo: name, reason } of queue.skipped_repos) {
-      if (inRepo(name))
-        skipped.push({ environmentId, label, repo: name, words: REPO_WORDS[reason] ?? reason });
+      if (!inRepo(name)) continue;
+      const words =
+        reason === "config-not-loaded" && signedOut?.repos.some((out) => sameRepo(out, name))
+          ? "gh is signed out"
+          : (REPO_WORDS[reason] ?? reason);
+      skipped.push({ environmentId, label, repo: name, words });
     }
     for (const { repo: name, issue, at } of queue.turned_away) {
       if (!inRepo(name)) continue;

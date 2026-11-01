@@ -1,4 +1,5 @@
 import type { FactoryStatus } from "./api";
+import { signedOutLine, signedOutCause } from "./attentionCauses";
 import { formatClock } from "./belt";
 
 /** How a gauge reads: fine, near the line where the pass holds, over it, or unread. */
@@ -16,7 +17,13 @@ export interface HealthGauge {
   readonly mark: number | null;
 }
 
-export type HoldKey = "paused" | "update" | "low-disk" | "high-load" | "pass-overdue";
+export type HoldKey =
+  | "paused"
+  | "update"
+  | "signed-out"
+  | "low-disk"
+  | "high-load"
+  | "pass-overdue";
 
 /** One reason the machine claims nothing now; `ok` for one that has lifted but not yet been seen by a pass. */
 export interface HealthHold {
@@ -71,32 +78,43 @@ const since = (iso: string): string => {
 
 /**
  * The hold the machine itself puts on claims, with its figures: a low disk before a high load, as
- * the pass checks them. Null when neither holds, or the server sends no health.
+ * the pass checks them, then a signed-out gh that fails every repo read. Null when none holds.
  */
-export function machineHold(
-  status: FactoryStatus,
-): { readonly word: "low disk" | "high load"; readonly detail: string } | null {
+export function machineHold(status: FactoryStatus): {
+  readonly word: "low disk" | "high load" | "gh signed out";
+  readonly detail: string;
+} | null {
   const health = status.health;
-  if (health == null) return null;
-  const { disk, load } = health;
-  if (!("error" in disk) && disk.low && disk.floor_bytes !== null) {
-    return {
-      word: "low disk",
-      detail: `${formatBytes(disk.free_bytes)} free, needs ${formatBytes(disk.floor_bytes)}`,
-    };
+  if (health != null) {
+    const { disk, load } = health;
+    if (!("error" in disk) && disk.low && disk.floor_bytes !== null) {
+      return {
+        word: "low disk",
+        detail: `${formatBytes(disk.free_bytes)} free, needs ${formatBytes(disk.floor_bytes)}`,
+      };
+    }
+    if (load.high && load.limit !== null) {
+      return {
+        word: "high load",
+        detail: `1-minute load ${load.one_minute.toFixed(1)}, above ${load.limit}`,
+      };
+    }
   }
-  if (load.high && load.limit !== null) {
-    return {
-      word: "high load",
-      detail: `1-minute load ${load.one_minute.toFixed(1)}, above ${load.limit}`,
-    };
-  }
-  return null;
+  const repos = signedOutCause(status.attention)?.repos;
+  if (repos === undefined) return null;
+  return {
+    word: "gh signed out",
+    detail:
+      repos.length === 0
+        ? "its passes cannot read GitHub"
+        : `cannot read ${repos.length === 1 ? repos[0] : `${repos.length} repos`}`,
+  };
 }
 
 const HOLD_WORD: Readonly<Record<HoldKey, string>> = {
   paused: "paused by hand",
   update: "update waiting",
+  "signed-out": "gh signed out",
   "low-disk": "low disk",
   "high-load": "high load",
   "pass-overdue": "pass overdue",
@@ -191,6 +209,15 @@ export function machineHealthView(status: FactoryStatus): MachineHealthView | nu
       tone: "bad",
       title: "Update waiting",
       detail: `A build waits to install${since(status.deploy_pending.since)}; claims start again once it is installed.`,
+    });
+  }
+  const signedOut = signedOutCause(status.attention);
+  if (signedOut !== null) {
+    holds.push({
+      key: "signed-out",
+      tone: "bad",
+      title: "GitHub sign-in",
+      detail: `${signedOutLine(signedOut.repos)} No issue is claimed until it signs in.`,
     });
   }
   if (!("error" in disk) && disk.floor_bytes !== null) {

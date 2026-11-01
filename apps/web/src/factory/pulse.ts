@@ -1,6 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import type { FactoryStatus } from "./api";
+import { causeCount } from "./attentionCauses";
 import { issueOf, stationOf, STATIONS, type Station } from "./belt";
 import { parseRunId } from "./format";
 import { machineHold } from "./machineHealth";
@@ -11,6 +12,7 @@ export type PulseHold =
   | "held for update"
   | "low disk"
   | "high load"
+  | "gh signed out"
   | "pass overdue";
 
 export interface PulseRun {
@@ -102,7 +104,7 @@ export function factoryPulse(
         label,
         hold: holdOf(status),
         runs: runs.toSorted(order),
-        attention: status.attention.length,
+        attention: causeCount(status.attention),
       },
     ];
   });

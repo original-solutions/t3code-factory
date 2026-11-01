@@ -13,7 +13,7 @@ import {
   SelectValue,
 } from "~/components/ui/select";
 
-import { FactoryApiError, type FactoryRunRow } from "./api";
+import { FactoryApiError, type FactoryAttentionItem, type FactoryRunRow } from "./api";
 import "./belt.css";
 import { formatClock } from "./belt";
 import { FactoryCard, FactoryCardHeader } from "./FactoryCard";
@@ -172,6 +172,16 @@ function Holds({
       </AlertTitle>
       <AlertDescription>
         <p>{sentence(hold.words.join("; "))}.</p>
+        {hold.signedOut ? (
+          <p>
+            <TouchLink
+              render={<Link search={{ machine: hold.environmentId }} to="/settings/factory" />}
+            >
+              Sign in
+            </TouchLink>{" "}
+            and the next pass reads GitHub again.
+          </p>
+        ) : null}
         {hold.checkedMs === null ? null : (
           <p>
             The last pass that read the ready issues ended {when(hold.checkedMs, nowMs)} (
@@ -252,7 +262,11 @@ export function FactoryQueue({
   repos,
   showEnvironment,
 }: {
-  environments: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly label: string }>;
+  environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly label: string;
+    readonly attention: ReadonlyArray<FactoryAttentionItem>;
+  }>;
   recent: ReadonlyMap<EnvironmentId, ReadonlyArray<FactoryRunRow>>;
   repo: string | null;
   repos: ReadonlyArray<string>;
@@ -260,9 +274,16 @@ export function FactoryQueue({
 }) {
   const reads = useFactoryQueues(environments.map(({ environmentId }) => environmentId));
   const sources: Array<QueueSource> = [];
-  environments.forEach(({ environmentId, label }, i) => {
+  environments.forEach(({ environmentId, label, attention }, i) => {
     const queue = reads[i]?.data;
-    if (queue) sources.push({ environmentId, label, queue, runs: recent.get(environmentId) ?? [] });
+    if (queue)
+      sources.push({
+        environmentId,
+        label,
+        queue,
+        runs: recent.get(environmentId) ?? [],
+        attention,
+      });
   });
   // Ages count to the last read, as the page's other ages do: the view does not tick between reads.
   const nowMs = Math.max(0, ...reads.map(({ readAt }) => readAt));

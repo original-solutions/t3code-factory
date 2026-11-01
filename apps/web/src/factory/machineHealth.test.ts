@@ -42,6 +42,16 @@ const lowDiskItem = {
   first_seen: "2026-11-01T13:00:00Z",
 };
 
+const signedOutItem = (repo: string) => ({
+  id: `config-not-loaded:${repo}`,
+  kind: "attention",
+  repo,
+  issue: null,
+  run: null,
+  message: `${repo}: project config not loaded; last error: exited with status 4: please run: gh auth login`,
+  first_seen: "2026-11-01T13:00:00Z",
+});
+
 const disk = (free: number, low: boolean, floor: number | null = 10 * GIB) =>
   health({
     disk: {
@@ -154,7 +164,23 @@ describe("machineHealthView", () => {
     expect(view.verdict).toEqual({ tone: "warn", text: "Watch: gates" });
   });
 
-  it("lists every hold in the order a person lifts them: pause, update, disk, load, overdue pass", () => {
+  it("a signed-out gh holds claims as one hold, in the sentence Needs attention says", () => {
+    const view = machineHealthView(
+      status({ attention: [signedOutItem("acme/web"), signedOutItem("acme/api")] }),
+    )!;
+    expect(view.holds).toEqual([
+      {
+        key: "signed-out",
+        tone: "bad",
+        title: "GitHub sign-in",
+        detail:
+          "The factory's gh is signed out, so it cannot read any of its 2 repos: web, api. No issue is claimed until it signs in.",
+      },
+    ]);
+    expect(view.verdict).toEqual({ tone: "bad", text: "Claims held: gh signed out" });
+  });
+
+  it("lists every hold in the order a person lifts them: pause, update, sign-in, disk, load, overdue pass", () => {
     const view = machineHealthView(
       status({
         paused_by_hand: { since: "2026-11-01T04:47:00Z", for_ms: 1 },
@@ -166,6 +192,7 @@ describe("machineHealthView", () => {
           snoozed_until: null,
         },
         passes: { at: null, poll_seconds: 600, running: false, stale: true },
+        attention: [signedOutItem("acme/web")],
         health: health({
           disk: { ...(disk(1 * GIB, true).disk as object), low: true } as FactoryHealth["disk"],
           load: { one_minute: 30, cores: 12, limit: 24, high: true },
@@ -175,12 +202,13 @@ describe("machineHealthView", () => {
     expect(view.holds.map((hold) => hold.key)).toEqual([
       "paused",
       "update",
+      "signed-out",
       "low-disk",
       "high-load",
       "pass-overdue",
     ]);
     expect(view.verdict.text).toBe(
-      "Claims held: paused by hand, update waiting, low disk, high load, pass overdue",
+      "Claims held: paused by hand, update waiting, gh signed out, low disk, high load, pass overdue",
     );
   });
 

@@ -29,7 +29,11 @@ import type { RunStop } from "./RunActionBar";
 
 /** A tile is this wide and the gap between tiles this wide, in px: they set how many a lane fits. */
 /** Why the selected environment claims nothing new, as the Claimed post says it. */
-export type ClaimsHeldWhy = "paused by hand" | "held for update" | "held for low disk";
+export type ClaimsHeldWhy =
+  | "paused by hand"
+  | "held for update"
+  | "held for low disk"
+  | "held for GitHub sign-in";
 
 const TILE_PX = 60;
 const TILE_GAP_PX = 6;

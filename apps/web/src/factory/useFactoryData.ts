@@ -17,6 +17,7 @@ import {
   type FactoryRunRow,
   type FactoryStatus,
 } from "./api";
+import { causeCount } from "./attentionCauses";
 
 /** How often an open page or badge reads again, while the window shows and the reader is about. */
 const POLL_MS = 30_000;
@@ -521,13 +522,14 @@ export function useFactorySupported(): boolean {
   return statuses.length === 0 || !statuses.every((status) => isNotFound(status.error));
 }
 
-/** The open attention items over every listed environment, for the sidebar badge: 0 before any answer. */
+/** What the open attention items ask of a person over every listed environment, counted by cause, for the sidebar badge: 0 before any answer. */
 export function useFactoryAttentionCount(): number {
   // From the candidates, not `useFactoryEnvironments`: the badge needs no labels, so it does not
   // read the environments' presentations.
   const { statuses } = useFactoryCandidates();
   return statuses.reduce(
-    (sum, status) => sum + (isNotFound(status.error) ? 0 : (status.data?.attention.length ?? 0)),
+    (sum, status) =>
+      sum + (isNotFound(status.error) ? 0 : causeCount(status.data?.attention ?? [])),
     0,
   );
 }
