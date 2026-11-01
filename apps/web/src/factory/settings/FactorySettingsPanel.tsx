@@ -5,6 +5,7 @@ import { useEffect, useEffectEvent, useState } from "react";
 
 import { useSettingsScope } from "../../components/settings/SettingsScopeContext";
 import {
+  SettingResetButton,
   SettingsPageContainer,
   SettingsRow,
   SettingsSection,
@@ -20,16 +21,20 @@ import {
   type MachineConfigValues,
 } from "./api";
 import { FactorySetup } from "./FactorySetup";
+import { SaveBar } from "./SaveBar";
+import {
+  FIELD_LABELS,
+  feedbackBudget,
+  HOURLY_POINTS,
+  pendingChanges,
+  readingOf,
+  type TuningForm,
+  type TuningKey,
+} from "./tuning";
 import { WatchedRepos } from "./WatchedRepos";
 
 /** The form keeps numbers as typed, so an empty or half-typed field is not coerced under the cursor. */
-interface FormState {
-  readonly gh_config_dir: string;
-  readonly poll_seconds: string;
-  readonly max_concurrent_runs: string;
-  readonly max_concurrent_gates: string;
-  readonly feedback_seconds: string;
-}
+type FormState = TuningForm;
 
 const EMPTY_FORM: FormState = {
   gh_config_dir: "",
@@ -38,6 +43,27 @@ const EMPTY_FORM: FormState = {
   max_concurrent_gates: "",
   feedback_seconds: "",
 };
+
+const NUMBER_FIELDS: ReadonlyArray<{
+  readonly key: Exclude<TuningKey, "gh_config_dir">;
+  readonly description: string;
+}> = [
+  { key: "poll_seconds", description: "How often the factory looks at GitHub." },
+  {
+    key: "max_concurrent_runs",
+    description: "Runs that may hold an issue at once, across every repo.",
+  },
+  { key: "max_concurrent_gates", description: "Gates that may check a branch at once." },
+  {
+    key: "feedback_seconds",
+    description:
+      "How often the factory looks for comments and reviews on a ready pull request. 0 reads on every pass.",
+  },
+];
+
+/** The keys the page does not edit; `editMachineConfig` keeps them through a save. */
+const HAND_EDITED_KEYS =
+  "default_project, model_fallbacks, notify, min_free_gib, max_load_per_core, deploy_wait_minutes, keep_versions, prune_branches_after_days, prune_branches_dry_run";
 
 const text = (value: unknown) => (value === undefined || value === null ? "" : String(value));
 
@@ -139,6 +165,7 @@ function MachineConfigForm({
 
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [saved, setSaved] = useState<FormState>(EMPTY_FORM);
   const [errors, setErrors] = useState<ReadonlyArray<ConfigError>>([]);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [saveFailure, setSaveFailure] = useState<string | null>(null);
@@ -146,6 +173,7 @@ function MachineConfigForm({
   const show = (report: MachineConfigReport) => {
     setLoad({ status: "ready", report });
     setForm(formOf(report));
+    setSaved(formOf(report));
     setErrors(report.errors);
   };
 
@@ -183,6 +211,13 @@ function MachineConfigForm({
   };
   const setText = (key: keyof FormState) => (event: { target: { value: string } }) =>
     edit((current) => ({ ...current, [key]: event.target.value }));
+
+  const discard = () => {
+    if (load.status === "ready") setErrors(load.report.errors);
+    setForm(saved);
+    setSaveStatus("idle");
+    setSaveFailure(null);
+  };
 
   const save = async () => {
     if (!canWrite) return;
@@ -231,15 +266,10 @@ function MachineConfigForm({
 
   const { report } = load;
   // An error that names no rendered input would otherwise show nowhere.
-  const inputNames = new Set<string>([
-    "gh_config_dir",
-    "poll_seconds",
-    "max_concurrent_runs",
-    "max_concurrent_gates",
-    "feedback_seconds",
-  ]);
+  const inputNames = new Set<string>(Object.keys(FIELD_LABELS));
   const topErrors = errors.filter((error) => !inputNames.has(fieldKey(error) ?? ""));
   const saving = saveStatus === "saving";
+  const changes = pendingChanges(saved, form);
 
   return (
     <SettingsPageContainer>
@@ -273,90 +303,85 @@ function MachineConfigForm({
 
       <SettingsSection title="Machine config">
         <SettingsRow
-          title="GitHub config directory"
+          title={FIELD_LABELS.gh_config_dir}
           description="Where the factory's gh credentials live."
           control={
             <Field name="gh_config_dir" errors={errors}>
               <Input
                 size="touch"
                 font="mono"
-                aria-label="GitHub config directory"
+                aria-label={FIELD_LABELS.gh_config_dir}
                 value={form.gh_config_dir}
                 onChange={setText("gh_config_dir")}
               />
             </Field>
           }
         />
-        <SettingsRow
-          title="Poll seconds"
-          description="How often the factory looks at GitHub."
-          control={
-            <Field name="poll_seconds" errors={errors}>
-              <Input
-                size="touch"
-                type="number"
-                aria-label="Poll seconds"
-                value={form.poll_seconds}
-                onChange={setText("poll_seconds")}
-              />
-            </Field>
-          }
-        />
-        <SettingsRow
-          title="Max concurrent runs"
-          control={
-            <Field name="max_concurrent_runs" errors={errors}>
-              <Input
-                size="touch"
-                type="number"
-                aria-label="Max concurrent runs"
-                value={form.max_concurrent_runs}
-                onChange={setText("max_concurrent_runs")}
-              />
-            </Field>
-          }
-        />
-        <SettingsRow
-          title="Max concurrent gates"
-          control={
-            <Field name="max_concurrent_gates" errors={errors}>
-              <Input
-                size="touch"
-                type="number"
-                aria-label="Max concurrent gates"
-                value={form.max_concurrent_gates}
-                onChange={setText("max_concurrent_gates")}
-              />
-            </Field>
-          }
-        />
-        <SettingsRow
-          title="Feedback seconds"
-          description="How often the factory looks for comments and reviews on a ready pull request. 0 reads on every pass."
-          control={
-            <Field name="feedback_seconds" errors={errors}>
-              <Input
-                size="touch"
-                type="number"
-                aria-label="Feedback seconds"
-                value={form.feedback_seconds}
-                onChange={setText("feedback_seconds")}
-              />
-            </Field>
-          }
-        />
+        {NUMBER_FIELDS.map(({ key, description }) => {
+          const fallback = text(report.defaults[key]);
+          const reading = readingOf(key, form[key]);
+          const budget = key === "feedback_seconds" ? feedbackBudget(form) : null;
+          return (
+            <SettingsRow
+              key={key}
+              title={FIELD_LABELS[key]}
+              description={description}
+              resetAction={
+                fallback !== "" && form[key].trim() !== fallback ? (
+                  <SettingResetButton
+                    label={FIELD_LABELS[key]}
+                    tooltip={`Reset to the default, ${fallback}`}
+                    onClick={() => edit((current) => ({ ...current, [key]: fallback }))}
+                  />
+                ) : undefined
+              }
+              status={
+                reading === null && budget === null ? undefined : (
+                  <div data-reading={key} className="flex flex-col gap-0.5">
+                    {reading === null ? null : <p className="text-foreground/80">{reading}</p>}
+                    {budget === null ? null : (
+                      <p
+                        data-budget={budget.tight ? "tight" : "ok"}
+                        className={budget.tight ? "text-warning-foreground" : undefined}
+                      >
+                        About {budget.pointsPerPullRequest.toLocaleString()} GraphQL points an hour
+                        per pull request waiting for review, so{" "}
+                        {budget.pullRequestsToSpendAll.toLocaleString()} waiting pull requests would
+                        spend the login's {HOURLY_POINTS.toLocaleString()}.
+                      </p>
+                    )}
+                  </div>
+                )
+              }
+              control={
+                <Field name={key} errors={errors}>
+                  <Input
+                    size="touch"
+                    type="number"
+                    aria-label={FIELD_LABELS[key]}
+                    value={form[key]}
+                    onChange={setText(key)}
+                  />
+                </Field>
+              }
+            />
+          );
+        })}
+        <p className="px-3 py-3 text-xs text-muted-foreground sm:px-4">
+          The rest of the file ({HAND_EDITED_KEYS}) is edited by hand, and a save keeps it as
+          written. The server reads the file only at start and on a save, so save here after a hand
+          edit to apply it.
+        </p>
       </SettingsSection>
 
-      <div className="flex items-center gap-3 px-3 sm:px-4">
-        <Button size="sm" disabled={!canWrite || saving} onClick={() => void save()}>
-          Save
-        </Button>
-        {saveStatus === "saved" ? (
-          <span role="status" className="text-sm text-muted-foreground">
-            Saved
-          </span>
-        ) : null}
-      </div>
+      <SaveBar
+        changes={changes}
+        canWrite={canWrite}
+        saving={saving}
+        saved={saveStatus === "saved"}
+        onSave={() => void save()}
+        onDiscard={discard}
+      />
 
       <WatchedRepos
         repos={report.repos}

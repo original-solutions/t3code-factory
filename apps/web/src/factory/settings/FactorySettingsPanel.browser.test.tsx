@@ -61,6 +61,12 @@ vi.mock("../../components/ui/button", async () => {
 vi.mock("../../components/settings/settingsLayout", async () => {
   const { createElement } = await import("react");
   return {
+    SettingResetButton: (props: { label: string; onClick: () => void }) =>
+      createElement(
+        "button",
+        { "aria-label": `Reset ${props.label} to default`, onClick: props.onClick },
+        "reset",
+      ),
     SettingsPageContainer: (props: { children: ReactNode }) =>
       createElement("div", null, props.children),
     SettingsSection: (props: { title: string; headerAction?: ReactNode; children: ReactNode }) =>
@@ -74,6 +80,8 @@ vi.mock("../../components/settings/settingsLayout", async () => {
     SettingsRow: (props: {
       title: string;
       description?: ReactNode;
+      resetAction?: ReactNode;
+      status?: ReactNode;
       control?: ReactNode;
       children?: ReactNode;
     }) =>
@@ -81,7 +89,9 @@ vi.mock("../../components/settings/settingsLayout", async () => {
         "div",
         null,
         createElement("h3", null, props.title),
+        props.resetAction,
         props.description,
+        props.status,
         props.control,
         props.children,
       ),
@@ -255,6 +265,57 @@ describe("FactorySettingsPanel", () => {
       max_concurrent_gates: 2,
       feedback_seconds: 0,
     });
+  });
+
+  it("says what each number does, and lists an edit in a save bar until it is saved or discarded", async () => {
+    resetMocks();
+    mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
+    await using panel = await open();
+    const root = panel.container;
+    const bar = () => root.querySelector<HTMLElement>("[data-save-bar]")!;
+
+    expect(textOf(root.querySelector('[data-reading="poll_seconds"]')!)).toContain(
+      "Looks at GitHub at least every 45 s.",
+    );
+    expect(bar().dataset.saveBar).toBe("clean");
+
+    await type(input(root, "Poll seconds"), "600");
+    expect(textOf(root.querySelector('[data-reading="poll_seconds"]')!)).toContain("every 10 min");
+    expect(bar().dataset.saveBar).toBe("dirty");
+    expect(textOf(bar())).toContain("1 unsaved change");
+    expect(textOf(bar())).toContain("Poll seconds 45");
+
+    await click(button(root, "Discard"));
+    expect(input(root, "Poll seconds").value).toBe("45");
+    expect(bar().dataset.saveBar).toBe("clean");
+    expect(mocks.saveFactoryConfig).not.toHaveBeenCalled();
+  });
+
+  it("resets a number to the server's default, and offers no reset at the default", async () => {
+    resetMocks();
+    mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
+    await using panel = await open();
+    const root = panel.container;
+
+    // populated holds max_concurrent_gates at its default 2.
+    expect(root.querySelector('[aria-label="Reset Max concurrent gates to default"]')).toBeNull();
+    await click(button(root, "Reset Feedback seconds to default"));
+    expect(input(root, "Feedback seconds").value).toBe("600");
+    expect(root.querySelector('[aria-label="Reset Feedback seconds to default"]')).toBeNull();
+  });
+
+  it("warns when the feedback reads would spend the login's hour on a busy machine", async () => {
+    resetMocks();
+    mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
+    await using panel = await open();
+    const root = panel.container;
+    const budget = () => root.querySelector<HTMLElement>("[data-budget]")!;
+
+    expect(budget().dataset.budget).toBe("ok");
+    await type(input(root, "Poll seconds"), "60");
+    await type(input(root, "Feedback seconds"), "0");
+    expect(budget().dataset.budget).toBe("tight");
+    expect(budget().textContent).toContain("27 waiting pull requests");
   });
 
   it("shows an error on feedback_seconds beside its input, not at the top", async () => {
