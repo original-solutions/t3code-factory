@@ -1232,8 +1232,11 @@ describe("FactoryPage filters", () => {
       finished: true,
       reason: "gate failed",
     });
-    const stat = (page: Awaited<ReturnType<typeof render>>, label: string) =>
-      page.all("dt").find((dt) => dt.textContent === label)?.nextElementSibling?.textContent;
+    const stuckCount = (page: Awaited<ReturnType<typeof render>>) =>
+      page
+        .all("section[data-bin]")
+        .find((node) => node.dataset.bin === "stuck")
+        ?.querySelector(":scope > div > span.font-mono")?.textContent;
     const failing = () => {
       twoEnvironments();
       state.runs = resource({ status: "error", error: new Error("timed out") });
@@ -1243,7 +1246,7 @@ describe("FactoryPage filters", () => {
       const stuck = page.all("section").find((s) => s.getAttribute("aria-label") === "Stuck")!;
       expect(stuck.textContent).toContain("Gate failed");
       expect(page.all('[aria-label="Loading Stuck"]')).toHaveLength(0);
-      expect(stat(page, "Stuck")).toBe("1");
+      expect(stuckCount(page)).toBe("1");
       expect(page.text()).toContain("Can't reach Mac Studio");
       expect(page.text()).toContain("timed out");
       expect(page.all('[aria-label="Retry Mac Studio"]')).toHaveLength(1);

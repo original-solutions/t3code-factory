@@ -293,15 +293,17 @@ export function FactoryPage() {
             verb="refresh"
           />
         ))}
-        <CatchUpCard
-          environments={caughtUpRecent}
-          nowMs={nowMs}
-          origin={{ search, query }}
-          showEnvironment={showEnvironment}
-        />
         <FactoryBelt
           attention={attention}
           busy={busy}
+          digest={
+            <CatchUpCard
+              environments={caughtUpRecent}
+              nowMs={nowMs}
+              origin={{ search, query }}
+              showEnvironment={showEnvironment}
+            />
+          }
           environments={environments}
           nowMs={nowMs}
           onDismiss={dismiss}

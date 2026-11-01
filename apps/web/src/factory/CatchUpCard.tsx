@@ -112,7 +112,8 @@ function IssueLine({
 /**
  * What the factory did since this browser last caught up: what merged and closed, and the runs
  * that stopped for a person, each linking to its run. "Mark caught up" moves the mark to the last
- * read. Static between reads; a pure fold of the recent lists the page already reads.
+ * read. Static between reads; a pure fold of the recent lists the page already reads. A band of
+ * the belt's control bar, between the claims switch and today's strip.
  */
 export function CatchUpCard({
   environments,
@@ -141,7 +142,7 @@ export function CatchUpCard({
     return (
       <section
         aria-label="Since you caught up"
-        className="flex flex-wrap items-baseline gap-x-2 rounded-lg border bg-card px-5 py-2.5 text-sm"
+        className="flex flex-wrap items-baseline gap-x-2 border-t px-5 py-2.5 text-sm"
       >
         <h2 className="font-medium">{heading}</h2>
         <span className="text-muted-foreground">nothing new: no runs claimed or finished.</span>
@@ -150,11 +151,8 @@ export function CatchUpCard({
   }
 
   return (
-    <section
-      aria-label="Since you caught up"
-      className="flex flex-col gap-3 rounded-lg border bg-card px-5 py-3.5"
-    >
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+    <section aria-label="Since you caught up" className="flex flex-col gap-3 border-t px-5 py-3.5">
+      <div className="flex flex-wrap items-center gap-x-8 gap-y-2">
         <div className="flex min-w-0 flex-col">
           <h2 className="text-sm font-medium">{heading}</h2>
           <span className="text-xs text-muted-foreground">
@@ -163,18 +161,17 @@ export function CatchUpCard({
               : "Mark caught up and your next visit starts from here."}
           </span>
         </div>
+        <div className="flex flex-wrap items-baseline gap-x-5 gap-y-2">
+          <Count color={TONE.merged.color} value={merged.length} word="merged" />
+          <Count color={TONE.stuck.color} value={stopped.length} word="need you" />
+          <Count color={TONE.closed.color} value={closed.length} word="closed" />
+          <Count color="var(--factory-claimed)" value={claimed} word="claimed" />
+        </div>
         <div className="ml-auto">
           <Button onClick={() => setMarkMs(nowMs)} size="sm" variant="outline">
             Mark caught up
           </Button>
         </div>
-      </div>
-
-      <div className="flex flex-wrap items-baseline gap-x-5 gap-y-2">
-        <Count color={TONE.merged.color} value={merged.length} word="merged" />
-        <Count color={TONE.stuck.color} value={stopped.length} word="need you" />
-        <Count color={TONE.closed.color} value={closed.length} word="closed" />
-        <Count color="var(--factory-claimed)" value={claimed} word="claimed" />
       </div>
 
       {stopped.length === 0 ? null : (

@@ -1,6 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { useState, useSyncExternalStore, type CSSProperties } from "react";
+import { useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
 
 import { Skeleton } from "~/components/ui/skeleton";
 import { Switch } from "~/components/ui/switch";
@@ -97,78 +97,58 @@ function NextPass({ passes }: { passes: FactoryStatus["passes"] | undefined }) {
   );
 }
 
-/** A counter; `-` is one that is not known yet. */
-function Stat({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="flex flex-col justify-center gap-1.5 border-l px-5 py-2.5">
-      <dt className={LABEL}>{label}</dt>
-      <dd className="font-mono text-2xl font-semibold leading-none">{value}</dd>
-    </div>
-  );
-}
-
 /**
- * The claims switch of the selected environment and its state, the pass line, the environment's
- * slots, the counters and today's strip over every environment (`-` while a recent runs list they come from has
- * not answered). The switch is on while claims run; an environment with no status says nothing
- * about its claims and cannot be switched.
+ * The selected environment's claims switch and state and its pass line, then what happened since
+ * the viewer caught up, then today's strip over every environment. The switch is on while claims
+ * run; an environment with no status says nothing about its claims and cannot be switched.
  */
 function ControlBar({
   selected,
   busy,
-  counters,
+  digest,
   strip,
   onTogglePause,
 }: {
   selected: FactoryEnvironment;
   busy: boolean;
+  /** What happened since the viewer caught up, when the page has it to show. */
+  digest: ReactNode;
   /** Today's runs on the clock, once the recent runs lists are known. */
   strip: Strip | null;
-  counters: {
-    readonly runsToday: number | string;
-    readonly mergedToday: number | string;
-    readonly stuck: number | string;
-  };
   onTogglePause: (environment: FactoryEnvironment) => void;
 }) {
   const report = selected.status.data;
   const paused = report?.paused_by_hand != null;
   return (
-    <section
-      aria-label="Controls"
-      className="flex flex-wrap items-stretch rounded-lg border bg-card"
-    >
-      <div className="flex items-center gap-3 px-5 py-2.5">
-        {/* The switch has no coarse-pointer hit area of its own; the label is the 44 px target. */}
-        <label className="inline-flex items-center justify-center pointer-coarse:min-h-11 pointer-coarse:min-w-11">
-          <Switch
-            aria-label={`Claims on ${selected.label}`}
-            checked={report !== null && !paused}
-            disabled={report === null || busy}
-            onCheckedChange={() => onTogglePause(selected)}
-          />
-        </label>
-        <div className="flex flex-col gap-1">
-          <span className={LABEL}>Claims</span>
-          <b className="text-sm font-semibold">
-            {report === null
-              ? "-"
-              : paused
-                ? "Paused"
-                : report.state === "idle"
-                  ? "Idle"
-                  : "Running"}
-          </b>
+    <section aria-label="Controls" className="flex flex-col rounded-lg border bg-card">
+      <div className="flex flex-wrap items-stretch">
+        <div className="flex items-center gap-3 px-5 py-2.5">
+          {/* The switch has no coarse-pointer hit area of its own; the label is the 44 px target. */}
+          <label className="inline-flex items-center justify-center pointer-coarse:min-h-11 pointer-coarse:min-w-11">
+            <Switch
+              aria-label={`Claims on ${selected.label}`}
+              checked={report !== null && !paused}
+              disabled={report === null || busy}
+              onCheckedChange={() => onTogglePause(selected)}
+            />
+          </label>
+          <div className="flex flex-col gap-1">
+            <span className={LABEL}>Claims</span>
+            <b className="text-sm font-semibold">
+              {report === null
+                ? "-"
+                : paused
+                  ? "Paused"
+                  : report.state === "idle"
+                    ? "Idle"
+                    : "Running"}
+            </b>
+          </div>
         </div>
+        {/* A countdown from a read that has since failed would tick on a pass nobody can see. */}
+        <NextPass passes={selected.status.status === "error" ? undefined : report?.passes} />
       </div>
-      {/* A countdown from a read that has since failed would tick on a pass nobody can see. */}
-      <NextPass passes={selected.status.status === "error" ? undefined : report?.passes} />
-      <dl className="m-0 flex flex-wrap items-stretch">
-        {report ? <Stat label="Slots" value={slotsText(report.slots)} /> : null}
-        <Stat label="Runs today" value={counters.runsToday} />
-        <Stat label="Merged today" value={counters.mergedToday} />
-        <Stat label="Stuck" value={counters.stuck} />
-      </dl>
+      {digest}
       <TodayStrip strip={strip} />
     </section>
   );
@@ -281,6 +261,7 @@ export function FactoryBelt({
   showEnvironment,
   onDismiss,
   origin,
+  digest,
 }: {
   /** Every factory environment, the primary first. */
   environments: ReadonlyArray<FactoryEnvironment>;
@@ -299,6 +280,8 @@ export function FactoryBelt({
   onDismiss: (items: ReadonlyArray<EnvironmentAttention>) => void;
   /** The page's filters, so a bin's run can step through its bin and come back. */
   origin?: QueueOrigin | undefined;
+  /** What happened since the viewer caught up, shown in the control bar under the claims switch. */
+  digest?: ReactNode;
 }) {
   const [pickedId, setPickedId] = useState<EnvironmentId | null>(null);
   // The open post: undefined until the rail first has something to look at, then the user's.
@@ -328,7 +311,7 @@ export function FactoryBelt({
   );
   // The belt as drawn: a bin does not count a run until the run has slid into it.
   const { shown, tileRef, layerRef } = useBeltMotion(belt, open !== undefined);
-  // What the recent runs lists say (the counters, Done, the bins, and the rail's first pick) is known
+  // What the recent runs lists say (the strip, Done, the bins, and the rail's first pick) is known
   // once some status has answered and no answered environment's list is still loading. A list that
   // failed before its first answer adds nothing; the page names it. The rail's pick is made then,
   // once, and the rail stays after it, whatever an environment does later.
@@ -437,7 +420,7 @@ export function FactoryBelt({
         ) : null}
         <ControlBar
           busy={busy.has(selected.environmentId)}
-          counters={known ? belt.counters : { runsToday: "-", mergedToday: "-", stuck: "-" }}
+          digest={digest}
           onTogglePause={onTogglePause}
           selected={selected}
           strip={

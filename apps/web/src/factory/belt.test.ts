@@ -505,42 +505,6 @@ describe("deriveBelt bins", () => {
   });
 });
 
-describe("deriveBelt counters", () => {
-  it("counts runs started today, merged today and stuck over every environment", () => {
-    const belt = deriveBelt(
-      [
-        environment(ENV_A, {
-          recent: [
-            row({ id: id(1), started_ts: iso(at(8)) }),
-            // An earlier attempt of the same issue still began today.
-            row({ id: id(1, 2), started_ts: iso(at(9)) }),
-            row({ id: id(2), started_ts: iso(at(10, 0, -1)) }),
-            finished(3, "merged", at(7), 600_000),
-            row({ id: id(4), state: "stuck", finished: true, started_ts: iso(at(6, 0, -3)) }),
-          ],
-        }),
-        environment(ENV_B, {
-          recent: [
-            row({ id: id(5, 1, "acme/gadgets"), started_ts: iso(at(11)) }),
-            finished(6, "closed", at(7), 600_000),
-            row({ id: id(7), state: "stuck", finished: true, started_ts: iso(at(12)) }),
-          ],
-        }),
-      ],
-      NOW,
-    );
-    expect(belt.counters).toEqual({ runsToday: 6, mergedToday: 1, stuck: 2 });
-  });
-
-  it("reads a run with no start time as not today", () => {
-    const belt = deriveBelt(
-      [environment(ENV_A, { recent: [row({ id: id(1), started_ts: null })] })],
-      NOW,
-    );
-    expect(belt.counters.runsToday).toBe(0);
-  });
-});
-
 describe("deriveBelt newest station", () => {
   it("is where the run with the latest start is, among the rail and today's done runs", () => {
     const belt = deriveBelt(
@@ -840,10 +804,9 @@ describe("holdBins", () => {
     ).toBe(belt);
   });
 
-  it("keeps the lanes, the counters and the newest post", () => {
+  it("keeps the lanes and the newest post", () => {
     const held = holdBins(belt, placesOf(belt), new Set([key(2), key(4), key(6)]));
     expect(held.runs.pr).toBe(belt.runs.pr);
-    expect(held.counters).toBe(belt.counters);
     expect(held.newest).toBe(belt.newest);
     expect(held.info).toEqual([]);
   });
@@ -875,7 +838,6 @@ describe("summariseDone", () => {
 
   it("is what deriveBelt shows for Done", () => {
     expect(done.done).toEqual(summariseDone(done.runs.done));
-    expect(done.counters.mergedToday).toBe(3);
   });
 
   it("has nothing to say of no runs", () => {

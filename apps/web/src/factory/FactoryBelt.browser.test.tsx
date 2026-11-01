@@ -169,10 +169,11 @@ const runLinksIn = (node: Element) =>
     (a) => a.getAttribute("data-to") === "/factory/$environmentId/$runId",
   );
 const rowsOf = (page: Page) => Array.from(readout(page)?.querySelectorAll("tbody tr") ?? []);
-const stat = (page: Page, label: string) => {
-  const term = page.all("dt").find((dt) => dt.textContent === label)!;
-  return term.nextElementSibling?.textContent;
-};
+const binCount = (page: Page, name: string) =>
+  page
+    .all("section[data-bin]")
+    .find((node) => node.dataset.bin === name)
+    ?.querySelector(":scope > div > span.font-mono")?.textContent;
 /** Opens a post's readout, unless it is the one open: picking that one would fold it. */
 const openStation = async (page: Page, name: string) => {
   if (readout(page)?.dataset.station !== name) await page.click(station(page, name));
@@ -692,7 +693,7 @@ describe("the control bar", () => {
     expect(vi.getTimerCount()).toBe(1);
   });
 
-  it("shows the selected environment's slots, and the runs today, merged today and stuck", async () => {
+  it("counts today's merges at Done and the stuck in their bin, over every environment", async () => {
     using _state = await setup();
     const belt = twoEnvironments();
     const stuck = recentRow(20, { state: "stuck", finished: true, started_ts: iso(at(6, 0, -2)) });
@@ -700,25 +701,13 @@ describe("the control bar", () => {
       [DESKTOP, [...belt.recent.get(DESKTOP)!.data!.runs, stuck]],
       [STUDIO, belt.recent.get(STUDIO)!.data!.runs],
     );
-    // Studio has its own slots, so the bar can only be showing the selected environment's.
-    const studio = belt.environments[1]!;
-    belt.environments = [
-      belt.environments[0]!,
-      {
-        ...studio,
-        status: resource({ data: { ...studio.status.data!, slots: { used: 0, max: 3 } } }),
-      },
-    ];
     await using page = await render(createElement(FactoryBelt, belt));
-    expect(stat(page, "Slots")).toBe("1/2");
-    // Started today: #1 #2 #3 #4 #5 #6 #7 and the four done runs of today (#14 began yesterday).
-    expect(stat(page, "Runs today")).toBe("11");
-    expect(stat(page, "Merged today")).toBe("3");
-    expect(stat(page, "Stuck")).toBe("1");
+    expect(lane(page, "done").textContent).toContain("3 merged");
+    expect(binCount(page, "stuck")).toBe("1");
+    // Picking the other environment changes what the switch acts on, not what is counted.
     await page.click(page.all("button").find((b) => b.textContent?.startsWith("Studio"))!);
-    expect(stat(page, "Slots")).toBe("0/3");
-    await page.click(page.all("button").find((b) => b.textContent?.startsWith("Desktop"))!);
-    expect(stat(page, "Slots")).toBe("1/2");
+    expect(lane(page, "done").textContent).toContain("3 merged");
+    expect(binCount(page, "stuck")).toBe("1");
   });
 });
 
@@ -1298,9 +1287,6 @@ describe("what the belt does not know yet", () => {
       // The rail opens once everything has answered and stays; Studio's list then reads again.
       await using page = await render(createElement(FactoryBelt, twoEnvironments()));
       await page.rerender(createElement(FactoryBelt, belt));
-      for (const label of ["Runs today", "Merged today", "Stuck"]) {
-        expect(stat(page, label)).toBe("-");
-      }
       const text = (name: string) =>
         page.all("section").find((section) => section.getAttribute("aria-label") === name)!
           .textContent;
@@ -1342,8 +1328,7 @@ describe("a recent runs list that failed before its first answer", () => {
       ],
     ]);
     await using page = await render(createElement(FactoryBelt, belt));
-    expect(stat(page, "Stuck")).toBe("1");
-    expect(stat(page, "Runs today")).toMatch(/^\d+$/);
+    expect(binCount(page, "stuck")).toBe("1");
     expect(countOf(station(page, "done"))).toBe("0");
     expect(page.all('[role="status"]').filter((n) => n.getAttribute("aria-label"))).toEqual([]);
     const stuck = page
@@ -1370,8 +1355,7 @@ describe("a recent runs list that failed on refresh", () => {
       ],
     ]);
     await using page = await render(createElement(FactoryBelt, belt));
-    expect(stat(page, "Stuck")).toBe("2");
-    expect(stat(page, "Runs today")).toMatch(/^\d+$/);
+    expect(binCount(page, "stuck")).toBe("2");
     expect(countOf(station(page, "done"))).toBe("0");
     expect(page.all('[role="status"]').filter((n) => n.getAttribute("aria-label"))).toEqual([]);
     const stuck = page
@@ -1763,11 +1747,6 @@ describe("tile motion", () => {
   const ghostsOf = (page: Page) => page.all(".factory-ghost");
   const post = (page: Page, name: string) =>
     page.all("[data-post]").find((node) => node.dataset.post === name)!;
-  const binCount = (page: Page, name: string) =>
-    page
-      .all("section[data-bin]")
-      .find((node) => node.dataset.bin === name)
-      ?.querySelector(":scope > div > span.font-mono")?.textContent;
   /** The belt with one environment, whose runs the status and the recent list say. */
   const world = (runs: ReadonlyArray<StatusRun>, rows: ReadonlyArray<FactoryRunRow> = []): Belt =>
     props({

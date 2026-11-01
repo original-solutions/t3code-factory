@@ -104,11 +104,6 @@ export interface Belt {
   };
   readonly stuck: ReadonlyArray<BeltRun>;
   readonly info: ReadonlyArray<BeltRun>;
-  readonly counters: {
-    readonly runsToday: number;
-    readonly mergedToday: number;
-    readonly stuck: number;
-  };
   /** The post of the run that began last, among the rail and today's done runs. */
   readonly newest: Station;
 }
@@ -150,7 +145,7 @@ export const localDay = (nowMs: number): readonly [number, number] => {
 
 /**
  * What the belt shows, from every environment's unfinished runs and recent runs list: the runs at
- * each post, today's done bin, the Stuck and Needs info bins, and the counters. Only the newest
+ * each post, today's done bin, and the Stuck and Needs info bins. Only the newest
  * attempt of an issue counts for the bins and Done, and "today" is the viewer's local day.
  */
 export function deriveBelt(environments: ReadonlyArray<BeltEnvironment>, nowMs: number): Belt {
@@ -167,7 +162,6 @@ export function deriveBelt(environments: ReadonlyArray<BeltEnvironment>, nowMs: 
   const info: Array<BeltRun> = [];
   // In the order seen, so that of two runs with the same (or no) start the later one is newest.
   const ranked: Array<{ station: Station; startedMs: number }> = [];
-  let runsToday = 0;
 
   for (const { environmentId, label, active, recent } of environments) {
     const rowById = new Map(recent.map((row) => [row.id, row]));
@@ -210,9 +204,6 @@ export function deriveBelt(environments: ReadonlyArray<BeltEnvironment>, nowMs: 
       ranked.push({ station, startedMs: made.startedMs });
     }
 
-    for (const row of recent) {
-      if (today(startedOf(row))) runsToday++;
-    }
     for (const row of newestAttempts(recent)) {
       if (row.finished && (row.pr_end === "merged" || row.pr_end === "closed")) {
         const finishedMs = startedOf(row) + (row.total_ms ?? Number.NaN);
@@ -246,8 +237,6 @@ export function deriveBelt(environments: ReadonlyArray<BeltEnvironment>, nowMs: 
 
   const byStart = (a: BeltRun, b: BeltRun) => newestFirst(a.startedMs, b.startedMs);
   const doneRuns = done.map(({ run }) => run);
-  const summary = summariseDone(doneRuns);
-  const sortedStuck = stuck.toSorted(byStart);
   return {
     runs: {
       claimed: lanes.claimed.toSorted(byStart),
@@ -256,10 +245,9 @@ export function deriveBelt(environments: ReadonlyArray<BeltEnvironment>, nowMs: 
       pr: lanes.pr.toSorted(byStart),
       done: doneRuns,
     },
-    done: summary,
-    stuck: sortedStuck,
+    done: summariseDone(doneRuns),
+    stuck: stuck.toSorted(byStart),
     info: info.toSorted(byStart),
-    counters: { runsToday, mergedToday: summary.merged, stuck: sortedStuck.length },
     newest,
   };
 }
@@ -341,7 +329,7 @@ export function tileMotions(
 /**
  * The belt with the runs that are not in a bin yet left out of them, so a bin's count changes when
  * the slide ends: those in `landing`, still sliding into a bin, and those whose `places` put them
- * elsewhere (a lane wins over a bin there). Lanes and counters are as they were. The same belt when
+ * elsewhere (a lane wins over a bin there). Lanes and the newest post are as they were. The same belt when
  * nothing is left out.
  */
 export function holdBins(
