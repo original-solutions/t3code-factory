@@ -1,11 +1,10 @@
-import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
 import { formatAge } from "./format";
 import type { RepoDay, RepoHealth, RepoVerdict } from "./repoHealth";
 
-const TONE: Record<RepoVerdict, string> = {
+export const REPO_TONE: Record<RepoVerdict, string> = {
   stuck: "var(--factory-stuck)",
   info: "var(--factory-info)",
   moving: "var(--factory-building)",
@@ -14,7 +13,7 @@ const TONE: Record<RepoVerdict, string> = {
 };
 
 /** The verdict as its count where it has one: "2 stuck", "1 needs info", "3 in flight". */
-const headline = (repo: RepoHealth): string => {
+export const repoHeadline = (repo: RepoHealth): string => {
   switch (repo.verdict) {
     case "stuck":
       return `${repo.stuck} stuck`;
@@ -82,7 +81,7 @@ function WeekBars({ days, scale }: { days: ReadonlyArray<RepoDay>; scale: number
 /**
  * Every repo on the page as a tile, the ones that need a person first: its verdict on a coloured
  * rail, what else is in flight or waiting, and its week as bars. A tile picks that repo for the
- * whole page (belt, bins and runs); the picked one again, or All repos, goes back to every repo.
+ * whole page (belt, bins and runs); the picked one again goes back to every repo.
  */
 export function RepoBoard({
   repos,
@@ -120,11 +119,6 @@ export function RepoBoard({
           {repos.length} {repos.length === 1 ? "repo" : "repos"}
         </h2>
         <span className="min-w-0 text-xs text-muted-foreground">{summary}</span>
-        {selected !== null ? (
-          <Button className="ml-auto" onClick={() => onSelect(null)} size="xs" variant="link">
-            All repos
-          </Button>
-        ) : null}
       </div>
       <ul className="grid grid-cols-2 gap-2 @3xl:grid-cols-[repeat(auto-fill,minmax(17rem,1fr))]">
         {repos.map((repo) => {
@@ -139,7 +133,7 @@ export function RepoBoard({
                 <TooltipTrigger
                   render={
                     <button
-                      aria-label={`${repo.repo}: ${headline(repo)}`}
+                      aria-label={`${repo.repo}: ${repoHeadline(repo)}`}
                       aria-pressed={on}
                       className={cn(
                         "flex w-full min-w-0 items-center gap-2 rounded-lg border border-l-4 bg-card py-2 pr-2.5 pl-2.5 text-left outline-none hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
@@ -148,7 +142,7 @@ export function RepoBoard({
                       )}
                       data-verdict={repo.verdict}
                       onClick={() => onSelect(on ? null : repo.repo)}
-                      style={{ borderLeftColor: TONE[repo.verdict] }}
+                      style={{ borderLeftColor: REPO_TONE[repo.verdict] }}
                       type="button"
                     />
                   }
@@ -164,9 +158,9 @@ export function RepoBoard({
                       <span
                         aria-hidden
                         className="inline-block size-2 shrink-0 self-center rounded-full"
-                        style={{ background: TONE[repo.verdict] }}
+                        style={{ background: REPO_TONE[repo.verdict] }}
                       />
-                      <span className="shrink-0 font-medium">{headline(repo)}</span>
+                      <span className="shrink-0 font-medium">{repoHeadline(repo)}</span>
                     </span>
                     <span className="hidden truncate text-xs text-muted-foreground @3xl:block">
                       {detail}
@@ -178,7 +172,7 @@ export function RepoBoard({
                   <span className="flex flex-col gap-0.5">
                     <b className="font-medium">{repo.repo}</b>
                     <span>
-                      {headline(repo)} · {detail}
+                      {repoHeadline(repo)} · {detail}
                     </span>
                     <span className="text-muted-foreground">{weekText(repo.days)}</span>
                   </span>

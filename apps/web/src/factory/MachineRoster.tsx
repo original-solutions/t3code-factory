@@ -16,7 +16,7 @@ import type { FactoryEnvironment } from "./useFactoryData";
 
 const LABEL = "text-3xs font-semibold uppercase tracking-widest text-muted-foreground";
 
-const TONE_DOT: Record<MachineTone, string> = {
+export const TONE_DOT: Record<MachineTone, string> = {
   loading: "bg-muted-foreground/40",
   down: "bg-destructive",
   running: "bg-success",

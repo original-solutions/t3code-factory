@@ -1232,7 +1232,9 @@ describe("FactoryPage filters", () => {
       .map((a) => JSON.parse(a.getAttribute("data-params")!).runId as string);
   const pick = async (select: string, option: string) => {
     await userEvent.click(browser.getByRole("combobox", { name: select }));
-    await userEvent.click(browser.getByRole("option", { name: option, exact: true }));
+    // An option's name is its label, then how it is doing ("acme/widgets, 1 stuck").
+    const escaped = option.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    await userEvent.click(browser.getByRole("option", { name: new RegExp(`^${escaped}(,|$)`) }));
   };
 
   it("keeps a string search value and drops one that is not a string", () => {
@@ -1320,10 +1322,16 @@ describe("FactoryPage filters", () => {
     });
     await using _page = await render(createElement(FactoryPage));
     await userEvent.click(browser.getByRole("combobox", { name: "Repo" }));
-    const options = Array.from(document.querySelectorAll('[role="option"]')).map(
-      (option) => option.textContent,
-    );
-    expect(options).toEqual(["All repos", "acme/widgets", "original-solutions/t3code-factory"]);
+    const options = Array.from(document.querySelectorAll('[role="option"]')).map((option) => {
+      const note = option.querySelector("[data-scope-note]")?.textContent ?? "";
+      return [option.textContent!.slice(0, option.textContent!.length - note.length), note];
+    });
+    // Each repo the board knows carries its verdict, as its tile does.
+    expect(options).toEqual([
+      ["All repos", ""],
+      ["acme/widgets", "Quiet"],
+      ["original-solutions/t3code-factory", "Quiet"],
+    ]);
   });
 
   it("opens filtered from the URL, matching the repo without regard to case", async () => {
@@ -1510,6 +1518,25 @@ describe("FactoryPage filters", () => {
     expect(runLinks(page)).toEqual([RUN_ID]);
     await pick("Repo", "All repos");
     expect(runLinks(page).toSorted()).toEqual([RUN_ID, "unparsed"].toSorted());
+  });
+
+  it("says what the page shows above Live and Trends, each machine with its state, and Show everything keeps the view", async () => {
+    using _state = setup();
+    twoEnvironments();
+    state.search = { environment: "env-3", repo: "acme/widgets", view: "trends" };
+    await using page = await render(createElement(FactoryPage));
+    const scope = () => page.all('nav[aria-label="What the page shows"]')[0]?.textContent ?? "";
+    expect(scope()).toContain("Showing");
+    expect(scope()).toContain("acme/widgets");
+    expect(scope()).toContain("Laptop");
+    await userEvent.click(browser.getByRole("combobox", { name: "Environment" }));
+    const machines = Array.from(document.querySelectorAll('[role="option"]')).map(
+      (option) => option.querySelector("[data-scope-note]")?.textContent ?? null,
+    );
+    expect(machines).toEqual([null, "Running", "Running"]);
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(browser.getByRole("button", { name: "Show everything" }));
+    expect(state.navigations.at(-1)?.search).toEqual({ view: "trends" });
   });
 
   it("renders everything for an environment or repo that names nothing listed", async () => {

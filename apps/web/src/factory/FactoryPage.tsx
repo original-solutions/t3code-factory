@@ -2,13 +2,6 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { useNavigate, useRouterState, useSearch } from "@tanstack/react-router";
 import { useState } from "react";
 
-import {
-  Select,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-  SelectValue,
-} from "~/components/ui/select";
 import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 
 import { factoryApi } from "./api";
@@ -17,10 +10,13 @@ import { CatchUpCard } from "./CatchUpCard";
 import { FactoryBelt } from "./FactoryBelt";
 import { FactoryFrame } from "./FactoryFrame";
 import { FactoryError, FactoryLoading, FactoryReadFailure } from "./FactoryNotices";
+import { FactoryScope } from "./FactoryScope";
 import { FactoryTrends } from "./FactoryTrends";
 import { messageOf, parseRunId } from "./format";
 import { neverBuilt, type FirstRun } from "./firstRun";
-import { RepoBoard } from "./RepoBoard";
+import { machineLine } from "./machines";
+import { TONE_DOT } from "./MachineRoster";
+import { REPO_TONE, RepoBoard, repoHeadline } from "./RepoBoard";
 import { repoBoard } from "./repoHealth";
 import { bucketOf, countBuckets, matchesQuery } from "./runLedger";
 import { runLinkKey } from "./runQueue";
@@ -55,39 +51,6 @@ const withFilter = (search: FactorySearch, key: keyof FactorySearch, value: stri
   const { [key]: _, ...rest } = search;
   return value === null ? rest : { ...rest, [key]: value };
 };
-
-/** One filter's select: "All …" first, then each option. */
-function FilterSelect({
-  label,
-  all,
-  options,
-  value,
-  onChange,
-}: {
-  label: string;
-  all: string;
-  options: ReadonlyArray<{ value: string; label: string }>;
-  value: string | null;
-  onChange: (value: string | null) => void;
-}) {
-  const items = [{ value: null, label: all }, ...options];
-  return (
-    <div className="w-40 min-w-0">
-      <Select items={items} onValueChange={onChange} value={value}>
-        <SelectTrigger aria-label={label} size="sm">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectPopup>
-          {items.map((item) => (
-            <SelectItem key={item.value ?? ""} value={item.value}>
-              {item.label}
-            </SelectItem>
-          ))}
-        </SelectPopup>
-      </Select>
-    </div>
-  );
-}
 
 export function FactoryPage() {
   const search = useSearch({ from: "/factory" });
@@ -318,6 +281,49 @@ export function FactoryPage() {
     ];
   });
 
+  // Trends do not read the recent window, so the board would know only the runs in flight there.
+  const boardOf = new Map(
+    trends ? [] : board.map((health) => [health.repo.toLowerCase(), health] as const),
+  );
+  // A filter that is on keeps its select, so it can be cleared.
+  const scope = (
+    <FactoryScope
+      machine={environmentFilter}
+      machines={
+        environments.length > 1 || environmentFilter !== null
+          ? environments.map(({ environmentId, label, status }) => {
+              const line = machineLine(status);
+              return {
+                value: environmentId,
+                label,
+                toneClass: TONE_DOT[line.tone],
+                note: line.word,
+              };
+            })
+          : null
+      }
+      onClear={() => setSearch(withFilter(withFilter(search, "repo", null), "environment", null))}
+      onMachine={(value) => setSearch(withFilter(search, "environment", value))}
+      onRepo={(value) => setSearch(withFilter(search, "repo", value))}
+      repo={repoFilter}
+      repos={
+        repos.length > 1 || repoFilter !== null
+          ? repos.map((repo) => {
+              const health = boardOf.get(repo.toLowerCase());
+              return health
+                ? {
+                    value: repo,
+                    label: repo,
+                    tone: REPO_TONE[health.verdict],
+                    note: repoHeadline(health),
+                  }
+                : { value: repo, label: repo };
+            })
+          : null
+      }
+    />
+  );
+
   let body;
   if (environments.length === 0) {
     body = supported ? (
@@ -333,6 +339,7 @@ export function FactoryPage() {
   } else if (trends) {
     body = (
       <>
+        {scope}
         {notices.map(({ environmentId, label, error, dataAt, retry }) => (
           <FactoryReadFailure
             dataAt={dataAt}
@@ -353,6 +360,7 @@ export function FactoryPage() {
   } else {
     body = (
       <>
+        {scope}
         {/* Above the belt: what it shows may be stale, and below it the notice was out of sight. */}
         {notices.map(({ environmentId, label, error, dataAt, retry }) => (
           <FactoryReadFailure
@@ -453,30 +461,6 @@ export function FactoryPage() {
             <Toggle value="live">Live</Toggle>
             <Toggle value="trends">Trends</Toggle>
           </ToggleGroup>
-          <div className="ml-auto flex min-w-0 items-center gap-2">
-            {/* A filter that is on keeps its select, so it can be cleared. */}
-            {environments.length > 1 || environmentFilter !== null ? (
-              <FilterSelect
-                all="All environments"
-                label="Environment"
-                onChange={(value) => setSearch(withFilter(search, "environment", value))}
-                options={environments.map(({ environmentId, label }) => ({
-                  value: environmentId,
-                  label,
-                }))}
-                value={environmentFilter}
-              />
-            ) : null}
-            {repos.length > 1 || repoFilter !== null ? (
-              <FilterSelect
-                all="All repos"
-                label="Repo"
-                onChange={(value) => setSearch(withFilter(search, "repo", value))}
-                options={repos.map((repo) => ({ value: repo, label: repo }))}
-                value={repoFilter}
-              />
-            ) : null}
-          </div>
         </div>
       }
     >
