@@ -45,6 +45,7 @@ import {
 import { nextStep } from "./nextStep";
 import { GateOutput } from "./GateOutput";
 import { RunNextStep } from "./RunNextStep";
+import { RunReportCard } from "./RunReportCard";
 import { RunTimeline } from "./RunTimeline";
 import { RunActions, useRunStop } from "./RunActionBar";
 import { runActions } from "./runActions";
@@ -286,6 +287,7 @@ export function FactoryRunPage({
             {note}
           </p>
         ) : null}
+        <RunReportCard entries={entries} />
         {next ? (
           <RunNextStep
             environmentId={environmentId}
