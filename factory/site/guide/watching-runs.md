@@ -134,7 +134,7 @@ Under the belt, the Factory page lists what needs a person in three bins: Needs 
 - three passes in a row failed,
 - a stopped session's worktree was deleted or is no longer a git checkout, so the factory archived the threads still on it.
 
-An item for a stuck or held run links to it, and one for a config problem links to Settings → Factory; the archived-worktree item names its run in the message. Each new item also posts a macOS notification, as does a run abandoned because its issue was closed, on the server's Mac, unless `notify` is `false` in the [machine config](/guide/machine-config).
+An item for a stuck or held run links to it, and one for a config problem links to Settings → Factory; the archived-worktree item names its run in the message. When the factory's `gh` is signed out, every repo it watches and the pass all fail for that one reason, so they show as a single **GitHub sign-in** item: its **Sign in** opens Settings → Factory, whose first-run steps give the `gh auth login` command for the factory's GitHub config directory, and its Dismiss hides them all. Each new item also posts a macOS notification, as does a run abandoned because its issue was closed, on the server's Mac, unless `notify` is `false` in the [machine config](/guide/machine-config).
 
 The app you watch from tells you too, on any machine, following Settings → Notifications: while T3 Code has focus, a toast names the new item with a button to its run (none on a Factory page, which already shows it); while it doesn't, a system notification does the same. Several new items at once arrive as one notice with their count. The app hears of an item at its next status read, every half minute while you're using it.
 

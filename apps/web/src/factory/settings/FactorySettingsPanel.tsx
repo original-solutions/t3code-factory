@@ -322,7 +322,12 @@ function MachineConfigForm({
         ) : null}
       </div>
 
-      <FactorySetup file={report.file} repos={report.repos} watchError={report.watch_error} />
+      <FactorySetup
+        file={report.file}
+        ghConfigDir={report.config?.gh_config_dir ?? ""}
+        repos={report.repos}
+        watchError={report.watch_error}
+      />
 
       <SettingsSection title="Machine config">
         <SettingsRow

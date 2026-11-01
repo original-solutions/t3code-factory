@@ -9,6 +9,7 @@ import { repoRoster, type RepoHealth } from "./repoRoster";
 import { cn } from "../../lib/utils";
 import "../belt.css";
 import { Snippet } from "../FirstRunSteps";
+import { signedOut } from "../gitHubSignIn";
 import { withoutRepoPrefix } from "../format";
 import { TouchLink } from "../TouchLink";
 
@@ -178,7 +179,11 @@ function RepoEntry({
   const { label, tone } = HEALTH[health];
   const firstMessage = block.errors?.[0]?.message;
   const firstError =
-    firstMessage === undefined ? undefined : withoutRepoPrefix(firstMessage, block.repo);
+    firstMessage === undefined
+      ? undefined
+      : signedOut(firstMessage)
+        ? "gh is signed out, so the config could not be read"
+        : withoutRepoPrefix(firstMessage, block.repo);
   const gate = block.factory?.gate.length ?? 0;
   return (
     <Collapsible defaultOpen={defaultOpen} data-repo={block.repo} data-health={health}>

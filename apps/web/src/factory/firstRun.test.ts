@@ -67,6 +67,17 @@ describe("firstRunSteps", () => {
     expect(steps.states).toEqual(["done", "blocked", "done", "todo"]);
     expect(steps.broken?.title).toBe("A");
     expect(steps.current).toBe(2);
+    expect(steps.signedOut).toBe(false);
+  });
+
+  it("names a signed-out gh as the block when it is every broken repo's error", () => {
+    const out = {
+      errors: [
+        { file: ".dw/config.yml", message: "exited with status 4: please run: gh auth login" },
+      ],
+    };
+    expect(firstRunSteps(ok([block("A", out), block("B", out)]), false).signedOut).toBe(true);
+    expect(firstRunSteps(ok([block("A", out), block("B", broken)]), false).signedOut).toBe(false);
   });
 
   it("waits on the next pass for a repo not read yet", () => {

@@ -1,4 +1,5 @@
 import type { RepoBlock } from "./settings/api";
+import { signedOut } from "./gitHubSignIn";
 import { repoHealth, type SetupStepState } from "./settings/repoRoster";
 
 /**
@@ -55,5 +56,8 @@ export const firstRunSteps = (config: FirstRunConfig, paused: boolean | null) =>
     return step === "blocked" ? "blocked" : "current";
   });
   const at = states.findIndex((state) => state === "current" || state === "blocked");
-  return { states, current: at + 1, ready, broken, errors: errored.length };
+  // gh with no login fails every repo read alike; that is one fix, not a config to change.
+  const out =
+    errored.length > 0 && errored.every((repo) => signedOut(repo.errors?.[0]?.message ?? ""));
+  return { states, current: at + 1, ready, broken, errors: errored.length, signedOut: out };
 };

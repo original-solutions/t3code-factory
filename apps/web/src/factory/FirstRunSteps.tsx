@@ -7,6 +7,7 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import "./belt.css";
 import type { FirstRunConfig, firstRunSteps } from "./firstRun";
 import { withoutRepoPrefix } from "./format";
+import { signInCommand } from "./gitHubSignIn";
 import type { RepoBlock } from "./settings/api";
 import { Step } from "./settings/SetupStep";
 import { TouchLink } from "./TouchLink";
@@ -68,7 +69,7 @@ const FACTORY_PAGE = (label: string) => (
 /** Where the steps stand: the Factory page holds the claims switch, Settings holds the config. */
 export type FirstRunPlace =
   | { readonly kind: "factory"; readonly busy: boolean; readonly onResume: () => void }
-  | { readonly kind: "settings"; readonly file: string };
+  | { readonly kind: "settings"; readonly file: string; readonly ghConfigDir: string };
 
 /**
  * The four steps to a first run, worded once for both places that show them. Each place adds only
@@ -83,7 +84,7 @@ export function FirstRunSteps({
   readonly steps: ReturnType<typeof firstRunSteps>;
   readonly place: FirstRunPlace;
 }) {
-  const { states, ready, broken, errors } = steps;
+  const { states, ready, broken, errors, signedOut } = steps;
   const [watch, read, claims, label] = states as [
     (typeof states)[number],
     (typeof states)[number],
@@ -137,9 +138,32 @@ export function FirstRunSteps({
           </>
         )}
       </Step>
-      <Step n={2} state={read} title="Give it a config it can build from">
+      <Step
+        n={2}
+        state={read}
+        title={
+          signedOut && read !== "done"
+            ? "Sign the factory in to GitHub"
+            : "Give it a config it can build from"
+        }
+      >
         {read === "done" ? (
           <p className="break-words">{`Ready to build: ${names(ready)}.`}</p>
+        ) : read !== "todo" && signedOut ? (
+          <>
+            <p>
+              {`The factory's gh is signed out, so it cannot read ${
+                errors === 1
+                  ? "the watched repo's config"
+                  : `any of the ${errors} watched repos' configs`
+              }. Sign it in once, in a terminal on this machine; the next pass reads them again.`}
+            </p>
+            {place.kind === "settings" ? (
+              <Snippet label="Copy the sign-in command" text={signInCommand(place.ghConfigDir)} />
+            ) : (
+              SETTINGS
+            )}
+          </>
         ) : read !== "todo" && broken !== null ? (
           <>
             <p>

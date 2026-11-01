@@ -9,10 +9,12 @@ import type { RepoBlock } from "./api";
  */
 export function FactorySetup({
   file,
+  ghConfigDir,
   repos,
   watchError,
 }: {
   readonly file: string;
+  readonly ghConfigDir: string;
   readonly repos: ReadonlyArray<RepoBlock>;
   readonly watchError: string | null;
 }) {
@@ -27,7 +29,11 @@ export function FactorySetup({
         }
         title="Get the factory building"
       >
-        <FirstRunSteps config={config} place={{ kind: "settings", file }} steps={steps} />
+        <FirstRunSteps
+          config={config}
+          place={{ kind: "settings", file, ghConfigDir }}
+          steps={steps}
+        />
       </SettingsSection>
     </div>
   );

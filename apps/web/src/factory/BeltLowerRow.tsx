@@ -12,6 +12,7 @@ import type { FactoryAttentionItem } from "./api";
 import type { BeltRun } from "./belt";
 import { BeltDot } from "./BeltDot";
 import { FactoryCard, FactoryCardHeader } from "./FactoryCard";
+import { foldSignedOut } from "./gitHubSignIn";
 import { formatAge, issueRef, parseRunId, withoutRepoPrefix } from "./format";
 import { JUMP_TARGET_CLASS, jumpTarget } from "./pageSections";
 import { Ref } from "./Ref";
@@ -114,6 +115,79 @@ function AttentionItem({
   );
 }
 
+const repoNames = (repos: ReadonlyArray<string>) => {
+  const shown = repos.slice(0, 3).map((repo) => repo.split("/").pop() ?? repo);
+  return repos.length > 3 ? `${shown.join(", ")} and ${repos.length - 3} more` : shown.join(", ");
+};
+
+/**
+ * One environment's signed-out gh: one item, since every repo read and the pass fail on it, with
+ * the way to the sign-in command and one Dismiss for all of them.
+ */
+function SignedOutItem({
+  entries,
+  repos,
+  firstSeen,
+  showEnvironment,
+  nowMs,
+  onDismiss,
+}: {
+  entries: ReadonlyArray<EnvironmentAttention>;
+  repos: ReadonlyArray<string>;
+  firstSeen: string;
+  showEnvironment: boolean;
+  nowMs: number;
+  onDismiss: (items: ReadonlyArray<EnvironmentAttention>) => void;
+}) {
+  const { environmentId, label } = entries[0]!;
+  const [whole, setWhole] = useState(false);
+  return (
+    <li className="flex flex-col gap-1 py-2 text-sm first:pt-0 last:pb-0" data-signed-out="">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+        <span aria-hidden className="size-2 shrink-0 rounded-full bg-(--factory-stuck)" />
+        <span className="font-medium">GitHub sign-in</span>
+        {showEnvironment ? (
+          <span className="min-w-0 break-words text-muted-foreground">{label}</span>
+        ) : null}
+        <span className="ml-auto text-muted-foreground">
+          {formatAge(Date.parse(firstSeen), nowMs)}
+        </span>
+      </div>
+      <p className="w-full break-words">
+        {repos.length === 0
+          ? "The factory's gh is signed out, so its passes cannot read GitHub."
+          : `The factory's gh is signed out, so it cannot read ${
+              repos.length === 1
+                ? repos[0]
+                : `any of its ${repos.length} repos: ${repoNames(repos)}`
+            }.`}{" "}
+        No issue is claimed until it signs in.
+      </p>
+      {whole ? (
+        <ul className="flex flex-col gap-1 text-xs text-muted-foreground">
+          {entries.map(({ item }) => (
+            <li className="break-words" key={item.id}>
+              {item.repo === null ? null : <span className="font-mono">{item.repo}: </span>}
+              {withoutRepoPrefix(item.message, item.repo)}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <div className="flex flex-wrap items-center gap-x-3">
+        <TouchLink render={<Link search={{ machine: environmentId }} to="/settings/factory" />}>
+          Sign in
+        </TouchLink>
+        <Button aria-expanded={whole} onClick={() => setWhole(!whole)} size="xs" variant="ghost">
+          {whole ? "Hide what gh said" : `What gh said (${entries.length})`}
+        </Button>
+        <Button className="ml-auto" onClick={() => onDismiss(entries)} size="xs" variant="ghost">
+          Dismiss
+        </Button>
+      </div>
+    </li>
+  );
+}
+
 /**
  * The open attention items in the order given, or a line saying none needs a person. With
  * `showEnvironment` each says which environment raised it. `onDismiss` gets the items to dismiss:
@@ -130,6 +204,7 @@ function AttentionSection({
   nowMs: number;
   onDismiss: (items: ReadonlyArray<EnvironmentAttention>) => void;
 }) {
+  const rows = foldSignedOut(items);
   return (
     <FactoryCard
       aria-label="Needs attention"
@@ -144,7 +219,7 @@ function AttentionSection({
                 Dismiss all
               </Button>
             )}
-            <span className="font-mono text-lg font-semibold leading-none">{items.length}</span>
+            <span className="font-mono text-lg font-semibold leading-none">{rows.length}</span>
           </>
         }
         title="Needs attention"
@@ -153,15 +228,27 @@ function AttentionSection({
         <p className="text-sm text-muted-foreground">Nothing needs a person.</p>
       ) : (
         <ul className="flex max-h-96 flex-col divide-y overflow-y-auto">
-          {items.map((entry) => (
-            <AttentionItem
-              entry={entry}
-              key={`${entry.environmentId} ${entry.item.id}`}
-              nowMs={nowMs}
-              onDismiss={onDismiss}
-              showEnvironment={showEnvironment}
-            />
-          ))}
+          {rows.map((row) =>
+            row.kind === "one" ? (
+              <AttentionItem
+                entry={row.entry}
+                key={`${row.entry.environmentId} ${row.entry.item.id}`}
+                nowMs={nowMs}
+                onDismiss={onDismiss}
+                showEnvironment={showEnvironment}
+              />
+            ) : (
+              <SignedOutItem
+                entries={row.entries}
+                firstSeen={row.firstSeen}
+                key={`${row.environmentId} signed-out`}
+                nowMs={nowMs}
+                onDismiss={onDismiss}
+                repos={row.repos}
+                showEnvironment={showEnvironment}
+              />
+            ),
+          )}
         </ul>
       )}
     </FactoryCard>
