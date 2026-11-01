@@ -1,5 +1,6 @@
 import { useEffect, useEffectEvent } from "react";
 
+import { FACTORY_SECTIONS, type FactorySectionId } from "./pageSections";
 import type { FactorySearch } from "./search";
 
 /** One run in a list the user opened a run from. */
@@ -74,13 +75,15 @@ export function stepInQueue(
   };
 }
 
-export type FactoryKey = "next" | "previous" | "back" | "search";
+export type FactoryKey = "next" | "previous" | "back" | "search" | "help" | FactorySectionId;
 
 const KEYS: Readonly<Record<string, FactoryKey>> = {
   j: "next",
   k: "previous",
   Escape: "back",
   "/": "search",
+  "?": "help",
+  ...Object.fromEntries(FACTORY_SECTIONS.map(({ key, id }) => [key, id])),
 };
 
 /** Typing, or inside a popup that owns its own keys (a select's list, a menu, a dialog). */
@@ -92,7 +95,8 @@ const ownsKeys = (target: EventTarget | null) =>
     ) !== null);
 
 /**
- * The Factory pages' keys: j/k step (arrows stay the page's scroll), Escape goes back, `/` searches.
+ * The Factory pages' keys: j/k step (arrows stay the page's scroll), Escape goes back, `/` searches,
+ * `?` lists the keys and a section's letter jumps to it.
  * None while typing, in a popup, with a modifier held, or once something else took the key.
  */
 export function factoryKey(
@@ -102,7 +106,8 @@ export function factoryKey(
   >,
 ): FactoryKey | null {
   if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return null;
-  if (event.shiftKey && event.key !== "/") return null;
+  // Shift makes `?`, and `/` on some layouts.
+  if (event.shiftKey && event.key !== "/" && event.key !== "?") return null;
   if (ownsKeys(event.target)) return null;
   return KEYS[event.key] ?? null;
 }

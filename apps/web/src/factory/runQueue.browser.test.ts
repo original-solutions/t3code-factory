@@ -50,6 +50,18 @@ describe("factoryKey", () => {
     ]);
   });
 
+  it("maps ? to the key list, with or without Shift, and each section's letter to it", () => {
+    expect([press("?"), press("?", { shiftKey: true })]).toEqual(["help", "help"]);
+    expect(["b", "a", "n", "s", "r"].map((key) => press(key))).toEqual([
+      "belt",
+      "attention",
+      "info",
+      "stuck",
+      "runs",
+    ]);
+    expect(press("s", { shiftKey: true })).toBeNull();
+  });
+
   it("leaves arrows to scroll the page", () => {
     expect([press("ArrowDown"), press("ArrowUp")]).toEqual([null, null]);
   });

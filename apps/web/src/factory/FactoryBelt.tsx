@@ -5,6 +5,7 @@ import { useState, type CSSProperties, type ReactNode } from "react";
 import { Skeleton } from "~/components/ui/skeleton";
 import { Switch } from "~/components/ui/switch";
 import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
+import { cn } from "~/lib/utils";
 
 import { factoryApi, type FactoryRunRow, type FactoryStatus } from "./api";
 import { beltColumns, deriveBelt, nextPassText, type Station } from "./belt";
@@ -24,6 +25,7 @@ import type { FirstRun } from "./firstRun";
 import { FirstRunGuide } from "./FirstRunGuide";
 import { FactoryReadFailure } from "./FactoryNotices";
 import { messageOf } from "./format";
+import { JUMP_TARGET_CLASS, jumpTarget } from "./pageSections";
 import { repoOfRun } from "./repoHealth";
 import { useRunStop } from "./RunActionBar";
 import { TouchLink } from "./TouchLink";
@@ -426,7 +428,11 @@ export function FactoryBelt({
     >
       <section
         aria-label="Production belt"
-        className="@container flex min-w-0 flex-col gap-4 rounded-lg border bg-card p-4"
+        className={cn(
+          "@container flex min-w-0 flex-col gap-4 rounded-lg border bg-card p-4",
+          JUMP_TARGET_CLASS,
+        )}
+        {...jumpTarget("belt")}
       >
         <Environments
           environments={environments}

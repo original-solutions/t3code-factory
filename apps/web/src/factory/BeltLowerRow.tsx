@@ -6,11 +6,13 @@ import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "~/components/ui/collapsible";
 import { Skeleton } from "~/components/ui/skeleton";
+import { cn } from "~/lib/utils";
 
 import type { FactoryAttentionItem } from "./api";
 import type { BeltRun } from "./belt";
 import { BeltDot } from "./BeltDot";
 import { formatAge, issueRef, parseRunId } from "./format";
+import { JUMP_TARGET_CLASS, jumpTarget } from "./pageSections";
 import { Ref } from "./Ref";
 import { stuckCauses } from "./stuckCauses";
 import { runLinkKey, runQueue, type QueueOrigin, type RunQueue } from "./runQueue";
@@ -69,7 +71,11 @@ function AttentionSection({
   onDismiss: (items: ReadonlyArray<EnvironmentAttention>) => void;
 }) {
   return (
-    <section aria-label="Needs attention" className="flex min-w-0 flex-col gap-2">
+    <section
+      aria-label="Needs attention"
+      className={cn("flex min-w-0 flex-col gap-2 rounded-lg", JUMP_TARGET_CLASS)}
+      {...jumpTarget("attention")}
+    >
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-sm font-medium">Needs attention</h2>
         {items.length === 0 ? null : (
@@ -212,7 +218,7 @@ function StuckCauses({
     <div className="flex max-h-96 flex-col divide-y overflow-y-auto">
       {causes.map(({ cause, entries }) => (
         <Collapsible data-cause={cause} defaultOpen={causes.length === 1} key={cause}>
-          <CollapsibleTrigger className="group/cause flex min-h-9 w-full items-center gap-2 py-1.5 text-left text-sm outline-none hover:text-foreground focus-visible:underline pointer-coarse:min-h-11">
+          <CollapsibleTrigger className="group/cause flex min-h-9 w-full items-center gap-2 py-1.5 rounded-sm text-left text-sm outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11">
             <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-panel-open/cause:rotate-90" />
             <span className="flex min-w-0 flex-1 flex-col">
               <span className="break-words font-medium">{cause}</span>
@@ -273,9 +279,13 @@ function Bin({
   return (
     <section
       aria-label={name}
-      className="flex min-w-0 flex-col gap-2 rounded-lg border border-t-3 border-t-(--factory-station) bg-card px-3 py-2.5"
+      className={cn(
+        "flex min-w-0 flex-col gap-2 rounded-lg border border-t-3 border-t-(--factory-station) bg-card px-3 py-2.5",
+        JUMP_TARGET_CLASS,
+      )}
       data-bin={station}
       data-station={station}
+      {...jumpTarget(station)}
     >
       <div className="flex items-center gap-2">
         <span aria-hidden className="size-2.5 rounded-xs bg-(--factory-station)" />

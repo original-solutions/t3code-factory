@@ -21,6 +21,7 @@ import {
 import { RunAgentCard } from "./RunAgent";
 import { FactoryApiError, type FactoryEntry } from "./api";
 import { FactoryFrame } from "./FactoryFrame";
+import { FactoryKeysButton, FactoryKeysDialog } from "./FactoryKeys";
 import { FactoryError, FactoryLoading, FactoryReadFailure } from "./FactoryNotices";
 import {
   currentStep,
@@ -208,7 +209,12 @@ export function FactoryRunPage({
       state: queue ? { factoryRunQueue: queue } : {},
       replace: true,
     });
+  const [keysOpen, setKeysOpen] = useState(false);
   useFactoryKeys((key) => {
+    if (key === "help") {
+      setKeysOpen(true);
+      return true;
+    }
     if (key === "back") {
       void navigate({ to: "/factory", search: backSearch, state: backState });
       return true;
@@ -343,11 +349,15 @@ export function FactoryRunPage({
           >
             {label}
           </span>
-          {queued ? <QueueStepper onGo={go} step={queued} /> : null}
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            {queued ? <QueueStepper onGo={go} step={queued} /> : null}
+            <FactoryKeysButton onOpen={() => setKeysOpen(true)} />
+          </div>
         </div>
       }
     >
       {body}
+      <FactoryKeysDialog onOpenChange={setKeysOpen} open={keysOpen} />
     </FactoryFrame>
   );
 }

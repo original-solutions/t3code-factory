@@ -104,7 +104,7 @@ export function TodayStrip({ strip }: { strip: Strip | null }) {
                 >
                   <Link
                     aria-label={name}
-                    className="relative block size-full rounded-full opacity-80 transition-[opacity,transform] after:absolute after:-inset-y-1.5 after:inset-x-0 hover:scale-y-150 hover:opacity-100 focus-visible:scale-y-150 focus-visible:opacity-100"
+                    className="relative block size-full rounded-full opacity-80 outline-none transition-[opacity,transform] after:absolute after:-inset-y-1.5 after:inset-x-0 hover:scale-y-150 hover:opacity-100 focus-visible:scale-y-150 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                     params={{ environmentId: bar.environmentId, runId: bar.id }}
                     style={{ background: TONE_COLOR[bar.tone] }}
                     title={bar.title ? `${name}\n${bar.title}` : name}

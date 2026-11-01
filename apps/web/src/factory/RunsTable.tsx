@@ -17,6 +17,7 @@ import {
   TableRow,
 } from "~/components/ui/table";
 import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
+import { cn } from "~/lib/utils";
 
 import type { EnvironmentId } from "@t3tools/contracts";
 
@@ -31,6 +32,7 @@ import {
   stateBadgeVariant,
 } from "./format";
 import { issueOf, newestAttempts } from "./belt";
+import { JUMP_TARGET_CLASS, jumpTarget } from "./pageSections";
 import { Ref } from "./Ref";
 import { RunActions, type RunStop } from "./RunActionBar";
 import { runActions, type RunActionKind } from "./runActions";
@@ -150,7 +152,13 @@ function LedgerToolbar({
   // A chip with no runs is left out unless it is the one picked, so it can be unpicked.
   const chips = RUN_BUCKETS.filter(({ value }) => counts[value] > 0 || value === bucket);
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+    <div
+      className={cn(
+        "-m-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 rounded-lg p-1",
+        JUMP_TARGET_CLASS,
+      )}
+      {...jumpTarget("runs")}
+    >
       <h2 className="text-sm font-medium">Runs</h2>
       <div className="min-w-0 max-w-full overflow-x-auto">
         <ToggleGroup
@@ -207,6 +215,9 @@ function KeyHints() {
       </span>
       <span>
         <Kbd>/</Kbd> search
+      </span>
+      <span>
+        <Kbd>?</Kbd> every key
       </span>
     </p>
   );
@@ -350,7 +361,7 @@ export function RunsTable({
       searchRef.current?.focus();
       return searchRef.current !== null;
     }
-    if (key === "back") return false;
+    if (key !== "next" && key !== "previous") return false;
     const links = runLinks(ledger.current);
     const at = links.indexOf(document.activeElement as HTMLElement);
     if (key === "next" && at !== -1 && at === links.length - 1 && hidden > 0) {

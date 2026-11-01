@@ -171,7 +171,7 @@ function Tile({
     <Link
       aria-label={`${run.issue}, ${run.label}, ${elapsed}`}
       className={cn(
-        "relative flex h-12 w-[60px] shrink-0 flex-col justify-between overflow-hidden rounded-md border px-1.5 pt-2 pb-1 text-foreground hover:bg-accent/40",
+        "relative flex h-12 w-[60px] shrink-0 flex-col justify-between overflow-hidden rounded-md border px-1.5 pt-2 pb-1 text-foreground outline-none hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         mine ? "bg-card" : "border-dashed bg-transparent",
       )}
       data-station={station}

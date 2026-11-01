@@ -9,6 +9,7 @@ import type { EnvironmentAttention } from "./BeltLowerRow";
 import { CatchUpCard } from "./CatchUpCard";
 import { FactoryBelt } from "./FactoryBelt";
 import { FactoryFrame } from "./FactoryFrame";
+import { FactoryKeysButton, FactoryKeysDialog, FactorySkipLinks } from "./FactoryKeys";
 import { FactoryError, FactoryLoading, FactoryReadFailure } from "./FactoryNotices";
 import { FactoryScope } from "./FactoryScope";
 import { FactoryTrends } from "./FactoryTrends";
@@ -19,7 +20,8 @@ import { TONE_DOT } from "./MachineRoster";
 import { REPO_TONE, RepoBoard, repoHeadline } from "./RepoBoard";
 import { repoBoard } from "./repoHealth";
 import { bucketOf, countBuckets, matchesQuery } from "./runLedger";
-import { runLinkKey } from "./runQueue";
+import { FACTORY_SECTIONS, jumpToSection } from "./pageSections";
+import { runLinkKey, useFactoryKeys } from "./runQueue";
 import { RunsTable } from "./RunsTable";
 import { useRunStop } from "./RunActionBar";
 import type { FactorySearch } from "./search";
@@ -64,6 +66,15 @@ export function FactoryPage() {
   const [allRuns, setAllRuns] = useState(false);
   // Trends chart every run; the full list is read once and shared with the table's Show all.
   const trends = search.view === "trends";
+  const [keysOpen, setKeysOpen] = useState(false);
+  useFactoryKeys((key) => {
+    if (key === "help") {
+      setKeysOpen(true);
+      return true;
+    }
+    const section = FACTORY_SECTIONS.find(({ id }) => id === key);
+    return section !== undefined && jumpToSection(section.id);
+  });
   // Runs are read once an environment's status has answered with data: a status still loading may
   // yet say 404 (an upstream server, left out above), and one that failed shows its error in the
   // belt's environment control, so neither should raise a second notice for its runs.
@@ -360,6 +371,7 @@ export function FactoryPage() {
   } else {
     body = (
       <>
+        <FactorySkipLinks onKeys={() => setKeysOpen(true)} />
         {scope}
         {/* Above the belt: what it shows may be stale, and below it the notice was out of sight. */}
         {notices.map(({ environmentId, label, error, dataAt, retry }) => (
@@ -461,10 +473,14 @@ export function FactoryPage() {
             <Toggle value="live">Live</Toggle>
             <Toggle value="trends">Trends</Toggle>
           </ToggleGroup>
+          <div className="ml-auto">
+            <FactoryKeysButton onOpen={() => setKeysOpen(true)} />
+          </div>
         </div>
       }
     >
       {body}
+      <FactoryKeysDialog onOpenChange={setKeysOpen} open={keysOpen} />
     </FactoryFrame>
   );
 }

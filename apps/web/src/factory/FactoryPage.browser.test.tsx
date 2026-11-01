@@ -1680,6 +1680,37 @@ describe("FactoryPage from the keyboard", () => {
     expect(focused()).toBe(keys[0]);
   });
 
+  it("jumps to a section by its letter or a skip link, and ? lists every key", async () => {
+    using _state = setup();
+    state.runs = resource({ data: { runs: RUNS } });
+    await using _page = await render(createElement(FactoryPage));
+    const jumpedTo = () => (document.activeElement as HTMLElement).dataset.factoryJump;
+    await userEvent.keyboard("r");
+    expect(jumpedTo()).toBe("runs");
+    // From the Runs heading, j starts at the first run.
+    await userEvent.keyboard("j");
+    expect(focused()).toBe(ledgerLinks()[0]!.dataset.runLink);
+    await userEvent.keyboard("s");
+    expect(jumpedTo()).toBe("stuck");
+    await userEvent.keyboard("a");
+    expect(jumpedTo()).toBe("attention");
+    await userEvent.keyboard("b");
+    expect(jumpedTo()).toBe("belt");
+
+    const skip = browser.getByRole("navigation", { name: "Jump to" });
+    await userEvent.click(skip.getByRole("button", { name: /^Runs/ }));
+    expect(jumpedTo()).toBe("runs");
+
+    await userEvent.keyboard("?");
+    const dialog = browser.getByRole("dialog", { name: "Keyboard shortcuts" });
+    await expect.element(dialog.getByText("Step through runs")).toBeVisible();
+    await expect.element(dialog.getByText("Stuck")).toBeVisible();
+    // Keys inside the list are its own: Escape closes it and s does not jump.
+    await userEvent.keyboard("s{Escape}");
+    await expect.element(dialog).not.toBeInTheDocument();
+    expect(jumpedTo()).not.toBe("stuck");
+  });
+
   it("coming back from a run, keeps the search typed before and focuses that run", async () => {
     using _state = setup();
     state.runs = resource({ data: { runs: RUNS } });
