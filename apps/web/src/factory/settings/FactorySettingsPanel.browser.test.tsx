@@ -190,6 +190,9 @@ describe("FactorySettingsPanel", () => {
   };
   const field = (root: HTMLElement, name: string) =>
     root.querySelector<HTMLElement>(`div[data-field="${name}"]`) ?? undefined;
+  const repoRows = (root: HTMLElement) =>
+    Array.from(root.querySelectorAll<HTMLElement>("[data-repo]"));
+  const openRepo = async (row: HTMLElement) => click(row.querySelector("button")!);
 
   const SAVED_KEYS = {
     gh_config_dir: "",
@@ -440,8 +443,11 @@ describe("FactorySettingsPanel", () => {
       await using panel = await open();
       const root = panel.container;
       const text = textOf(root);
-      expect(text).toContain("Watched repo: Alpha");
-      expect(text).toContain("Watched repo: Alpha copy");
+      expect(repoRows(root).map((row) => row.getAttribute("data-repo"))).toEqual([
+        "acme/alpha",
+        "acme/alpha",
+      ]);
+      expect(text).toContain("Alpha copy");
       expect(text.split(message)).toHaveLength(3);
       const duplicateKey = consoleError.mock.calls.filter((call) =>
         String(call[0]).includes("same key"),
@@ -452,16 +458,30 @@ describe("FactorySettingsPanel", () => {
     }
   });
 
-  it("lists the watched projects the API returns, read-only", async () => {
+  it("lists the watched projects the API returns as a roster, errors first, read-only", async () => {
     resetMocks();
     mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
     await using panel = await open();
     const root = panel.container;
 
+    const rows = repoRows(root);
+    expect(
+      rows.map((row) => [row.getAttribute("data-repo"), row.getAttribute("data-health")]),
+    ).toEqual([
+      ["acme/beta", "error"],
+      ["acme/gamma", "unread"],
+      ["acme/alpha", "ready"],
+    ]);
+    expect(textOf(root.querySelector('[data-testid="repo-summary"]')!)).toBe(
+      "3 watched · 1 with errors · 1 not read yet",
+    );
+    // A closed row still says what is wrong.
+    expect(textOf(rows[0]!)).toContain("factory.gate must be a list");
+    expect(textOf(rows[2]!)).toContain("develop · 1 gate command");
+    expect(textOf(root)).not.toContain("/work/alpha");
+
+    for (const row of rows) await openRepo(row);
     const text = textOf(root);
-    expect(text).toContain("Watched repo: Alpha");
-    expect(text).toContain("Watched repo: Beta");
-    expect(text).toContain("Watched repo: Gamma");
     expect(text).toContain("acme/alpha");
     expect(text).toContain("/work/alpha");
     expect(text).toContain("/work/gamma");
@@ -475,17 +495,15 @@ describe("FactorySettingsPanel", () => {
       textOf(node).includes("View .dw/config.yml on GitHub"),
     );
     expect(links.map((link) => link.getAttribute("href"))).toEqual([
-      "https://github.com/acme/alpha/blob/develop/.dw/config.yml",
       "https://github.com/acme/beta/blob/HEAD/.dw/config.yml",
       "https://github.com/acme/gamma/blob/HEAD/.dw/config.yml",
+      "https://github.com/acme/alpha/blob/develop/.dw/config.yml",
     ]);
 
     // The hint is there, and the page can neither add nor remove a repo.
     expect(text).toContain("added as T3 projects");
     expect(text).not.toContain("No T3 project on this environment has one yet");
-    expect(Array.from(root.querySelectorAll("button")).map((node) => textOf(node).trim())).toEqual([
-      "Save",
-    ]);
+    expect(root.querySelectorAll("input")).toHaveLength(5);
     // The errors sit in a paragraph: they are spans, never a list.
     expect(root.querySelectorAll("ul, li")).toHaveLength(0);
   });
@@ -524,7 +542,10 @@ describe("FactorySettingsPanel", () => {
     await using panel = await open();
     const root = panel.container;
 
+    // A lone repo opens by itself.
     const text = textOf(root);
+    expect(repoRows(root)[0]!.getAttribute("data-health")).toBe("default");
+    expect(text).toContain("Defaults");
     expect(text).toContain("Default config");
     expect(text).toContain("npm run build, npm run test, npm run format:check");
     expect(text).toContain("npm ci");
@@ -542,7 +563,7 @@ describe("FactorySettingsPanel", () => {
     const text = textOf(root);
     expect(text).toContain("Repos are added as T3 projects");
     expect(text).toContain("No T3 project on this environment has one yet.");
-    expect(text).not.toContain("Watched repo:");
+    expect(repoRows(root)).toHaveLength(0);
   });
 
   it("names the checkouts the factory could not settle instead of saying none is watched", async () => {
@@ -571,7 +592,7 @@ describe("FactorySettingsPanel", () => {
     expect(text).toContain("T3 projects not listed");
     expect(text).toContain("cannot list the T3 projects: store down");
     expect(text).not.toContain("No T3 project on this environment has one yet");
-    expect(text).not.toContain("Watched repo:");
+    expect(repoRows(root)).toHaveLength(0);
   });
 
   it("shows save errors next to the field they name and file errors at the top", async () => {
@@ -650,8 +671,7 @@ describe("FactorySettingsPanel", () => {
       expect(inputs.map((node) => node.getAttribute("data-size"))).toEqual(
         inputs.map(() => "touch"),
       );
-      const buttons = Array.from(root.querySelectorAll("button"));
-      expect(buttons.map((node) => textOf(node).trim())).toEqual(["Save"]);
+      expect(button(root, "Save")).toBeDefined();
     });
   });
 });
