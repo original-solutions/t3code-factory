@@ -43,7 +43,8 @@ import { readLowestFreeSpace, type FreeSpace } from "./disk.ts";
 import { overload, readLoad, type Load } from "./load.ts";
 import * as Gate from "./gate.ts";
 import { guardLogStreams } from "./logStreams.ts";
-import { FactoryGate, clearGateLocks, gateLockFile } from "./gate.ts";
+import { FactoryGate, clearGateLocks, gateLockFile, gateLockTimes } from "./gate.ts";
+import { machineHealth, type MachineHealth } from "./health.ts";
 import type { State } from "./domain/lifecycle.ts";
 import { ledgerCall as ledger, type LedgerError } from "./ledger/errors.ts";
 import { makeCause, type CauseStep, type ErrorKind, type MachineEvent } from "./ledger/events.ts";
@@ -161,6 +162,8 @@ export class FactoryLoop extends Context.Service<
     readonly runningThreads: Effect.Effect<number, T3Sessions.SessionsError>;
     /** The issue and pull request of a run the ledger shows, read with the factory's `gh` (`runGitHub.ts`). */
     readonly runGitHub: (run: ShownRun) => Effect.Effect<RunGitHub>;
+    /** The disk, load and gates the pass holds claims on, read now; null while idle. */
+    readonly health: Effect.Effect<MachineHealth | null>;
   }
 >()("t3/factory/FactoryLoop") {}
 
@@ -1186,6 +1189,26 @@ const startFactory = Effect.fn("Factory.startFactory")(function* (options: Runti
     },
   });
 
+  const health = Effect.suspend(() => {
+    const current = state.current;
+    if (current === null) return Effect.succeed(null);
+    const { machine, world } = current;
+    return world.freeSpace().pipe(
+      Effect.map((space): FreeSpace | Error => space),
+      Effect.catch((failure) => Effect.succeed(new Error(failure.message))),
+      Effect.map((space) =>
+        machineHealth({
+          space,
+          load: world.load(),
+          minFreeGib: machine.minFreeGib,
+          maxLoadPerCore: machine.maxLoadPerCore,
+          gates: { max: machine.maxConcurrentGates, startedMs: gateLockTimes(factoryDir) },
+          nowMs: Date.now(),
+        }),
+      ),
+    );
+  });
+
   yield* reload;
   return {
     wake: Effect.suspend(() => state.loop?.wake ?? Effect.void),
@@ -1200,6 +1223,7 @@ const startFactory = Effect.fn("Factory.startFactory")(function* (options: Runti
     repoConfigs: Effect.sync(() => new Map(readings)),
     watchedRepos,
     runGitHub,
+    health,
   } satisfies FactoryLoop["Service"];
 });
 

@@ -77,6 +77,36 @@ export interface FactoryStatus {
     readonly stale?: boolean;
   };
   readonly problems: ReadonlyArray<unknown>;
+  /**
+   * The disk, load and gates the pass holds claims on, read with this status; null while idle;
+   * absent from older servers. `apps/server/src/factory/health.ts`.
+   */
+  readonly health?: FactoryHealth | null;
+}
+
+export interface FactoryHealth {
+  readonly disk:
+    | {
+        readonly path: string;
+        readonly free_bytes: number;
+        readonly total_bytes: number;
+        /** `min_free_gib` in bytes; null when the check is off. */
+        readonly floor_bytes: number | null;
+        readonly low: boolean;
+      }
+    | { readonly error: string };
+  readonly load: {
+    readonly one_minute: number;
+    readonly cores: number;
+    /** Null when the check is off. */
+    readonly limit: number | null;
+    readonly high: boolean;
+  };
+  readonly gates: {
+    readonly running: number;
+    readonly max: number;
+    readonly oldest_ms: number | null;
+  };
 }
 
 export interface FactoryRunRow {

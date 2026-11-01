@@ -1,5 +1,6 @@
 import type { FactoryStatus } from "./api";
 import { formatClock } from "./belt";
+import { machineHold } from "./machineHealth";
 
 export type MachineTone = "loading" | "down" | "running" | "paused" | "idle" | "held";
 
@@ -19,7 +20,7 @@ const since = (iso: string): string | null => {
 /**
  * What one machine's factory is doing, in a word: a hand pause first, as the claims switch shows
  * it, then an idle (no config to claim from), then an update holding claims. A failed read with
- * data keeps that data's word; the page names the failure.
+ * data keeps that data's word; the page names the failure. Then a low disk or high load.
  */
 export function machineLine({
   data,
@@ -45,6 +46,10 @@ export function machineLine({
       detail: since(data.deploy_pending.since),
       update,
     };
+  }
+  const hold = machineHold(data);
+  if (hold !== null) {
+    return { tone: "held", word: `Held: ${hold.word}`, detail: hold.detail, update };
   }
   return { tone: "running", word: "Running", detail: null, update };
 }

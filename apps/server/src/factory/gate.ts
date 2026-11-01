@@ -320,6 +320,16 @@ const lockNames = (dataDir: string): ReadonlyArray<string> => {
 /** How many gates hold a lock now. */
 export const gateLocksHeld = (dataDir: string): number => lockNames(dataDir).length;
 
+/** When each gate that holds a lock now took it: the lock file's mtime. One gone since is left out. */
+export const gateLockTimes = (dataDir: string): ReadonlyArray<number> =>
+  lockNames(dataDir).flatMap((name) => {
+    try {
+      return [NodeFS.statSync(NodePath.join(gatesDir(dataDir), name)).mtimeMs];
+    } catch {
+      return [];
+    }
+  });
+
 /** Removes every lock file a dead server left under `<dataDir>/gates/`; returns how many went. */
 export const clearGateLocks = (dataDir: string): Effect.Effect<number> =>
   Effect.sync(() => {

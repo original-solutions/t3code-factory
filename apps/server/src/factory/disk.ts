@@ -13,6 +13,8 @@ export interface FreeSpace {
   readonly path: string;
   /** Bytes an unprivileged writer may still use (`bavail * bsize`). */
   readonly freeBytes: number;
+  /** The volume's size (`blocks * bsize`). */
+  readonly totalBytes: number;
 }
 
 /**
@@ -23,7 +25,7 @@ export const readFreeSpace = (path: string): FreeSpace => {
   let dir = NodePath.resolve(path);
   while (!NodeFS.existsSync(dir) && NodePath.dirname(dir) !== dir) dir = NodePath.dirname(dir);
   const stat = NodeFS.statfsSync(dir);
-  return { path: dir, freeBytes: stat.bavail * stat.bsize };
+  return { path: dir, freeBytes: stat.bavail * stat.bsize, totalBytes: stat.blocks * stat.bsize };
 };
 
 /** The free space of the directory, of `paths`, whose volume has the least: the one that fills first. */

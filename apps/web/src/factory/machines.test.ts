@@ -27,6 +27,18 @@ const pending = (snoozed: boolean): NonNullable<FactoryStatus["deploy_pending"]>
   snoozed_until: snoozed ? "2026-10-17T13:00:00.000Z" : null,
 });
 
+const health = ({ low = false, high = false }): NonNullable<FactoryStatus["health"]> => ({
+  disk: {
+    path: "/w",
+    free_bytes: 7.8 * 1024 ** 3,
+    total_bytes: 400 * 1024 ** 3,
+    floor_bytes: 10 * 1024 ** 3,
+    low,
+  },
+  load: { one_minute: 30, cores: 12, limit: 24, high },
+  gates: { running: 0, max: 1, oldest_ms: null },
+});
+
 const read = (data: FactoryStatus | null, failed = false) => ({
   data,
   status: failed ? ("error" as const) : data === null ? ("loading" as const) : ("ready" as const),
@@ -61,6 +73,16 @@ describe("machineLine", () => {
       "an update that holds claims",
       read(status({ deploy_pending: pending(false) })),
       { tone: "held", word: "Held for update", detail: `since ${formatClock(Date.parse(SINCE))}` },
+    ],
+    [
+      "a low disk that holds claims",
+      read(status({ health: health({ low: true }) })),
+      { tone: "held", word: "Held: low disk", detail: "7.8 GiB free, needs 10 GiB" },
+    ],
+    [
+      "a high load that holds claims",
+      read(status({ health: health({ high: true }) })),
+      { tone: "held", word: "Held: high load", detail: "1-minute load 30.0, above 24" },
     ],
     [
       "a snoozed update, which holds nothing",

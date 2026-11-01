@@ -2998,7 +2998,7 @@ describe("reloading the machine config", () => {
             ...stubSessions,
             worktreesDirectory: () => Effect.succeed(setting),
           });
-          const { factoryDir } = yield* started(
+          const { factoryDir, loop } = yield* started(
             VALID,
             holdingProcess().process,
             quietEvents,
@@ -3006,7 +3006,7 @@ describe("reloading the machine config", () => {
               onWorld: (world) => worlds.push(world),
               readFreeSpace: (path) => {
                 read.push(path);
-                return { path, freeBytes: path === elsewhere ? 3 : 7 };
+                return { path, freeBytes: path === elsewhere ? 3 : 7, totalBytes: 20 };
               },
             },
             watching([A_B]),
@@ -3017,8 +3017,14 @@ describe("reloading the machine config", () => {
           assert.deepStrictEqual(
             space,
             setting === null
-              ? { path: factoryDir, freeBytes: 7 }
-              : { path: elsewhere, freeBytes: 3 },
+              ? { path: factoryDir, freeBytes: 7, totalBytes: 20 }
+              : { path: elsewhere, freeBytes: 3, totalBytes: 20 },
+          );
+          // The status's health reads the same place.
+          const health = yield* loop.health;
+          assert.strictEqual(
+            health !== null && "path" in health.disk ? health.disk.path : null,
+            space.path,
           );
         }
       }),

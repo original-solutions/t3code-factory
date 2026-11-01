@@ -43,6 +43,7 @@ import { runIdToString, runPath, type RunId } from "../ledger/runId.ts";
 import { T0, useTempDirs } from "../ledger/testSupport.ts";
 import { formatTs } from "../ledger/time.ts";
 import { stopRequestPath } from "../runner/stop.ts";
+import type { MachineHealth } from "../health.ts";
 import type { FactoryStatus } from "../status.ts";
 import { saveMachineConfig } from "../settings.ts";
 import { route } from "./auth.ts";
@@ -210,6 +211,8 @@ interface World {
   readonly cors?: boolean;
   /** What kickstarting the autodeploy job answers; false (it fails) when unset. */
   readonly kicks?: boolean;
+  /** What the loop reads of the machine's health; null when unset. */
+  readonly health?: MachineHealth;
 }
 
 /** What the loop's GitHub reader was handed: the run ids and the entry count of each. */
@@ -296,6 +299,7 @@ const worldContext = (
             gitHubReads.push(`${run.id} ${run.entries.length}`);
             return { id: run.id, issue: { kind: "gone" as const }, pr: null };
           }),
+        health: Effect.succeed(world.health ?? null),
       }),
     ),
     Context.add(Attention, attentionWith(world.attention ?? [])),
@@ -513,6 +517,7 @@ describe("GET /api/factory/status", () => {
         "runs",
         "left_out",
         "problems",
+        "health",
         "attention",
       ]);
       assert.strictEqual((body.passes as { poll_seconds: unknown }).poll_seconds, null);
@@ -569,6 +574,18 @@ describe("GET /api/factory/status", () => {
       ]);
     }),
   );
+
+  it.effect("carries the machine's health the loop reads", () => {
+    const health: MachineHealth = {
+      disk: { path: "/w", free_bytes: 5, total_bytes: 50, floor_bytes: 10, low: true },
+      load: { one_minute: 1, cores: 4, limit: 8, high: false },
+      gates: { running: 1, max: 2, oldest_ms: 3_000 },
+    };
+    return serving({ status: running, health }, async (call, { tokens }) => {
+      const body = await json(await call("GET", STATUS_PATH, tokens.read));
+      assert.deepStrictEqual(body.health, health);
+    });
+  });
 
   it.effect("answers 500 factory_error when the machine log cannot be read", () =>
     serving({ status: running }, async (call, { tokens, dir }) => {

@@ -15,7 +15,9 @@ import { BeltLowerRow, type EnvironmentAttention } from "./BeltLowerRow";
 import { useBeltMotion } from "./beltMotion";
 import { useBeltNews } from "./beltNews";
 import { BeltChanges } from "./BeltChanges";
-import { BeltRail } from "./BeltRail";
+import { BeltRail, type ClaimsHeldWhy } from "./BeltRail";
+import { machineHold } from "./machineHealth";
+import { MachineHealthPanel } from "./MachineHealthPanel";
 import { MachineRoster, useSecond } from "./MachineRoster";
 import type { QueueOrigin } from "./runQueue";
 import { DeployBanner } from "./DeployBanner";
@@ -165,6 +167,13 @@ function ControlBar({
           {/* A countdown from a read that has since failed would tick on a pass nobody can see. */}
           <NextPass passes={selected.status.status === "error" ? undefined : report?.passes} />
         </div>
+      )}
+      {report === null ? null : (
+        <MachineHealthPanel
+          environmentId={selected.environmentId}
+          label={selected.label}
+          status={report}
+        />
       )}
       {digest}
       <TodayStrip strip={strip} />
@@ -401,11 +410,18 @@ export function FactoryBelt({
   };
   // A hand pause names the hold before an update does.
   const report = selected.status.data;
-  const held = report?.paused_by_hand
-    ? { why: "paused by hand" as const, since: Date.parse(report.paused_by_hand.since) }
+  // A low disk has no since of its own; its attention item says when the pass first held for it.
+  const lowDiskSince = report?.attention.find((item) => item.id === "low-disk")?.first_seen;
+  const held: { why: ClaimsHeldWhy; since: number | null } | null = report?.paused_by_hand
+    ? { why: "paused by hand", since: Date.parse(report.paused_by_hand.since) }
     : report?.deploy_pending && report.deploy_pending.snoozed_until === null
-      ? { why: "held for update" as const, since: Date.parse(report.deploy_pending.since) }
-      : null;
+      ? { why: "held for update", since: Date.parse(report.deploy_pending.since) }
+      : report && machineHold(report)?.word === "low disk"
+        ? {
+            why: "held for low disk",
+            since: lowDiskSince === undefined ? null : Date.parse(lowDiskSince),
+          }
+        : null;
   const deployNote = deployNotes.get(selected.environmentId);
 
   return (
@@ -493,7 +509,11 @@ export function FactoryBelt({
             nowMs={nowMs}
             onOpenChange={setOpen}
             open={open}
-            claimsHeld={held !== null && !Number.isNaN(held.since) ? held : null}
+            claimsHeld={
+              held === null
+                ? null
+                : { ...held, since: Number.isNaN(held.since) ? null : held.since }
+            }
             selectedId={selected.environmentId}
             stopOf={(run) => stopRun(run.environmentId, run.id)}
             tileRef={tileRef}

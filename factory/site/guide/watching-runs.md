@@ -17,6 +17,10 @@ With runs in more than one repo, the page opens on a tile for each repo, the one
 
 Until the factory has run anything, the page opens on what stands between it and its first run instead: a watched repo, a config it can build from, claims on, and an issue labelled `factory:ready`. Each step says where it stands, with the first config error or a **Turn claims on** button where that is what is missing.
 
+### Is the machine OK?
+
+The control bar's **Machine** line says whether the machine under the factory is fine, and if not, what holds claims. Three gauges sit under it: **Disk**, the free space where worktrees and gates write, with a tick at `min_free_gib`; **Load**, the 1-minute load with a tick at `max_load_per_core` times the cores; and **Gates**, how many run and how long the oldest has. A bar past its tick holds claims, and an amber one is getting close. Each hold is listed with what lifts it: the Claims switch for a pause, the install for a waiting update, free space for a low disk. A low disk says how much to free, copies a command that lists the biggest folders there, and links to Factory settings. The gauges read again with every status, so once you free enough space the line says the next pass claims again. Set the two limits in the [machine config](/guide/machine-config).
+
 ### What happened while I was away?
 
 Under the control bar, the catch-up says what the factory did since you last caught up, or in the last day before you ever have. It counts what merged, closed and was claimed, lists the runs that stopped for you (stuck or needs info, unless a later attempt took over) with why, and lists the merged and closed issues. Each one opens its run. Press **Mark caught up** and your next visit counts from there. The mark is kept in this browser, and the catch-up follows the **Showing** line.
@@ -45,7 +49,7 @@ Open the command palette (`⌘K`, or `Ctrl+K`) on any screen and type an issue n
 
 With several environments or repos, narrow the page with the **Showing** line under its title: pick a repo, each listed with how it is doing, and with several environments a machine, each with its state. The line stays in view as you scroll, **Show everything** clears both, and the choice is in the URL, so a reload or a shared link keeps it.
 
-With several environments, the control bar lists every machine on its own row: its claims switch, whether it is running, paused (since when), held for an update or idle (and why, with a link to Settings → Factory), its slots, the countdown to its next pass, and **Update waiting** when a build waits to install. A paused or held machine shows without being picked. Pick a machine by its name: its tiles on the rail turn solid while the others' are hollow, the Claimed post says when its claims are held, its update banner shows, and the Today strip shades the time its claims have been held. The catch-up, the Today strip's bars, Done and the Stuck and Needs info bins don't change with the pick. With one environment, its slots are beside its name above the control bar, and an idle factory says why there.
+With several environments, the control bar lists every machine on its own row: its claims switch, whether it is running, paused (since when), held for an update, a low disk or a high load, or idle (and why, with a link to Settings → Factory), its slots, the countdown to its next pass, and **Update waiting** when a build waits to install. A paused or held machine shows without being picked. Pick a machine by its name: its tiles on the rail turn solid while the others' are hollow, the Claimed post says when its claims are held, its update banner shows, and the Today strip shades the time its claims have been held. The catch-up, the Today strip's bars, Done and the Stuck and Needs info bins don't change with the pick. With one environment, its slots are beside its name above the control bar, and an idle factory says why there.
 
 ### Pausing claims
 

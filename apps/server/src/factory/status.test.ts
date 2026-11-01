@@ -181,6 +181,7 @@ describe("buildStatus: nothing recorded", () => {
       runs: [],
       left_out: [],
       problems: [],
+      health: null,
       attention: [],
     });
   });
@@ -238,6 +239,7 @@ describe("buildStatus: nothing recorded", () => {
       "runs",
       "left_out",
       "problems",
+      "health",
       "attention",
     ]);
     expect(Object.keys(status.passes)).toEqual([
@@ -773,6 +775,7 @@ describe("buildStatus: the rest of the report", () => {
           message: null,
         },
       ],
+      health: null,
       attention: [
         {
           id: "stuck:a/b#1",

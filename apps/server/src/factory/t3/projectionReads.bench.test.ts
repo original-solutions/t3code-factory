@@ -161,6 +161,7 @@ const statusCall = (
           repoConfigs: Effect.succeed(new Map()),
           watchedRepos: Effect.succeed({ repos: [], departed: [], unresolved: [] }),
           runGitHub: () => Effect.die("the benchmark does not read GitHub"),
+          health: Effect.succeed(null),
         }),
       ),
       Context.add(Attention, {

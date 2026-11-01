@@ -3,9 +3,15 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import type { FactoryStatus } from "./api";
 import { issueOf, stationOf, STATIONS, type Station } from "./belt";
 import { parseRunId } from "./format";
+import { machineHold } from "./machineHealth";
 
 /** Why an environment takes no new issue now; the order is the one a person reads first. */
-export type PulseHold = "claims paused" | "held for update" | "pass overdue";
+export type PulseHold =
+  | "claims paused"
+  | "held for update"
+  | "low disk"
+  | "high load"
+  | "pass overdue";
 
 export interface PulseRun {
   readonly key: string;
@@ -54,9 +60,7 @@ const holdOf = (status: FactoryStatus): PulseHold | null =>
     ? "claims paused"
     : status.deploy_pending && status.deploy_pending.snoozed_until === null
       ? "held for update"
-      : status.passes.stale === true
-        ? "pass overdue"
-        : null;
+      : (machineHold(status)?.word ?? (status.passes.stale === true ? "pass overdue" : null));
 
 /** Nearest to done first, then the longest at it. */
 const order = (a: PulseRun, b: PulseRun): number =>

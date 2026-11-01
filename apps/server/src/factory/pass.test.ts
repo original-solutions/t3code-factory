@@ -646,7 +646,11 @@ class Fake implements PassWorld {
     this.calls.push("free_space");
     return this.free === "error"
       ? Effect.fail<PassError>({ kind: "ledger", message: "statfs /data/worktrees: EIO" })
-      : Effect.succeed({ path: "/data/worktrees", freeBytes: this.free });
+      : Effect.succeed({
+          path: "/data/worktrees",
+          freeBytes: this.free,
+          totalBytes: this.free * 2,
+        });
   }
 
   load() {

@@ -28,6 +28,9 @@ import { formatAge } from "./format";
 import type { RunStop } from "./RunActionBar";
 
 /** A tile is this wide and the gap between tiles this wide, in px: they set how many a lane fits. */
+/** Why the selected environment claims nothing new, as the Claimed post says it. */
+export type ClaimsHeldWhy = "paused by hand" | "held for update" | "held for low disk";
+
 const TILE_PX = 60;
 const TILE_GAP_PX = 6;
 
@@ -100,7 +103,7 @@ function Post({
   note: string;
   /** What the agents of its runs are doing, in place of the note; null when none is here. */
   census: string | null;
-  /** Claims are held, by hand or for an update: the note says so, and takes the label's place. */
+  /** Claims are held, by hand, for an update or a low disk: the note says so instead. */
   paused: boolean;
   open: boolean;
   onPick: () => void;
@@ -371,7 +374,7 @@ export function BeltRail({
   known: boolean;
   selectedId: EnvironmentId;
   /** Why and since when the selected environment claims nothing new, or null while it claims. */
-  claimsHeld: { readonly why: "paused by hand" | "held for update"; readonly since: number } | null;
+  claimsHeld: { readonly why: ClaimsHeldWhy; readonly since: number | null } | null;
   nowMs: number;
   open: Station | null;
   onOpenChange: (station: Station | null) => void;
@@ -383,7 +386,9 @@ export function BeltRail({
   const pulseOf = usePulseOf();
   const noteOf = (station: Station) => {
     if (station === "claimed" && claimsHeld !== null) {
-      return `claims ${claimsHeld.why} since ${formatClock(claimsHeld.since)}`;
+      return claimsHeld.since === null
+        ? `claims ${claimsHeld.why}`
+        : `claims ${claimsHeld.why} since ${formatClock(claimsHeld.since)}`;
     }
     // The Done bin says what finished.
     return station === "done" ? "" : NOTE[station];

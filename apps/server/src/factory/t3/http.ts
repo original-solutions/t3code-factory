@@ -138,6 +138,7 @@ const statusRoute = Layer.unwrap(
           Effect.tapError((error) => Effect.logWarning(`status: ${error.message}`, error.cause)),
           Effect.orElseSucceed(() => null),
         );
+        const health = yield* loop.health;
         const nowMs = yield* Clock.currentTimeMillis;
         const report = yield* guarded(() =>
           buildStatus({
@@ -150,6 +151,7 @@ const statusRoute = Layer.unwrap(
             passRunning,
             runningThreads,
             attention,
+            health,
             cache,
           }),
         );

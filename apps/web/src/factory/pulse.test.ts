@@ -35,6 +35,12 @@ const status = (overrides: Partial<FactoryStatus> = {}): FactoryStatus => ({
   ...overrides,
 });
 
+const health = (low: boolean, high: boolean): NonNullable<FactoryStatus["health"]> => ({
+  disk: { path: "/w", free_bytes: 1, total_bytes: 10, floor_bytes: 2, low },
+  load: { one_minute: 30, cores: 12, limit: 24, high },
+  gates: { running: 0, max: 1, oldest_ms: null },
+});
+
 const attention = (id: string) => ({
   id,
   kind: "stuck",
@@ -89,6 +95,8 @@ describe("factoryPulse", () => {
       },
       "held for update",
     ],
+    [{ health: health(true, false) }, "low disk"],
+    [{ health: health(false, true) }, "high load"],
     [{ passes: { at: null, poll_seconds: 600, running: false, stale: true } }, "pass overdue"],
   ] as const)("names the hold %#, and a hold outranks runs in flight", (overrides, hold) => {
     const pulse = factoryPulse([
