@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { SETTINGS_NAV_GROUPS } from "~/components/settings/settingsSearch";
 import { isSidebarUtilityPage } from "~/components/sidebar/mainAppLocation";
 
-import { isFactoryPage } from "./pages";
+import { isFactoryPage, runOfPath } from "./pages";
 
 describe("isFactoryPage", () => {
   it("treats Factory and its runs as utility pages", () => {
@@ -14,6 +14,23 @@ describe("isFactoryPage", () => {
   it("does not match routes that only share the prefix", () => {
     expect(isFactoryPage("/factory-floor")).toBe(false);
     expect(isFactoryPage("/")).toBe(false);
+  });
+});
+
+describe("runOfPath", () => {
+  it("names the environment and run of a run page's path, and nothing for any other", () => {
+    expect(runOfPath("/factory/env-1/o__r__12__1")).toEqual({
+      environmentId: "env-1",
+      runId: "o__r__12__1",
+    });
+    expect(runOfPath("/factory/env%201/o__r__12__1/")).toEqual({
+      environmentId: "env 1",
+      runId: "o__r__12__1",
+    });
+    expect(runOfPath("/factory")).toBeNull();
+    expect(runOfPath("/factory/o__r__12__1")).toBeNull();
+    expect(runOfPath("/factory/env-1/o__r__12__1/x")).toBeNull();
+    expect(runOfPath("/settings/factory")).toBeNull();
   });
 });
 

@@ -29,6 +29,18 @@ export const STATUS_POLL_MS = 5_000;
  */
 const TICK_SLACK_MS = 1_000;
 
+/**
+ * An answer no page reads any more is kept this long, so going back to a page paints what it said
+ * at once while it reads again; past this it is too old to show and the page loads afresh.
+ */
+const KEEP_MS = 10 * 60_000;
+
+/** At most this many answers are kept without a reader; the longest unread go first. */
+const KEEP_IDLE = 32;
+
+/** An answer younger than this is shown again without a read, as a poll would not read yet either. */
+const FRESH_MS = STATUS_POLL_MS;
+
 export interface FactoryResource<T> {
   readonly status: "loading" | "error" | "ready";
   readonly data: T | null;
@@ -56,13 +68,15 @@ interface Store {
   /** When the latest read started, so two readers' timers on one key cost one read per POLL_MS. */
   startedAt: number;
   readonly listeners: Set<() => void>;
+  /** When its last reader left, while it is kept for the next; null while read or never read. */
+  idleSince: number | null;
 }
 
 /**
- * One store per environment and resource while anyone reads it, so every reader sees one answer.
- * A poll tick joins a read in flight; a requested refresh supersedes it. The last reader's drop
- * waits a microtask: React tears down old subscriptions before building new ones in one flush,
- * and an earlier drop would lose the store's data to a refetch.
+ * One store per environment and resource, so every reader sees one answer. A poll tick joins a
+ * read in flight; a requested refresh supersedes it. A store whose last reader left keeps its
+ * answer for the next one (`KEEP_MS`, `KEEP_IDLE`); one with no answer is dropped. That drop
+ * waits a microtask: React tears down old subscriptions before building new ones in one flush.
  */
 const stores = new Map<string, Store>();
 
@@ -125,6 +139,10 @@ const refresh = (key: string): void => {
   if (store !== undefined) read(key, store);
 };
 
+/** Reads an environment's status now, for a page that changed it from outside its readers. */
+export const refreshFactoryStatus = (environmentId: EnvironmentId): void =>
+  refresh(keyOf(environmentId, "status"));
+
 /**
  * A poll tick of a reader whose period is `periodMs`: not while a read is in flight, nor within a
  * period (less slack) of the last start, and not after a 404, which says the server has no factory
@@ -138,6 +156,33 @@ const tick = (key: string, periodMs: number = POLL_MS): void => {
   read(key, store);
 };
 
+const newStore = (environmentId: EnvironmentId, resource: Resource): Store => ({
+  environmentId,
+  resource,
+  state: LOADING,
+  issued: 0,
+  inFlight: false,
+  startedAt: 0,
+  listeners: new Set(),
+  idleSince: null,
+});
+
+const tooOld = (store: Store, now: number): boolean =>
+  store.idleSince !== null && now - store.idleSince > KEEP_MS;
+
+/** Drops the kept stores past `KEEP_MS`, then the longest unread past `KEEP_IDLE`. */
+const evict = (): void => {
+  const now = Date.now();
+  const idle: Array<[string, Store]> = [];
+  for (const [key, store] of stores) {
+    if (store.idleSince === null) continue;
+    if (tooOld(store, now)) stores.delete(key);
+    else idle.push([key, store]);
+  }
+  idle.sort(([, a], [, b]) => a.idleSince! - b.idleSince!);
+  for (const [key] of idle.slice(0, Math.max(0, idle.length - KEEP_IDLE))) stores.delete(key);
+};
+
 const subscribe = (
   environmentId: EnvironmentId,
   resource: Resource,
@@ -145,16 +190,17 @@ const subscribe = (
 ): (() => void) => {
   const key = keyOf(environmentId, resource);
   let store = stores.get(key);
+  if (store !== undefined && store.idleSince !== null) {
+    // A kept answer: shown already (see `snapshot`); read again unless it is fresh or on its way.
+    const now = Date.now();
+    if (tooOld(store, now)) store.state = LOADING;
+    store.idleSince = null;
+    if (!store.inFlight && (store.state.data === null || now - store.startedAt >= FRESH_MS)) {
+      read(key, store);
+    }
+  }
   if (store === undefined) {
-    store = {
-      environmentId,
-      resource,
-      state: LOADING,
-      issued: 0,
-      inFlight: false,
-      startedAt: 0,
-      listeners: new Set(),
-    };
+    store = newStore(environmentId, resource);
     stores.set(key, store);
     read(key, store);
   }
@@ -163,12 +209,40 @@ const subscribe = (
   return () => {
     added.listeners.delete(listener);
     queueMicrotask(() => {
-      if (added.listeners.size === 0 && stores.get(key) === added) stores.delete(key);
+      if (added.listeners.size > 0 || stores.get(key) !== added) return;
+      if (added.state.data === null) {
+        stores.delete(key);
+        return;
+      }
+      added.idleSince = Date.now();
+      evict();
     });
   };
 };
 
-const snapshot = (key: string): Loaded<unknown> => stores.get(key)?.state ?? LOADING;
+/**
+ * Reads one run's ledger ahead of its page, so opening it paints at once: a link the pointer rests
+ * on or the keyboard reaches. Nothing is read for a run read within `FRESH_MS` or being read.
+ */
+export function readFactoryRunAhead(environmentId: EnvironmentId, runId: string): void {
+  const key = keyOf(environmentId, `run:${runId}`);
+  const kept = stores.get(key);
+  if (kept !== undefined) {
+    if (kept.inFlight || kept.listeners.size > 0 || Date.now() - kept.startedAt < FRESH_MS) return;
+    read(key, kept);
+    return;
+  }
+  const store = newStore(environmentId, `run:${runId}`);
+  store.idleSince = Date.now();
+  stores.set(key, store);
+  read(key, store);
+  evict();
+}
+
+const snapshot = (key: string): Loaded<unknown> => {
+  const store = stores.get(key);
+  return store === undefined || tooOld(store, Date.now()) ? LOADING : store.state;
+};
 
 /** For tests: drop every store, so the next reader starts over. */
 export function __resetFactoryStoresForTests(): void {

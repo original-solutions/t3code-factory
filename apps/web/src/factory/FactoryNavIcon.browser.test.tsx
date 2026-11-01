@@ -16,6 +16,7 @@ import { render } from "./testing";
 
 const state = vi.hoisted(() => ({ count: 0 }));
 vi.mock("./useFactoryData", () => ({
+  readFactoryRunAhead: () => {},
   useFactoryAttentionCount: () => state.count,
   useFactoryEnvironments: () => [],
   useFactorySupported: () => true,

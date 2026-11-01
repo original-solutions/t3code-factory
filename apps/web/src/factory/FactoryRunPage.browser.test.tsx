@@ -49,6 +49,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
   },
 }));
 vi.mock("./useFactoryData", () => ({
+  readFactoryRunAhead: () => {},
   useFactoryRun: () => state.run,
   useFactoryEnvironmentLabel: (environmentId: string) =>
     environmentId === "env-2" ? "Mac Studio" : environmentId,

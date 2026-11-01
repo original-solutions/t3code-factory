@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
   status: null as FactoryStatus | null,
 }));
 vi.mock("./useFactoryData", () => ({
+  readFactoryRunAhead: () => {},
   useFactoryAttentionCount: () => state.status?.attention.length ?? 0,
   useFactoryEnvironments: () =>
     state.status === null

@@ -19,11 +19,10 @@ import { machineLine } from "./machines";
 import { TONE_DOT } from "./MachineRoster";
 import { REPO_TONE, RepoBoard, repoHeadline } from "./RepoBoard";
 import { repoBoard } from "./repoHealth";
-import { bucketOf, countBuckets, matchesQuery } from "./runLedger";
 import { FACTORY_SECTIONS, jumpToSection } from "./pageSections";
+import type { RunBucketFilter } from "./runLedger";
 import { runLinkKey, useFactoryKeys } from "./runQueue";
-import { RunsTable } from "./RunsTable";
-import { useRunStop } from "./RunActionBar";
+import { FactoryRunsSection, type ListedEnvironment } from "./FactoryRunsSection";
 import type { FactorySearch } from "./search";
 import {
   STATUS_POLL_MS,
@@ -46,6 +45,17 @@ const withEnvironment = (set: ReadonlySet<EnvironmentId>, id: EnvironmentId, mem
   if (member) next.add(id);
   else next.delete(id);
   return next;
+};
+
+/**
+ * `value`, or the one an earlier render returned while `key` is the same: a value rebuilt on every
+ * status poll stays one object while what it holds has not changed.
+ */
+const useSameWhile = <T,>(value: T, key: string): T => {
+  const [kept, setKept] = useState({ key, value });
+  if (kept.key === key) return kept.value;
+  setKept({ key, value });
+  return value;
 };
 
 /** `search` with one filter set to `value`, or removed when `value` is null. */
@@ -112,13 +122,6 @@ export function FactoryPage() {
   const returned = useRouterState({ select: ({ location }) => location.state.factoryReturn });
   // Typed on this page only: the runs chip is in the URL, a half-typed search is not.
   const [query, setQuery] = useState(() => returned?.query ?? "");
-  const stopOf = useRunStop(({ environmentId, label, message }) => {
-    setNote(`${label}: ${message}`);
-    environments
-      .find((environment) => environment.environmentId === environmentId)
-      ?.status.refresh();
-    runsById.get(environmentId)?.refresh();
-  });
 
   const togglePause = async ({ environmentId, status }: FactoryEnvironment) => {
     const paused = status.data?.paused_by_hand != null;
@@ -188,13 +191,16 @@ export function FactoryPage() {
   );
   const showEnvironment = environments.length > 1;
   // The status report names the thread of each unfinished run; the runs list does not.
-  const threads = new Map(
-    environments.flatMap(({ environmentId, status }) =>
-      (status.data?.runs ?? []).flatMap((run) =>
-        run.thread_id ? [[runLinkKey(environmentId, run.id), run.thread_id] as const] : [],
-      ),
+  const threadEntries = environments.flatMap(({ environmentId, status }) =>
+    (status.data?.runs ?? []).flatMap((run) =>
+      run.thread_id ? [[runLinkKey(environmentId, run.id), run.thread_id] as const] : [],
     ),
   );
+  const threads = useSameWhile(new Map(threadEntries), JSON.stringify(threadEntries));
+  const listedEnvironments: ReadonlyArray<ListedEnvironment> = answered.map(
+    ({ environmentId, label }) => ({ environmentId, label }),
+  );
+  const runsEnvironments = useSameWhile(listedEnvironments, JSON.stringify(listedEnvironments));
   const listedRuns = answered.flatMap(({ environmentId, label }, i) =>
     (runsOf[i]?.data?.runs ?? []).map((run) => {
       const parsed = parseRunId(run.id);
@@ -253,13 +259,6 @@ export function FactoryPage() {
   const scopedRuns = listedRuns.filter(
     ({ environmentId, repo }) => inEnvironment(environmentId) && inRepo(repo),
   );
-  const searched = scopedRuns.filter(({ label, run }) => matchesQuery(run, label, query));
-  const counts = countBuckets(searched.map(({ run }) => run));
-  const bucketFilter = search.runs ?? null;
-  const runs = searched.filter(
-    ({ run }) => bucketFilter === null || bucketOf(run) === bucketFilter,
-  );
-  const filtersHideEveryRun = runs.length === 0 && listedRuns.length > 0;
   // Only the shown environments' reads: a filtered-out read loading or listed says nothing here.
   const shownRunsOf = shownEnvironments.flatMap(({ environmentId }) => {
     const read = runsById.get(environmentId);
@@ -335,6 +334,18 @@ export function FactoryPage() {
     />
   );
 
+  // Made before the branches below, so each keeps its identity across status polls and the runs
+  // list, which they reach, is left alone by a poll.
+  const origin = { search, query };
+  const onRunsBucket = (value: RunBucketFilter | null) =>
+    setSearch(withFilter(search, "runs", value));
+  const clearAll = () => {
+    setQuery("");
+    setSearch({});
+  };
+  const showAllRuns = () => setAllRuns(true);
+  const showRecentRuns = () => setAllRuns(false);
+
   let body;
   if (environments.length === 0) {
     body = supported ? (
@@ -362,7 +373,7 @@ export function FactoryPage() {
           />
         ))}
         {runsListed ? (
-          <FactoryTrends nowMs={nowMs} origin={{ search, query }} runs={scopedRuns} />
+          <FactoryTrends nowMs={nowMs} origin={origin} runs={scopedRuns} />
         ) : runsPending ? (
           <FactoryLoading label="Loading every run" />
         ) : null}
@@ -400,7 +411,7 @@ export function FactoryPage() {
               <CatchUpCard
                 environments={caughtUpRecent}
                 nowMs={nowMs}
-                origin={{ search, query }}
+                origin={origin}
                 showEnvironment={showEnvironment}
               />
             )
@@ -410,7 +421,7 @@ export function FactoryPage() {
           nowMs={nowMs}
           onDismiss={dismiss}
           onTogglePause={(environment) => void togglePause(environment)}
-          origin={{ search, query }}
+          origin={origin}
           recent={recentById}
           repo={repoFilter}
           showEnvironment={showEnvironment}
@@ -420,37 +431,26 @@ export function FactoryPage() {
             {note}
           </p>
         ) : null}
-        {firstRun !== false ? null : (!runsListed || runs.length === 0) && runsPending ? (
-          <FactoryLoading label="Loading runs" />
-        ) : runsListed ? (
-          <RunsTable
-            nowMs={nowMs}
-            bucket={bucketFilter}
-            counts={counts}
-            onBucket={(value) => setSearch(withFilter(search, "runs", value))}
-            onClearFilters={
-              filtersHideEveryRun
-                ? () => {
-                    setQuery("");
-                    setSearch({});
-                  }
-                : undefined
-            }
+        {firstRun !== false ? null : (
+          <FactoryRunsSection
+            all={allRuns}
+            bucket={search.runs ?? null}
+            environment={environmentFilter}
+            environments={runsEnvironments}
+            onBucket={onRunsBucket}
+            onClearFilters={clearAll}
+            onNote={setNote}
             onQuery={setQuery}
-            origin={{ search, query }}
+            onShowAll={showAllRuns}
+            onShowRecent={showRecentRuns}
+            origin={origin}
             query={query}
+            repo={repoFilter}
             returnFocus={returned?.focus}
-            onShowAll={() => setAllRuns(true)}
-            onShowRecent={() => setAllRuns(false)}
-            partial={!allRuns}
-            runs={runs}
             showEnvironment={showEnvironment}
-            stopOf={stopOf}
-            threadOf={(environmentId, runId) =>
-              threads.get(runLinkKey(environmentId, runId)) ?? null
-            }
+            threads={threads}
           />
-        ) : null}
+        )}
       </>
     );
   }

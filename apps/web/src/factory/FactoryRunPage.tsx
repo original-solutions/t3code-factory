@@ -1,7 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { cn } from "~/lib/utils";
@@ -53,7 +53,7 @@ import { StateChip } from "./StateChip";
 import { RunActions, useRunStop } from "./RunActionBar";
 import { runActions } from "./runActions";
 import { TouchLink } from "./TouchLink";
-import { useFactoryEnvironmentLabel, useFactoryRun } from "./useFactoryData";
+import { readFactoryRunAhead, useFactoryEnvironmentLabel, useFactoryRun } from "./useFactoryData";
 
 /** Pairs each item with a key unique within the list, though two rows may read the same. */
 function keyed<T>(items: ReadonlyArray<T>, base: (item: T) => string): Array<[string, T]> {
@@ -211,6 +211,14 @@ export function FactoryRunPage({
       state: queue ? { factoryRunQueue: queue } : {},
       replace: true,
     });
+  const nextRun = queued?.next ?? null;
+  const previousRun = queued?.previous ?? null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the neighbours into the run cache, so j and k open at once
+  useEffect(() => {
+    for (const run of [nextRun, previousRun]) {
+      if (run !== null) readFactoryRunAhead(run.environmentId as EnvironmentId, run.runId);
+    }
+  }, [nextRun, previousRun]);
   const [keysOpen, setKeysOpen] = useState(false);
   useFactoryKeys((key) => {
     if (key === "help") {

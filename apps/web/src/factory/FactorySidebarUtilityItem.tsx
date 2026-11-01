@@ -13,6 +13,7 @@ import {
   useFactoryEnvironments,
   useFactorySupported,
 } from "./useFactoryData";
+import { readAheadHandlers } from "./readAhead";
 
 /** The most runs the card lists; the rest are a count that opens the belt. */
 const SHOWN_RUNS = 6;
@@ -81,6 +82,7 @@ function PulseCard({
       aria-label="Factory at a glance"
       className="flex flex-col overflow-hidden rounded-lg text-sm"
       role="group"
+      {...readAheadHandlers}
     >
       <Link
         className="flex flex-col gap-0.5 border-b px-3 py-2.5 hover:bg-accent/40"
