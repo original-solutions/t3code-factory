@@ -187,6 +187,7 @@ const subscribe = (
   environmentId: EnvironmentId,
   resource: Resource,
   listener: () => void,
+  freshMs: number = FRESH_MS,
 ): (() => void) => {
   const key = keyOf(environmentId, resource);
   let store = stores.get(key);
@@ -195,7 +196,7 @@ const subscribe = (
     const now = Date.now();
     if (tooOld(store, now)) store.state = LOADING;
     store.idleSince = null;
-    if (!store.inFlight && (store.state.data === null || now - store.startedAt >= FRESH_MS)) {
+    if (!store.inFlight && (store.state.data === null || now - store.startedAt >= freshMs)) {
       read(key, store);
     }
   }
@@ -296,13 +297,15 @@ export const useFactoryRun = (
 function useFactoryResources<T>(
   environmentIds: ReadonlyArray<EnvironmentId>,
   resource: Resource,
-  options: { readonly pollMs?: number } = {},
+  options: { readonly pollMs?: number; readonly freshMs?: number } = {},
 ): Array<FactoryResource<T>> {
   const keys = environmentIds.map((id) => keyOf(id, resource));
   const last = useRef<ReadonlyArray<Loaded<unknown>>>([]);
   const states = useSyncExternalStore(
     (listener: () => void) => {
-      const unsubscribes = environmentIds.map((id) => subscribe(id, resource, listener));
+      const unsubscribes = environmentIds.map((id) =>
+        subscribe(id, resource, listener, options.freshMs),
+      );
       const stopPolling =
         options.pollMs === undefined ? noUnsubscribe : pollWhileVisible(keys, options.pollMs);
       return () => {
@@ -390,6 +393,16 @@ export const useFactoryRunsOf = (
 ): Array<FactoryResource<{ readonly runs: ReadonlyArray<FactoryRunRow> }>> =>
   useFactoryResources(environmentIds, all ? "runs:all" : "runs");
 
+/**
+ * Every run of each environment for a reader opened often and briefly (the command palette): a
+ * kept list under `KEEP_MS` old is shown without reading again, so opening the palette all day
+ * costs one full read per environment every ten minutes at most, not one per open.
+ */
+export const useFactoryEveryRunKept = (
+  environmentIds: ReadonlyArray<EnvironmentId>,
+): Array<FactoryResource<{ readonly runs: ReadonlyArray<FactoryRunRow> }>> =>
+  useFactoryResources(environmentIds, "runs:all", { freshMs: KEEP_MS });
+
 /** An environment's name for people: the label it was saved under, else its id. */
 const labelOf = (
   presentationById: ReturnType<typeof useEnvironments>["presentationById"],
@@ -447,6 +460,23 @@ export function useFactoryEnvironments({
     const status = statuses[i]!;
     if (isNotFound(status.error)) return [];
     return [{ environmentId, label: labelOf(presentationById, environmentId), status }];
+  });
+}
+
+/**
+ * The same environments as `useFactoryEnvironments`, for the command palette, which mounts where
+ * the environment presentations are not yet built: the label comes from the environments list.
+ */
+export function useFactoryPaletteEnvironments(): ReadonlyArray<FactoryEnvironment> {
+  const { candidates, statuses } = useFactoryCandidates();
+  const { environments } = useEnvironments();
+  return candidates.flatMap((environmentId, i) => {
+    const status = statuses[i]!;
+    if (isNotFound(status.error)) return [];
+    const label =
+      environments.find((environment) => environment.environmentId === environmentId)?.label ??
+      environmentId;
+    return [{ environmentId, label, status }];
   });
 }
 

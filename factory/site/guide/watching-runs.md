@@ -37,6 +37,10 @@ Under the belt and its bins, the runs table lists every unfinished run and the r
 
 It refreshes every 30 seconds.
 
+### Finding a run from anywhere
+
+Open the command palette (`⌘K`, or `Ctrl+K`) on any screen and type an issue number, a repo or words from a title: `294`, `watchalong` or `pkce` lists the matching runs and repos under Suggestions. Choose **Factory** in the palette to search every run on every machine, including by state, why it stopped and when it ran, such as `lint` or `stuck last week`. A run opened this way steps through its repo's runs with `j` and `k`, and Back opens the Factory page on that repo.
+
 ### Several repos or machines
 
 With several environments or repos, narrow the page with the **Showing** line under its title: pick a repo, each listed with how it is doing, and with several environments a machine, each with its state. The line stays in view as you scroll, **Show everything** clears both, and the choice is in the URL, so a reload or a shared link keeps it.

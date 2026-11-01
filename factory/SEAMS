@@ -40,6 +40,7 @@ apps/server/src/provider/CodexChatGptAuth.test.ts
 apps/server/src/server.ts
 apps/server/src/serverRuntimeState.test.ts
 apps/server/src/vcs/GitVcsDriverCore.ts
+apps/web/src/components/CommandPalette.tsx
 apps/web/src/components/chat/ChatHeader.tsx
 apps/web/src/components/settings/SettingsSidebarNav.tsx
 apps/web/src/components/settings/settingsSearch.ts

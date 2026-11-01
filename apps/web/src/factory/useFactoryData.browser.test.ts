@@ -16,6 +16,7 @@ import {
   useFactoryAttentionCount,
   useFactoryEnvironmentLabel,
   useFactoryEnvironments,
+  useFactoryEveryRunKept,
   useFactoryResource,
   useFactoryRun,
   useFactoryRunsOf,
@@ -299,6 +300,23 @@ describe("useFactoryStatus", () => {
     const again = await mount(() => useFactoryStatus(ENV_1));
     expect(again.current.status).toBe("ready");
     expect(fetchStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads every run for the palette again only once the list it keeps is 10 minutes old", async () => {
+    await using _state = setup();
+    const fetchRuns = vi.fn<FactoryApi["runs"]>(async () => ({ runs: [] }));
+    __setFactoryApiForTests(api({ runs: fetchRuns }));
+    await mount(() => useFactoryEveryRunKept([ENV_1]));
+    expect(fetchRuns).toHaveBeenLastCalledWith(ENV_1, { all: true });
+    await unmountAll();
+    await settle(6 * 60_000);
+    const again = await mount(() => useFactoryEveryRunKept([ENV_1]));
+    expect(again.current[0]?.status).toBe("ready");
+    expect(fetchRuns).toHaveBeenCalledTimes(1);
+    await unmountAll();
+    await settle(5 * 60_000);
+    await mount(() => useFactoryEveryRunKept([ENV_1]));
+    expect(fetchRuns).toHaveBeenCalledTimes(2);
   });
 
   it("starts over for a reader back after 10 minutes, and drops a store that never answered", async () => {
