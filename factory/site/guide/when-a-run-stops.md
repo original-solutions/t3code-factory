@@ -4,8 +4,8 @@ Most runs end at `factory:pr-open`. The rest end in one of two labels, each with
 
 ## needs-info
 
-<img class="screenshot light-only" src="/screenshots/run-needs-info-light.png" alt="A needs-info run's page: the questions the session posted on the issue, then the gate section, where no gate has run, and the ledger" />
-<img class="screenshot dark-only" src="/screenshots/run-needs-info-dark.png" alt="A needs-info run's page: the questions the session posted on the issue, then the gate section, where no gate has run, and the ledger" />
+<img class="screenshot light-only" src="/screenshots/run-needs-info-light.png" alt="A needs-info run's page: the run card with its track amber at Building, then What to do next: answer its 2 questions here, each with a box under it and the first answered, Copy the reply and Answer on #19, then set factory:ready on #19 again" />
+<img class="screenshot dark-only" src="/screenshots/run-needs-info-dark.png" alt="A needs-info run's page: the run card with its track amber at Building, then What to do next: answer its 2 questions here, each with a box under it and the first answered, Copy the reply and Answer on #19, then set factory:ready on #19 again" />
 
 The session decided the issue can't be built as written: the outcome is unclear, two readings would give different code, or the issue holds two separate pieces of work. It ends with its questions, and the factory posts them as a comment, sets `factory:needs-info` and unassigns the issue.
 
@@ -13,7 +13,10 @@ Answer in a comment or edit the issue so it settles every question, then an inst
 
 ## stuck
 
-The factory gave up. The comment gives the reason and, when the session had made commits, the branch they are on. Common reasons:
+<img class="screenshot light-only" src="/screenshots/run-stuck-light.png" alt="A stuck run's page: What to do next, headed The gate failed after 3 attempts, with step 1 to read the gate output, naming the command that failed, and step 2 to set factory:ready on the issue again" />
+<img class="screenshot dark-only" src="/screenshots/run-stuck-dark.png" alt="A stuck run's page: What to do next, headed The gate failed after 3 attempts, with step 1 to read the gate output, naming the command that failed, and step 2 to set factory:ready on the issue again" />
+
+The factory gave up. The comment gives the reason and, when the session had made commits, the branch they are on. The run's page opens on **What to do next**: the reason as its heading, the fix with a button to where it starts, and what the new run will build on. Common reasons:
 
 | Reason                                                        | What to do                                                                                                                         |
 | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |

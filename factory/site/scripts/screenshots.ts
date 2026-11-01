@@ -39,10 +39,10 @@ const SHOTS: ReadonlyArray<Shot> = [
   {
     name: "factory-page",
     path: () => "/factory",
-    // Tall enough for the belt, the bins and the runs table under them.
+    // Tall enough for the repo tiles, the control bar and the belt with a post open.
     height: 1280,
     ready: async (page) => {
-      await page.getByText("acme/storefront#57").first().waitFor();
+      await page.locator('[data-post="building"]').waitFor();
       // The page opens the newest run's post, Claimed, whose run has no title until it launches.
       await page.locator('[data-post="building"]').click();
       await page.getByText("Retry failed webhook deliveries").first().waitFor();
@@ -53,14 +53,29 @@ const SHOTS: ReadonlyArray<Shot> = [
     path: (environmentId) => `/factory/${environmentId}/${demoRunId("pr-open")}`,
     ready: async (page) => {
       await page.getByText("Last gate output").waitFor();
-      await page.getByText("pr_opened").first().waitFor();
     },
   },
   {
     name: "run-needs-info",
     path: (environmentId) => `/factory/${environmentId}/${demoRunId("needs-info")}`,
     ready: async (page) => {
-      await page.getByText("questions_posted").first().waitFor();
+      await page.getByRole("button", { name: "Copy the reply" }).waitFor();
+      // A question answered, so the shot shows what the reply box is for.
+      await page.getByRole("textbox").first().fill("The billing country's currency.");
+    },
+  },
+  {
+    name: "run-stuck",
+    path: (environmentId) => `/factory/${environmentId}/${demoRunId("stuck")}`,
+    ready: async (page) => {
+      await page.getByText("What to do next").waitFor();
+    },
+  },
+  {
+    name: "run-merged",
+    path: (environmentId) => `/factory/${environmentId}/${demoRunId("merged")}`,
+    ready: async (page) => {
+      await page.getByText("How it went").waitFor();
     },
   },
   {
@@ -69,15 +84,24 @@ const SHOTS: ReadonlyArray<Shot> = [
     ready: async (page) => {
       const list = page.getByRole("region", { name: "Needs attention" });
       await list.getByText("acme/storefront#52").first().waitFor();
-      // The row the list shares with the Needs info and Stuck bins.
-      return list.locator("xpath=..");
+      // The row the list shares with the Needs info and Stuck bins, scrolled into the window.
+      const row = list.locator("xpath=..");
+      await row.scrollIntoViewIfNeeded();
+      return row;
     },
   },
   {
     name: "settings-factory",
     path: () => "/settings/factory",
+    height: 1400,
     ready: async (page) => {
-      await page.getByText("poll", { exact: false }).first().waitFor();
+      // The form, not the first-run steps above it: no T3 project is seeded here.
+      const section = page.locator("section").filter({
+        has: page.getByRole("heading", { name: "Machine config" }),
+      });
+      await section.getByText("poll", { exact: false }).first().waitFor();
+      await section.scrollIntoViewIfNeeded();
+      return section;
     },
   },
 ];
@@ -234,7 +258,10 @@ const fetchEnvironmentId = async (server: DevServer): Promise<string> => {
   return descriptor.environmentId;
 };
 
-const capture = async (browser: Browser, server: DevServer): Promise<void> => {
+/** Where the docs say the demo machine keeps its T3 home, in place of the temp dir it really is in. */
+const SHOWN_HOME = "/Users/jo-park/.config/t3fac";
+
+const capture = async (browser: Browser, server: DevServer, home: string): Promise<void> => {
   const environmentId = await fetchEnvironmentId(server);
   NodeFS.mkdirSync(OUT_DIR, { recursive: true });
   // One context for both themes: the pairing URL's token works once.
@@ -269,6 +296,21 @@ const capture = async (browser: Browser, server: DevServer): Promise<void> => {
       });
       // Let the last fetch and the fonts settle so no shot catches a loading state.
       await page.waitForLoadState("networkidle");
+      // Settings names the config file it writes; show the demo machine's home, not the temp dir.
+      await page.evaluate(
+        ([homes, to]) => {
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+            for (const from of homes) {
+              if (node.nodeValue?.includes(from)) {
+                node.nodeValue = node.nodeValue.replaceAll(from, to);
+              }
+            }
+          }
+        },
+        // The real path first: the tmpdir form is a prefix of it on macOS.
+        [[NodeFS.realpathSync(home), home], SHOWN_HOME] as const,
+      );
       await page.evaluate(() => document.fonts.ready);
       const file = NodePath.join(OUT_DIR, `${shot.name}-${theme}.png`);
       const box = part ? await part.boundingBox() : null;
@@ -316,7 +358,7 @@ const main = async (): Promise<void> => {
     child = spawnDevServer(home, ghConfigDir, log);
     const server = await devServerReady(child, log);
     browser = await chromium.launch();
-    await capture(browser, server);
+    await capture(browser, server, home);
   } catch (error) {
     if (NodeFS.existsSync(log)) {
       // The startup pairing URL's token is dead once the server stops, but keep it off screen.

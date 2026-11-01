@@ -120,6 +120,8 @@ poll_seconds: 60
 max_concurrent_runs: 2
 max_concurrent_gates: 1
 notify: false
+# The throwaway home sits on whatever disk runs the script; no low-disk item in the shots.
+min_free_gib: 0
 `;
 
 /** A stable fake id from a run, so every rerun of the script draws the same images. */
