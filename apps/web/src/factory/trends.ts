@@ -32,10 +32,18 @@ export interface Trends {
   /** The weeks before this one that ended anything, up to `BASELINE_WEEKS`; null without one. */
   readonly before: TrendFigures | null;
   /** Stuck runs by cause, most first, with a count for each of `weeks`. */
-  readonly causes: ReadonlyArray<{
-    readonly cause: string;
-    readonly total: number;
-    readonly perWeek: ReadonlyArray<number>;
+  readonly causes: ReadonlyArray<TrendCause>;
+}
+
+export interface TrendCause {
+  readonly cause: string;
+  readonly total: number;
+  readonly perWeek: ReadonlyArray<number>;
+  /** Newest claim first; `week` indexes `weeks`, `detail` is the reason past its cause. */
+  readonly runs: ReadonlyArray<{
+    readonly run: FactoryRunRow;
+    readonly week: number;
+    readonly detail: string | null;
   }>;
 }
 
@@ -123,7 +131,10 @@ export function factoryTrends(
   const starts: Array<number> = [];
   for (let start = first; start <= thisWeek; start = addWeeks(start, 1)) starts.push(start);
   const buckets: Array<Bucket> = starts.map(() => ({ counts: emptyCounts(), mergeTimes: [] }));
-  const causes = new Map<string, Array<number>>();
+  const causes = new Map<
+    string,
+    { perWeek: Array<number>; runs: Array<TrendCause["runs"][number] & { ms: number }> }
+  >();
   for (const { run, ms } of dated) {
     const index = starts.findLastIndex((start) => start <= ms);
     if (index === -1 || ms >= addWeeks(thisWeek, 1)) continue;
@@ -132,10 +143,11 @@ export function factoryTrends(
     bucket.counts[outcome]++;
     if (outcome === "merged" && run.total_ms !== null) bucket.mergeTimes.push(run.total_ms);
     if (outcome === "stuck") {
-      const { cause } = splitStuckReason(run.reason ?? null);
-      const perWeek = causes.get(cause) ?? starts.map(() => 0);
-      perWeek[index]!++;
-      causes.set(cause, perWeek);
+      const { cause, detail } = splitStuckReason(run.reason ?? null);
+      const group = causes.get(cause) ?? { perWeek: starts.map(() => 0), runs: [] };
+      group.perWeek[index]!++;
+      group.runs.push({ run, week: index, detail, ms });
+      causes.set(cause, group);
     }
   }
   const weeks = buckets.map((bucket, i): TrendWeek => {
@@ -162,10 +174,29 @@ export function factoryTrends(
             baseline,
             baseline.reduce((sum, { counts }) => sum + counts.merged, 0) / baseline.length,
           ),
-    causes: Array.from(causes, ([cause, perWeek]) => ({
+    causes: Array.from(causes, ([cause, { perWeek, runs: group }]) => ({
       cause,
       total: perWeek.reduce((sum, n) => sum + n, 0),
       perWeek,
+      runs: group
+        .toSorted((a, b) => b.ms - a.ms)
+        .map(({ run, week, detail }) => ({ run, week, detail })),
     })).toSorted((a, b) => b.total - a.total),
   };
+}
+
+/** The causes of one week (an index into `weeks`), most first, with that week's count and runs; all of them for null. */
+export function causesInWeek(
+  causes: ReadonlyArray<TrendCause>,
+  week: number | null,
+): ReadonlyArray<TrendCause> {
+  if (week === null) return causes;
+  return causes
+    .map((cause) => ({
+      ...cause,
+      total: cause.perWeek[week] ?? 0,
+      runs: cause.runs.filter((entry) => entry.week === week),
+    }))
+    .filter(({ total }) => total > 0)
+    .toSorted((a, b) => b.total - a.total);
 }

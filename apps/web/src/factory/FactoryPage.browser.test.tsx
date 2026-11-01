@@ -375,6 +375,23 @@ describe("FactoryPage", () => {
     expect(trends()).toContain("The last 2 weeks");
     expect(trends()).toContain("2 runs");
     expect(trends()).toContain("The run passed its time limit");
+    // A cause opens on its runs, each linking to its page with the cause's runs to step through.
+    const cause = page.all('[data-cause="The run passed its time limit"]')[0]!;
+    await page.click(cause.querySelector("button")!);
+    const link = cause.querySelector('a[data-to="/factory/$environmentId/$runId"]')!;
+    expect(link.textContent).toBe("#20");
+    expect(JSON.parse(link.getAttribute("data-state")!).factoryRunQueue).toMatchObject({
+      search: { view: "trends" },
+      runs: [{ runId: RUN_ID }],
+    });
+    // Picking the first week narrows the causes to it; picking it again lets it go.
+    const firstWeek = () => page.all('ol[aria-label="Runs per week"] button')[0]!;
+    await page.click(firstWeek());
+    expect(firstWeek().getAttribute("aria-pressed")).toBe("true");
+    expect(trends()).toMatch(/No run claimed the week of .+ got stuck\./);
+    expect(trends()).not.toContain("The run passed its time limit");
+    await page.click(firstWeek());
+    expect(trends()).toContain("The run passed its time limit");
     expect(page.button("Show all runs")).toBeUndefined();
     await page.click(page.button("Live")!);
     expect(state.search).toEqual({});

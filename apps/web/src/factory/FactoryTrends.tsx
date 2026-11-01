@@ -1,7 +1,38 @@
+import type { EnvironmentId } from "@t3tools/contracts";
+import { Link } from "@tanstack/react-router";
+import { ChevronRightIcon } from "lucide-react";
+import { useState } from "react";
+
+import { Button, InlineButton } from "~/components/ui/button";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "~/components/ui/collapsible";
+import { cn } from "~/lib/utils";
+
 import type { FactoryRunRow } from "./api";
 import "./belt.css";
 import { FactoryCard, FactoryCardHeader } from "./FactoryCard";
-import { factoryTrends, type TrendFigures, type TrendOutcome, type TrendWeek } from "./trends";
+import { parseRunId } from "./format";
+import { runLinkKey, runQueue, type QueueOrigin } from "./runQueue";
+import {
+  causesInWeek,
+  factoryTrends,
+  type TrendCause,
+  type TrendFigures,
+  type TrendOutcome,
+  type TrendWeek,
+} from "./trends";
+
+/** A run as Trends gets it: which environment it came from, to link to its page. */
+export interface TrendRun {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly run: FactoryRunRow;
+}
+
+/** The week a click picked, an index into the weeks; null for all of them. */
+interface WeekPick {
+  readonly week: number | null;
+  readonly onWeek: (week: number | null) => void;
+}
 
 /** Bottom to top: what ended well, then what stopped, then what is still going. */
 const STACK: ReadonlyArray<{ outcome: TrendOutcome; color: string; word: string }> = [
@@ -124,37 +155,65 @@ function Figures({ now, before }: { now: TrendFigures; before: TrendFigures | nu
   );
 }
 
-function WeekChart({ weeks }: { weeks: ReadonlyArray<TrendWeek> }) {
+/** A second click on the picked week lets it go. */
+const toggle = (pick: WeekPick, i: number) => pick.onWeek(pick.week === i ? null : i);
+
+function WeekChart({ weeks, pick }: { weeks: ReadonlyArray<TrendWeek>; pick: WeekPick }) {
   const scale = Math.max(1, ...weeks.map((week) => week.total));
   return (
     <div className="flex flex-col gap-2">
       <ol aria-label="Runs per week" className="flex h-44 min-w-0 items-end gap-1.5 sm:gap-3">
         {weeks.map((week, i) => {
           const label = weekLabel(week, i === weeks.length - 1);
+          const picked = pick.week === i;
           return (
-            <li
-              aria-label={`${label}: ${weekSummary(week)}`}
-              className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1"
-              key={week.startMs}
-            >
-              <span className="font-mono text-xs text-muted-foreground">{week.total}</span>
-              <span
-                className="flex w-full max-w-12 flex-col-reverse overflow-hidden rounded-sm"
-                style={{ height: `${(week.total / scale) * 100}%` }}
-              >
-                {STACK.map(({ outcome, color }) =>
-                  week.counts[outcome] > 0 ? (
-                    <span
-                      className="block w-full"
-                      key={outcome}
-                      style={{ background: color, flexGrow: week.counts[outcome] }}
-                    />
-                  ) : null,
+            <li className="flex h-full min-w-0 flex-1" key={week.startMs}>
+              <button
+                aria-label={`${label}: ${weekSummary(week)}`}
+                aria-pressed={picked}
+                className={cn(
+                  "group/week flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                  pick.week !== null && !picked && "opacity-40 hover:opacity-70",
                 )}
-              </span>
-              <span className="w-full truncate text-center text-2xs text-muted-foreground">
-                {label}
-              </span>
+                onClick={() => toggle(pick, i)}
+                type="button"
+              >
+                <span
+                  className={cn(
+                    "font-mono text-xs",
+                    picked ? "font-semibold text-foreground" : "text-muted-foreground",
+                  )}
+                >
+                  {week.total}
+                </span>
+                <span
+                  className={cn(
+                    "flex w-full max-w-12 flex-col-reverse overflow-hidden rounded-sm",
+                    picked
+                      ? "ring-2 ring-foreground ring-offset-2 ring-offset-card"
+                      : "group-hover/week:brightness-110",
+                  )}
+                  style={{ height: `${(week.total / scale) * 100}%` }}
+                >
+                  {STACK.map(({ outcome, color }) =>
+                    week.counts[outcome] > 0 ? (
+                      <span
+                        className="block w-full"
+                        key={outcome}
+                        style={{ background: color, flexGrow: week.counts[outcome] }}
+                      />
+                    ) : null,
+                  )}
+                </span>
+                <span
+                  className={cn(
+                    "w-full truncate text-center text-2xs",
+                    picked ? "font-medium text-foreground" : "text-muted-foreground",
+                  )}
+                >
+                  {label}
+                </span>
+              </button>
             </li>
           );
         })}
@@ -171,8 +230,12 @@ function WeekChart({ weeks }: { weeks: ReadonlyArray<TrendWeek> }) {
   );
 }
 
-function WeekTable({ weeks }: { weeks: ReadonlyArray<TrendWeek> }) {
-  const rows = weeks.map((week, i) => ({ week, label: weekLabel(week, i === weeks.length - 1) }));
+function WeekTable({ weeks, pick }: { weeks: ReadonlyArray<TrendWeek>; pick: WeekPick }) {
+  const rows = weeks.map((week, i) => ({
+    week,
+    i,
+    label: weekLabel(week, i === weeks.length - 1),
+  }));
   return (
     <table className="w-full self-start text-sm">
       <thead className="text-xs text-muted-foreground">
@@ -186,9 +249,24 @@ function WeekTable({ weeks }: { weeks: ReadonlyArray<TrendWeek> }) {
         </tr>
       </thead>
       <tbody className="whitespace-nowrap font-mono">
-        {rows.toReversed().map(({ week, label }) => (
-          <tr className="border-b last:border-b-0" key={week.startMs}>
-            <td className="py-1.5 pr-2 font-sans">{label}</td>
+        {rows.toReversed().map(({ week, i, label }) => (
+          <tr
+            className={cn(
+              "border-b last:border-b-0",
+              pick.week === i && "bg-muted/60 font-semibold",
+            )}
+            key={week.startMs}
+          >
+            <td className="py-0.5 pr-2 font-sans">
+              <button
+                aria-pressed={pick.week === i}
+                className="-mx-1 min-h-8 rounded-sm px-1 text-left underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11"
+                onClick={() => toggle(pick, i)}
+                type="button"
+              >
+                {label}
+              </button>
+            </td>
             <td className="hidden px-2 py-1.5 text-right sm:table-cell">{week.total}</td>
             <td className="px-2 py-1.5 text-right">{week.counts.merged}</td>
             <td className="px-2 py-1.5 text-right">{percent(week.stuckRate)}</td>
@@ -201,47 +279,204 @@ function WeekTable({ weeks }: { weeks: ReadonlyArray<TrendWeek> }) {
   );
 }
 
+const dayOf = (iso: string | null) =>
+  iso === null
+    ? null
+    : new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+
+/** How many of a cause's runs show before "Show N more"; a cause can hold a hundred. */
+const CAUSE_PAGE = 10;
+
+/**
+ * Stuck runs by cause, for every week or the one picked: each cause a fold with its weekly bars
+ * and count that opens on its runs, newest first, each a link to its page. The links carry the
+ * cause's runs as a queue, so j and k step through every run one cause stopped.
+ */
 function StuckCauses({
-  causes,
+  causes: allCauses,
   weeks,
+  pick,
+  runs,
+  origin,
 }: {
-  causes: NonNullable<ReturnType<typeof factoryTrends>>["causes"];
+  causes: ReadonlyArray<TrendCause>;
   weeks: ReadonlyArray<TrendWeek>;
+  pick: WeekPick;
+  runs: ReadonlyArray<TrendRun>;
+  origin: QueueOrigin;
 }) {
-  if (causes.length === 0) return null;
-  const scale = Math.max(1, ...causes.flatMap(({ perWeek }) => perWeek));
+  if (allCauses.length === 0) return null;
+  const causes = causesInWeek(allCauses, pick.week);
+  const picked = pick.week === null ? null : weeks[pick.week]!;
+  const pickedLabel =
+    picked === null
+      ? null
+      : pick.week === weeks.length - 1
+        ? "this week"
+        : `the week of ${weekLabel(picked, false)}`;
+  const scale = Math.max(1, ...allCauses.flatMap(({ perWeek }) => perWeek));
+  const placeOf = new Map(runs.map((entry) => [entry.run, entry]));
+  const severalEnvironments = new Set(runs.map(({ environmentId }) => environmentId)).size > 1;
   return (
     <FactoryCard aria-label="Why runs got stuck">
-      <FactoryCardHeader eyebrow="Stuck runs by cause" title="Why runs got stuck" />
-      <ul className="flex flex-col divide-y">
-        {causes.slice(0, 6).map(({ cause, total, perWeek }) => (
-          <li className="flex min-w-0 items-center gap-3 py-2 first:pt-0 last:pb-0" key={cause}>
-            <span className="min-w-0 flex-1 text-sm break-words">{cause}</span>
-            <span
-              aria-label={`Per week: ${perWeek.join(", ")}`}
-              className="flex h-5 shrink-0 items-end gap-0.5"
-              role="img"
-            >
-              {perWeek.map((count, i) => (
-                <span
-                  className="w-2 rounded-xs bg-muted"
-                  key={weeks[i]!.startMs}
-                  style={
-                    count > 0
-                      ? {
-                          height: `${Math.max(15, (count / scale) * 100)}%`,
-                          background: "var(--factory-stuck)",
-                        }
-                      : { height: "15%" }
-                  }
-                />
-              ))}
-            </span>
-            <b className="w-8 shrink-0 text-right font-mono text-sm font-semibold">{total}</b>
-          </li>
-        ))}
-      </ul>
+      <FactoryCardHeader
+        aside={
+          picked === null ? null : (
+            <Button onClick={() => pick.onWeek(null)} size="xs" variant="outline">
+              All weeks
+            </Button>
+          )
+        }
+        eyebrow={
+          pickedLabel === null ? "Stuck runs by cause" : `Stuck runs by cause · ${pickedLabel}`
+        }
+        title={pickedLabel === null ? "Why runs got stuck" : `Why runs got stuck ${pickedLabel}`}
+      />
+      {causes.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No run claimed {pickedLabel} got stuck.</p>
+      ) : (
+        <div className="flex flex-col divide-y">
+          {causes.map(({ cause, total, perWeek, runs: causeRuns }) => (
+            <CauseFold
+              cause={cause}
+              entries={causeRuns.flatMap(({ run, detail }) => {
+                const place = placeOf.get(run);
+                return place ? [{ ...place, detail }] : [];
+              })}
+              key={`${pick.week ?? "all"} ${cause}`}
+              origin={origin}
+              perWeek={perWeek}
+              pickedWeek={pick.week}
+              scale={scale}
+              severalEnvironments={severalEnvironments}
+              total={total}
+              weeks={weeks}
+            />
+          ))}
+        </div>
+      )}
     </FactoryCard>
+  );
+}
+
+function CauseFold({
+  cause,
+  total,
+  perWeek,
+  entries,
+  weeks,
+  pickedWeek,
+  scale,
+  origin,
+  severalEnvironments,
+}: {
+  cause: string;
+  total: number;
+  perWeek: ReadonlyArray<number>;
+  entries: ReadonlyArray<TrendRun & { readonly detail: string | null }>;
+  weeks: ReadonlyArray<TrendWeek>;
+  pickedWeek: number | null;
+  scale: number;
+  origin: QueueOrigin;
+  severalEnvironments: boolean;
+}) {
+  const [limit, setLimit] = useState(CAUSE_PAGE);
+  const queue = runQueue(
+    origin,
+    entries.map(({ environmentId, run }) => ({
+      environmentId,
+      runId: run.id,
+      title: run.title ?? null,
+    })),
+  );
+  return (
+    <Collapsible data-cause={cause}>
+      <CollapsibleTrigger className="group/cause flex min-h-9 w-full min-w-0 items-center gap-3 rounded-sm py-2 text-left outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11">
+        <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-panel-open/cause:rotate-90" />
+        <span className="min-w-0 flex-1 text-sm break-words">{cause}</span>
+        <span
+          aria-label={`Per week: ${perWeek.join(", ")}`}
+          className="flex h-5 shrink-0 items-end gap-0.5"
+          role="img"
+        >
+          {perWeek.map((count, i) => (
+            <span
+              className={cn(
+                "w-2 rounded-xs bg-muted",
+                pickedWeek !== null && pickedWeek !== i && "opacity-40",
+              )}
+              key={weeks[i]!.startMs}
+              style={
+                count > 0
+                  ? {
+                      height: `${Math.max(15, (count / scale) * 100)}%`,
+                      background: "var(--factory-stuck)",
+                    }
+                  : { height: "15%" }
+              }
+            />
+          ))}
+        </span>
+        <b className="w-8 shrink-0 text-right font-mono text-sm font-semibold">{total}</b>
+      </CollapsibleTrigger>
+      <CollapsiblePanel animate={false}>
+        <ul
+          className="mb-2 ml-1.5 flex flex-col divide-y border-l border-(--factory-station)/40 pl-3"
+          data-station="stuck"
+        >
+          {entries.slice(0, limit).map(({ environmentId, label, run, detail }) => {
+            const parsed = parseRunId(run.id);
+            return (
+              <li
+                className="flex flex-col gap-0.5 py-1.5 text-sm"
+                key={runLinkKey(environmentId, run.id)}
+              >
+                <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+                  <InlineButton
+                    className="font-mono font-semibold pointer-coarse:min-h-11"
+                    render={
+                      <Link
+                        data-run-link={runLinkKey(environmentId, run.id)}
+                        params={{ environmentId, runId: run.id }}
+                        state={{ factoryRunQueue: queue }}
+                        to="/factory/$environmentId/$runId"
+                      />
+                    }
+                  >
+                    {parsed ? `#${parsed.issue}` : run.id}
+                  </InlineButton>
+                  {run.title ? <span className="min-w-0 break-words">{run.title}</span> : null}
+                  {parsed ? (
+                    <span className="min-w-0 break-all font-mono text-xs text-muted-foreground">
+                      {parsed.owner}/{parsed.repo}
+                    </span>
+                  ) : null}
+                  {severalEnvironments ? (
+                    <span className="text-xs text-muted-foreground">{label}</span>
+                  ) : null}
+                  <span className="ml-auto text-xs text-muted-foreground">
+                    {dayOf(run.started_ts)}
+                  </span>
+                </div>
+                {detail ? (
+                  <p className="line-clamp-2 break-words text-xs text-muted-foreground">{detail}</p>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+        {entries.length > limit ? (
+          <Button
+            className="mb-2 ml-4"
+            onClick={() => setLimit((n) => n + CAUSE_PAGE * 5)}
+            size="xs"
+            variant="ghost"
+          >
+            Show {Math.min(entries.length - limit, CAUSE_PAGE * 5)} more of {entries.length}
+          </Button>
+        ) : null}
+      </CollapsiblePanel>
+    </Collapsible>
   );
 }
 
@@ -253,15 +488,27 @@ function StuckCauses({
 export function FactoryTrends({
   runs,
   nowMs,
+  origin,
 }: {
-  runs: ReadonlyArray<FactoryRunRow>;
+  runs: ReadonlyArray<TrendRun>;
   nowMs: number;
+  /** The page's filters, for a run page's Back and stepping. */
+  origin: QueueOrigin;
 }) {
-  const trends = factoryTrends(runs, nowMs);
+  const [pickedWeek, setPickedWeek] = useState<number | null>(null);
+  const trends = factoryTrends(
+    runs.map(({ run }) => run),
+    nowMs,
+  );
   if (trends === null) {
     return <p className="text-sm text-muted-foreground">No runs to chart yet.</p>;
   }
   const { weeks, now, before, causes } = trends;
+  // A filter that shortens the weeks may leave the pick past the end.
+  const pick: WeekPick = {
+    week: pickedWeek !== null && pickedWeek < weeks.length ? pickedWeek : null,
+    onWeek: setPickedWeek,
+  };
   const total = weeks.reduce((sum, week) => sum + week.total, 0);
   return (
     <section aria-label="Trends" className="flex min-w-0 flex-col gap-4">
@@ -272,14 +519,15 @@ export function FactoryTrends({
         />
         <p className="-mt-2 text-xs text-muted-foreground">
           {total} runs, each in the week it was claimed. Rates are of the runs that ended.
+          {causes.length > 0 ? " Pick a week to see why its runs got stuck." : ""}
         </p>
         <Figures before={before} now={now} />
         <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-          <WeekChart weeks={weeks} />
-          <WeekTable weeks={weeks} />
+          <WeekChart pick={pick} weeks={weeks} />
+          <WeekTable pick={pick} weeks={weeks} />
         </div>
       </FactoryCard>
-      <StuckCauses causes={causes} weeks={weeks} />
+      <StuckCauses causes={causes} origin={origin} pick={pick} runs={runs} weeks={weeks} />
     </section>
   );
 }

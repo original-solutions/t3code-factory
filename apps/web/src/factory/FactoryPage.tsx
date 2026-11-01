@@ -362,7 +362,7 @@ export function FactoryPage() {
           />
         ))}
         {runsListed ? (
-          <FactoryTrends nowMs={nowMs} runs={scopedRuns.map(({ run }) => run)} />
+          <FactoryTrends nowMs={nowMs} origin={{ search, query }} runs={scopedRuns} />
         ) : runsPending ? (
           <FactoryLoading label="Loading every run" />
         ) : null}

@@ -51,7 +51,7 @@ Claims also stop while autodeploy has a new build waiting to install. The belt t
 
 ### Trends
 
-To see whether a change to how you write issues, or to a repo's config, is helping, switch the page header from **Live** to **Trends**. It counts every run by the week it was claimed, for up to eight weeks: a bar per week split by how its runs came out, and for each week how many merged, the share of ended runs that got stuck or needed info, and the median time from claim to merge. The top row sets this week against the four weeks before it, and **Why runs got stuck** lists the causes with a count per week, so a cause you fixed should fade. Trends follow the **Showing** line and read the full runs list once, as Show all runs does.
+To see whether a change to how you write issues, or to a repo's config, is helping, switch the page header from **Live** to **Trends**. It counts every run by the week it was claimed, for up to eight weeks: a bar per week split by how its runs came out, and for each week how many merged, the share of ended runs that got stuck or needed info, and the median time from claim to merge. The top row sets this week against the four weeks before it, and **Why runs got stuck** lists the causes with a count per week, so a cause you fixed should fade. Pick a week's bar or row to narrow the causes to that week, and open a cause to list its runs; each opens its run page, where `j` and `k` step through the rest of that cause's runs. Trends follow the **Showing** line and read the full runs list once, as Show all runs does.
 
 ## A run's page
 

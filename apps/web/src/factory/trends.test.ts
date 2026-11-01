@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import type { FactoryRunRow } from "./api";
-import { factoryTrends, weekStart } from "./trends";
+import { causesInWeek, factoryTrends, weekStart } from "./trends";
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -136,19 +136,58 @@ describe("factoryTrends", () => {
     expect(factoryTrends([merged(THIS_WEEK)], NOW)!.before).toBeNull();
   });
 
-  it("groups stuck runs by cause, most first, with each cause's count per week", () => {
-    const trends = factoryTrends(
-      [
-        stuck(THIS_WEEK - 7 * DAY, "the session hit its time limit (60m)"),
-        stuck(THIS_WEEK - 7 * DAY, "the session hit its time limit (45m)"),
-        stuck(THIS_WEEK, "the gate failed 3 times"),
-        stuck(THIS_WEEK, "the session hit its time limit (60m)"),
-      ],
-      NOW,
-    )!;
+  it("groups stuck runs by cause, most first, with each cause's count per week and its runs newest first", () => {
+    const older = stuck(THIS_WEEK - 7 * DAY, "the session hit its time limit (60m)");
+    const old = stuck(THIS_WEEK - 6 * DAY, "the session hit its time limit (45m)");
+    const gate = stuck(THIS_WEEK, "the gate failed 3 times");
+    const recent = stuck(THIS_WEEK + HOUR, "the session hit its time limit (60m)");
+    const trends = factoryTrends([older, old, gate, recent], NOW)!;
     expect(trends.causes).toEqual([
-      { cause: "The session hit its time limit", total: 3, perWeek: [2, 1] },
-      { cause: "The gate failed 3 times", total: 1, perWeek: [0, 1] },
+      {
+        cause: "The session hit its time limit",
+        total: 3,
+        perWeek: [2, 1],
+        runs: [
+          { run: recent, week: 1, detail: "60m" },
+          { run: old, week: 0, detail: "45m" },
+          { run: older, week: 0, detail: "60m" },
+        ],
+      },
+      {
+        cause: "The gate failed 3 times",
+        total: 1,
+        perWeek: [0, 1],
+        runs: [{ run: gate, week: 1, detail: null }],
+      },
+    ]);
+  });
+});
+
+describe("causesInWeek", () => {
+  const time = stuck(THIS_WEEK - 7 * DAY, "the session hit its time limit (60m)");
+  const time2 = stuck(THIS_WEEK - 6 * DAY, "the session hit its time limit (60m)");
+  const gate = stuck(THIS_WEEK, "the gate failed 3 times");
+  const gate2 = stuck(THIS_WEEK + DAY, "the gate failed 3 times");
+  const time3 = stuck(THIS_WEEK + DAY, "the session hit its time limit (60m)");
+  const { causes } = factoryTrends([time, time2, gate, gate2, time3], NOW)!;
+
+  it("is every cause as is with no week picked", () => {
+    expect(causesInWeek(causes, null)).toBe(causes);
+  });
+
+  it("keeps a week's causes with that week's count and runs, most first, and drops the rest", () => {
+    expect(
+      causesInWeek(causes, 1).map(({ cause, total, runs }) => ({
+        cause,
+        total,
+        runs: runs.map(({ run }) => run),
+      })),
+    ).toEqual([
+      { cause: "The gate failed 3 times", total: 2, runs: [gate2, gate] },
+      { cause: "The session hit its time limit", total: 1, runs: [time3] },
+    ]);
+    expect(causesInWeek(causes, 0).map(({ cause }) => cause)).toEqual([
+      "The session hit its time limit",
     ]);
   });
 });
