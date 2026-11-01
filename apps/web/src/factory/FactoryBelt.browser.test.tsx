@@ -194,6 +194,7 @@ const api = (overrides: Partial<FactoryApi>): FactoryApi => ({
   resumeClaims: vi.fn(),
   dismissAttention: vi.fn(),
   runGitHub: vi.fn(),
+  queue: vi.fn(),
   snoozeDeploy: vi.fn(),
   deployNow: vi.fn(),
   ...overrides,

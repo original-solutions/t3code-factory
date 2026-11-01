@@ -12,6 +12,7 @@ import {
   FactoryApiError,
   factoryApi,
   type FactoryRunDetail,
+  type FactoryReadyQueue,
   type FactoryRunGitHub,
   type FactoryRunRow,
   type FactoryStatus,
@@ -55,7 +56,11 @@ export interface FactoryResource<T> {
 
 type Loaded<T> = Omit<FactoryResource<T>, "refresh">;
 
-type Resource = "status" | "runs" | "runs:all" | `run:${string}` | `github:${string}`;
+type Resource = "status" | "runs" | "runs:all" | "queue" | `run:${string}` | `github:${string}`;
+
+/** The resources read once when a reader opens them, never polled: costly, or read on demand. */
+const readOnce = (resource: Resource): boolean =>
+  resource === "runs:all" || resource === "queue" || resource.startsWith("github:");
 
 const LOADING: Loaded<never> = { status: "loading", data: null, error: null, readAt: 0, dataAt: 0 };
 
@@ -89,9 +94,11 @@ const load = ({ environmentId, resource }: Store): Promise<unknown> =>
     ? factoryApi.status(environmentId)
     : resource === "runs" || resource === "runs:all"
       ? factoryApi.runs(environmentId, { all: resource === "runs:all" })
-      : resource.startsWith("github:")
-        ? factoryApi.runGitHub(environmentId, resource.slice("github:".length))
-        : factoryApi.run(environmentId, resource.slice("run:".length));
+      : resource === "queue"
+        ? factoryApi.queue(environmentId)
+        : resource.startsWith("github:")
+          ? factoryApi.runGitHub(environmentId, resource.slice("github:".length))
+          : factoryApi.run(environmentId, resource.slice("run:".length));
 
 /** Whether `next` lacks a run that `previous` had: it finished, or the factory forgot it. */
 const droppedRun = (previous: FactoryStatus, next: FactoryStatus): boolean => {
@@ -289,7 +296,7 @@ export function useFactoryResource<T>(
   useLiveRefresh(tickNow, {
     key: `factory:${environmentId}:${resource}`,
     intervalMs: POLL_MS,
-    enabled: key !== null && resource !== "runs:all" && !resource.startsWith("github:"),
+    enabled: key !== null && !readOnce(resource),
   });
   return { ...state, refresh: refreshNow };
 }
@@ -345,7 +352,7 @@ function useFactoryResources<T>(
   useLiveRefresh(() => keys.forEach((key) => tick(key)), {
     key: `factory:all:${resource}`,
     intervalMs: POLL_MS,
-    enabled: keys.length > 0 && resource !== "runs:all",
+    enabled: keys.length > 0 && !readOnce(resource),
   });
   return keys.map((key, i) => ({
     ...(states[i] as Loaded<T>),
@@ -421,6 +428,11 @@ export const useFactoryEveryRunKept = (
   environmentIds: ReadonlyArray<EnvironmentId>,
 ): Array<FactoryResource<{ readonly runs: ReadonlyArray<FactoryRunRow> }>> =>
   useFactoryResources(environmentIds, "runs:all", { freshMs: KEEP_MS });
+
+/** Each environment's ready queue: read when the Queue view opens and on Refresh, never polled. */
+export const useFactoryQueues = (
+  environmentIds: ReadonlyArray<EnvironmentId>,
+): Array<FactoryResource<FactoryReadyQueue>> => useFactoryResources(environmentIds, "queue");
 
 /** An environment's name for people: the label it was saved under, else its id. */
 const labelOf = (

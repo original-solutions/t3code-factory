@@ -155,6 +155,28 @@ export interface FactoryRunGitHub {
   }> | null;
 }
 
+/** The ready issues the claim step held back, from the machine log (`readyQueue.ts` on the server). */
+export interface FactoryReadyQueue {
+  readonly last_pass_at: string | null;
+  /** The newest pass's machine-wide skips: `paused`, `low-disk`, `high-load`, `deploy-pending`, `late`, … */
+  readonly holds: ReadonlyArray<string>;
+  /** When the newest pass that read the ready issues ended; `waiting` is as of then. */
+  readonly checked_at: string | null;
+  readonly waiting: ReadonlyArray<{
+    readonly repo: string;
+    readonly issue: string;
+    readonly reason: string;
+    readonly since: string;
+    readonly passes: number;
+  }>;
+  readonly turned_away: ReadonlyArray<{
+    readonly repo: string;
+    readonly issue: string;
+    readonly at: string;
+  }>;
+  readonly skipped_repos: ReadonlyArray<{ readonly repo: string; readonly reason: string }>;
+}
+
 export interface FactoryStopResult {
   readonly stopped: string;
   readonly already: boolean;
@@ -213,6 +235,7 @@ export interface FactoryApi {
   ) => Promise<{ readonly runs: ReadonlyArray<FactoryRunRow> }>;
   readonly run: (environmentId: EnvironmentId, id: string) => Promise<FactoryRunDetail>;
   readonly runGitHub: (environmentId: EnvironmentId, id: string) => Promise<FactoryRunGitHub>;
+  readonly queue: (environmentId: EnvironmentId) => Promise<FactoryReadyQueue>;
   readonly stopRun: (environmentId: EnvironmentId, id: string) => Promise<FactoryStopResult>;
   readonly pauseClaims: (environmentId: EnvironmentId) => Promise<FactoryPauseResult>;
   readonly resumeClaims: (environmentId: EnvironmentId) => Promise<FactoryResumeResult>;
@@ -343,6 +366,7 @@ const httpApi: FactoryApi = {
     get(environmentId, "/api/factory/runs", all ? { all: "1" } : undefined),
   run: (environmentId, id) => get(environmentId, runPath(id)),
   runGitHub: (environmentId, id) => get(environmentId, `${runPath(id)}/github`),
+  queue: (environmentId) => get(environmentId, "/api/factory/queue"),
   stopRun: (environmentId, id) => post(environmentId, `${runPath(id)}/stop`),
   pauseClaims: (environmentId) => post(environmentId, "/api/factory/claims/pause"),
   resumeClaims: (environmentId) => post(environmentId, "/api/factory/claims/resume"),
@@ -366,6 +390,7 @@ export const factoryApi: FactoryApi = {
   runs: (environmentId, options) => (override ?? httpApi).runs(environmentId, options),
   run: (environmentId, id) => (override ?? httpApi).run(environmentId, id),
   runGitHub: (environmentId, id) => (override ?? httpApi).runGitHub(environmentId, id),
+  queue: (environmentId) => (override ?? httpApi).queue(environmentId),
   stopRun: (environmentId, id) => (override ?? httpApi).stopRun(environmentId, id),
   pauseClaims: (environmentId) => (override ?? httpApi).pauseClaims(environmentId),
   resumeClaims: (environmentId) => (override ?? httpApi).resumeClaims(environmentId),

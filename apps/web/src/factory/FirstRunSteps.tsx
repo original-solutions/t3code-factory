@@ -19,7 +19,13 @@ const FACTORY_BLOCK = `factory:
   autonomy: pr
 `;
 
-export function Snippet({ text }: { readonly text: string }) {
+export function Snippet({
+  text,
+  label = "Copy the factory block",
+}: {
+  readonly text: string;
+  readonly label?: string;
+}) {
   const { copyToClipboard, isCopied } = useCopyToClipboard({ timeout: 1500 });
   return (
     <div className="relative min-w-0 rounded-lg border border-border bg-muted/50">
@@ -28,7 +34,7 @@ export function Snippet({ text }: { readonly text: string }) {
       </pre>
       <div className="absolute top-1.5 right-1.5">
         <Button
-          aria-label="Copy the factory block"
+          aria-label={label}
           onClick={() => copyToClipboard(text, undefined)}
           size="icon-xs"
           variant="ghost"

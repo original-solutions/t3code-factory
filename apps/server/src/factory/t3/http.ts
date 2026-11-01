@@ -41,6 +41,7 @@ import { listRuns, type RunReadCache, type RunSummary } from "../ledger/listRuns
 import { runIdToString } from "../ledger/runId.ts";
 import { formatTs } from "../ledger/time.ts";
 import { readMachineConfigReport } from "../settings.ts";
+import { readReadyQueue } from "../readyQueue.ts";
 import { buildStatus } from "../status.ts";
 import { route } from "./auth.ts";
 import { DeployKick } from "./deployKick.ts";
@@ -52,6 +53,7 @@ const RUNS_PATH = "/api/factory/runs";
 const RUN_PATH = "/api/factory/runs/:id";
 const STOP_PATH = "/api/factory/runs/:id/stop";
 const RUN_GITHUB_PATH = "/api/factory/runs/:id/github";
+const QUEUE_PATH = "/api/factory/queue";
 const PAUSE_PATH = "/api/factory/claims/pause";
 const RESUME_PATH = "/api/factory/claims/resume";
 export const DISMISS_PATH = "/api/factory/attention/dismiss";
@@ -210,6 +212,21 @@ const runRoute = factoryRoute(
       case "not-found":
         return runNotFound(shown.id);
     }
+  }),
+);
+
+/**
+ * The ready issues the claim step held back, from the machine log alone (`readyQueue.ts`). Read
+ * scope, as the runs list: it names only repos and issue numbers the factory already works on.
+ */
+const queueRoute = factoryRoute(
+  "GET",
+  QUEUE_PATH,
+  AuthOrchestrationReadScope,
+  Effect.gen(function* () {
+    const { factoryDir } = yield* FactoryPaths;
+    const nowMs = yield* Clock.currentTimeMillis;
+    return respond(yield* guarded(() => readReadyQueue(factoryDir, nowMs)));
   }),
 );
 
@@ -501,6 +518,7 @@ export const FactoryRoutes = Layer.mergeAll(
   runsRoute,
   runRoute,
   runGitHubRoute,
+  queueRoute,
   stopRoute,
   pauseRoute,
   resumeRoute,

@@ -402,6 +402,7 @@ const FACTORY_ROUTES = [
   ["GET", "/api/factory/runs"],
   ["GET", `/api/factory/runs/${ID}`],
   ["GET", `/api/factory/runs/${ID}/github`],
+  ["GET", "/api/factory/queue"],
   ["POST", `/api/factory/runs/${ID}/stop`],
   ["POST", "/api/factory/claims/pause"],
   ["POST", "/api/factory/claims/resume"],
@@ -445,6 +446,7 @@ describe("every factory route", () => {
         "/api/factory/runs",
         `/api/factory/runs/${ID}`,
         `/api/factory/runs/${ID}/github`,
+        "/api/factory/queue",
         CONFIG_PATH,
       ]) {
         for (const token of [tokens.operate, tokens.settingsWrite]) {
@@ -986,6 +988,36 @@ describe("GET /api/factory/runs", () => {
           ["rawphp__broken__2__1", "unreadable", true],
         ],
       );
+    }),
+  );
+});
+
+describe("GET /api/factory/queue", () => {
+  it.effect("lists the ready issues the last pass held back, from the machine log", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(T0 + 60_000);
+      return yield* serving({ clock: yield* Clock.Clock }, async (call, { tokens, dir }) => {
+        const at = (ms: number, event: string, data: unknown) =>
+          `${JSON.stringify({ ts: formatTs(ms), ms, event, data })}\n`;
+        NodeFS.writeFileSync(
+          NodePath.join(dir, "events.jsonl"),
+          at(T0, "pass_started", {}) +
+            at(T0 + 1, "claim_skipped", { repo: "rawphp/softfac", issue: 12, reason: "blocked" }) +
+            at(T0 + 2, "pass_finished", { runs: 0, claimed: 0, errors: 0, attention: 0 }),
+        );
+        const response = await call("GET", "/api/factory/queue", tokens.read);
+        assert.strictEqual(response.status, 200);
+        const body = (await response.json()) as { waiting: ReadonlyArray<unknown> };
+        assert.deepStrictEqual(body.waiting, [
+          {
+            repo: "rawphp/softfac",
+            issue: "12",
+            reason: "blocked",
+            since: formatTs(T0 + 1),
+            passes: 1,
+          },
+        ]);
+      });
     }),
   );
 });

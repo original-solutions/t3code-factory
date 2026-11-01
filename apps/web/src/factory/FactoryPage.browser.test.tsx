@@ -101,6 +101,15 @@ vi.mock("./useFactoryData", () => ({
       : [],
   // Nothing listed means every candidate answered 404.
   useFactorySupported: () => state.listed,
+  useFactoryQueues: (environmentIds: ReadonlyArray<string>) =>
+    environmentIds.map(() => ({
+      status: "loading",
+      data: null,
+      error: null,
+      readAt: 0,
+      dataAt: 0,
+      refresh: () => {},
+    })),
   useFactoryRunsOf: (environmentIds: ReadonlyArray<string>, all: boolean) =>
     environmentIds.map((id) =>
       id === "env-2"
@@ -165,6 +174,7 @@ const api = (overrides: Partial<FactoryApi>): FactoryApi => ({
   resumeClaims: vi.fn(),
   dismissAttention: vi.fn(),
   runGitHub: vi.fn(),
+  queue: vi.fn(),
   snoozeDeploy: vi.fn(),
   deployNow: vi.fn(),
   ...overrides,

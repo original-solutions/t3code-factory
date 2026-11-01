@@ -1,6 +1,12 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
-import { ChartNoAxesColumnIcon, FactoryIcon, FolderGit2Icon, SettingsIcon } from "lucide-react";
+import {
+  ChartNoAxesColumnIcon,
+  FactoryIcon,
+  FolderGit2Icon,
+  ListOrderedIcon,
+  SettingsIcon,
+} from "lucide-react";
 
 import {
   ADDON_ICON_CLASS,
@@ -76,6 +82,15 @@ export function factoryPaletteItem(
       searchTerms: ["Trends", "weeks", "chart", "merged", "stuck"],
       icon: <ChartNoAxesColumnIcon className={ITEM_ICON_CLASS} />,
       run: () => open.openFactory({ view: "trends" }),
+    },
+    {
+      kind: "action",
+      value: "factory:queue",
+      title: "Ready queue",
+      description: "Ready issues not yet claimed, why each waits, and how to file one",
+      searchTerms: ["Ready queue", "factory:ready", "waiting", "blocked", "file an issue"],
+      icon: <ListOrderedIcon className={ITEM_ICON_CLASS} />,
+      run: () => open.openFactory({ view: "queue" }),
     },
     {
       kind: "action",

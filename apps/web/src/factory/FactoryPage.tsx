@@ -11,6 +11,7 @@ import { FactoryBelt } from "./FactoryBelt";
 import { FactoryFrame } from "./FactoryFrame";
 import { FactoryKeysButton, FactoryKeysDialog, FactorySkipLinks } from "./FactoryKeys";
 import { FactoryError, FactoryLoading, FactoryReadFailure } from "./FactoryNotices";
+import { FactoryQueue } from "./FactoryQueue";
 import { FactoryScope } from "./FactoryScope";
 import { FactoryTrends } from "./FactoryTrends";
 import { messageOf, parseRunId } from "./format";
@@ -76,6 +77,7 @@ export function FactoryPage() {
   const [allRuns, setAllRuns] = useState(false);
   // Trends chart every run; the full list is read once and shared with the table's Show all.
   const trends = search.view === "trends";
+  const queue = search.view === "queue";
   const [keysOpen, setKeysOpen] = useState(false);
   useFactoryKeys((key) => {
     if (key === "help") {
@@ -358,6 +360,28 @@ export function FactoryPage() {
     );
   } else if (environments.every(({ status }) => status.status === "loading")) {
     body = <FactoryLoading label="Loading factory" />;
+  } else if (queue) {
+    body = (
+      <>
+        {scope}
+        <FactoryQueue
+          environments={shownEnvironments
+            .filter(({ status }) => status.data !== null)
+            .map(({ environmentId, label }) => ({ environmentId, label }))}
+          recent={
+            new Map(
+              answered.map(({ environmentId }) => [
+                environmentId,
+                recentById.get(environmentId)?.data?.runs ?? [],
+              ]),
+            )
+          }
+          repo={repoFilter}
+          repos={repos}
+          showEnvironment={showEnvironment}
+        />
+      </>
+    );
   } else if (trends) {
     body = (
       <>
@@ -465,11 +489,18 @@ export function FactoryPage() {
               const [value] = next;
               // Picking the picked view again keeps it.
               if (value !== undefined)
-                setSearch(withFilter(search, "view", value === "trends" ? "trends" : null));
+                setSearch(
+                  withFilter(
+                    search,
+                    "view",
+                    value === "trends" || value === "queue" ? value : null,
+                  ),
+                );
             }}
-            value={[trends ? "trends" : "live"]}
+            value={[search.view ?? "live"]}
           >
             <Toggle value="live">Live</Toggle>
+            <Toggle value="queue">Queue</Toggle>
             <Toggle value="trends">Trends</Toggle>
           </ToggleGroup>
           <div className="ml-auto">

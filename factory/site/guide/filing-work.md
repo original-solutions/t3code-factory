@@ -65,6 +65,12 @@ To start again after `needs-info` or `stuck`, an instructor sets `factory:ready`
 
 Don't assign the issue to anyone if you want the factory to take it. An assigned `factory:ready` issue is skipped. A `factory:ready` issue labelled `postponed` is skipped too, until the label is removed; a claim or run already in progress is not stopped.
 
+## See what waits
+
+Switch the Factory page header to **Queue** to see the `factory:ready` issues the factory has not claimed, grouped by why: parked with `postponed`, waiting on a dependency, or waiting for a free run slot, each with how long and for how many passes in a row. It also says when nothing is being claimed at all (claims paused, low disk, high load, a build waiting to install), which watched repos the last pass could not read, and which issues were sent back to `factory:proposed` in the last three days. **Give the factory an issue** has the four headings to copy and opens GitHub's new-issue page for a repo with them filled in.
+
+The Queue reads the factory's own log, so it works while the factory's `gh` is signed out. It knows only what the passes recorded: an issue appears once a pass has read it and held it back, and the list is as of the last pass that read the ready issues.
+
 ## Dependency links
 
 When an issue can't start until another one is done, say so in one of two ways:

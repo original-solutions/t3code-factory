@@ -160,6 +160,14 @@ const fakeApi: FactoryApi = {
     calls.gitHubRead.push([env, id]);
     return { id, issue: { kind: "signed-out", message: "not signed in" }, pr: null };
   },
+  queue: async () => ({
+    last_pass_at: null,
+    holds: [],
+    checked_at: null,
+    waiting: [],
+    turned_away: [],
+    skipped_repos: [],
+  }),
   stopRun: async (env, id) => {
     calls.stop.push([env, id]);
     return { message: "stopping" } as never;
