@@ -175,8 +175,9 @@ const clock = (iso: string) => {
   const date = new Date(iso);
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 };
-/** The environments the belt offers, in its segmented control. */
-const environmentChoices = (page: Page) => page.all('[aria-label="Environments"] button');
+/** The machines the belt offers to pick, in the control bar's roster. */
+const environmentChoices = (page: Page) =>
+  page.all('ul[aria-label="Machines"] button[aria-pressed]');
 /** The tables that are not the belt's readout: the runs table. */
 const runsTables = (page: Page) =>
   page.all("table").filter((table) => table.closest("[data-readout]") === null);
@@ -756,7 +757,9 @@ describe("FactoryPage environments", () => {
     await using page = await render(createElement(FactoryPage));
     expect(page.text()).toContain("Can't reach Laptop");
     expect(page.text()).toContain("timed out");
-    expect(page.text()).toContain("Idle: no repos");
+    const laptop = page.all('[data-machine="env-3"]')[0]!.textContent;
+    expect(laptop).toContain("Idle");
+    expect(laptop).toContain("no repos");
     await page.click(page.button("Retry")!);
     expect(refreshOther).toHaveBeenCalledTimes(1);
     expect(refreshOwn).not.toHaveBeenCalled();

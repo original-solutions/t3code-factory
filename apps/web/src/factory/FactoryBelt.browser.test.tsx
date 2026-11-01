@@ -179,6 +179,8 @@ const openStation = async (page: Page, name: string) => {
   if (readout(page)?.dataset.station !== name) await page.click(station(page, name));
 };
 const claimsSwitch = (page: Page) => page.all('[role="switch"]')[0]!;
+const switchOf = (page: Page, label: string) =>
+  page.all(`[role="switch"][aria-label="Claims on ${label}"]`)[0]!;
 const clock = (ms: number) =>
   `${String(new Date(ms).getHours()).padStart(2, "0")}:${String(new Date(ms).getMinutes()).padStart(2, "0")}`;
 
@@ -318,23 +320,26 @@ describe("the belt's posts and tiles", () => {
     expect(style(4).border).toBe("dashed");
   });
 
-  it("lists the environments in a segmented control with their slots, the first picked", async () => {
+  it("lists the machines with their slots, the first picked", async () => {
     using _state = await setup();
     const belt = twoEnvironments();
     await using page = await render(createElement(FactoryBelt, belt));
-    const choices = page.all('[aria-label="Environments"] button');
-    expect(choices.map((choice) => choice.textContent)).toEqual([
+    const rows = page.all('ul[aria-label="Machines"] > li');
+    expect(rows.map((row) => row.textContent)).toEqual([
       expect.stringContaining("Desktop"),
       expect.stringContaining("Studio"),
     ]);
-    expect(choices[0]!.textContent).toContain("1/2");
-    expect(choices.map((choice) => choice.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
-    await page.click(choices[1]!);
-    expect(
-      page
-        .all('[aria-label="Environments"] button')
-        .map((choice) => choice.getAttribute("aria-pressed")),
-    ).toEqual(["false", "true"]);
+    expect(rows[0]!.textContent).toContain("1/2 slots");
+    const choices = () => page.all('ul[aria-label="Machines"] button[aria-pressed]');
+    expect(choices().map((choice) => choice.getAttribute("aria-pressed"))).toEqual([
+      "true",
+      "false",
+    ]);
+    await page.click(choices()[1]!);
+    expect(choices().map((choice) => choice.getAttribute("aria-pressed"))).toEqual([
+      "false",
+      "true",
+    ]);
   });
 
   it("makes the Done post's lane a bin: the count, merged and closed, and the latest three", async () => {
@@ -604,20 +609,17 @@ describe("stopping a run from the readout", () => {
 });
 
 describe("the control bar", () => {
-  it("shows the claims switch for the selected environment and asks to toggle that one", async () => {
+  it("shows a claims switch per machine and asks to toggle the one switched", async () => {
     using _state = await setup();
     const belt = twoEnvironments();
     await using page = await render(createElement(FactoryBelt, belt));
-    expect(page.all('[role="switch"]')).toHaveLength(1);
-    expect(claimsSwitch(page).getAttribute("aria-label")).toBe("Claims on Desktop");
-    expect(claimsSwitch(page).getAttribute("aria-checked")).toBe("true");
+    expect(page.all('[role="switch"]')).toHaveLength(2);
+    expect(switchOf(page, "Desktop").getAttribute("aria-checked")).toBe("true");
     expect(page.all('section[aria-label="Controls"]')[0]!.textContent).toContain("Running");
-    await page.click(claimsSwitch(page));
+    await page.click(switchOf(page, "Desktop"));
     expect(belt.onTogglePause).toHaveBeenCalledTimes(1);
     expect(belt.onTogglePause).toHaveBeenLastCalledWith(belt.environments[0]);
-    await page.click(page.all("button").find((b) => b.textContent?.startsWith("Studio"))!);
-    expect(claimsSwitch(page).getAttribute("aria-label")).toBe("Claims on Studio");
-    await page.click(claimsSwitch(page));
+    await page.click(switchOf(page, "Studio"));
     expect(belt.onTogglePause).toHaveBeenLastCalledWith(belt.environments[1]);
   });
 
@@ -657,9 +659,8 @@ describe("the control bar", () => {
     using _state = await setup();
     const belt = { ...twoEnvironments(), busy: new Set([STUDIO]) };
     await using page = await render(createElement(FactoryBelt, belt));
-    expect(claimsSwitch(page).hasAttribute("data-disabled")).toBe(false);
-    await page.click(page.all("button").find((b) => b.textContent?.startsWith("Studio"))!);
-    expect(claimsSwitch(page).hasAttribute("data-disabled")).toBe(true);
+    expect(switchOf(page, "Desktop").hasAttribute("data-disabled")).toBe(false);
+    expect(switchOf(page, "Studio").hasAttribute("data-disabled")).toBe(true);
   });
 
   it("counts down to the next pass once a second, and says when one is running", async () => {

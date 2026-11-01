@@ -194,16 +194,18 @@ const show = async (element: Parameters<typeof render>[0]) => {
   return page;
 };
 
-/** The belt's one claims switch, for the environment picked in its segmented control. */
+/** The first claims switch on the page: with one environment, its only one. */
 const claimsSwitch = (page: Page) => page.all('[role="switch"]')[0]!;
+/** One machine's claims switch in the control bar's roster. */
+const switchOf = (page: Page, label: string) =>
+  page.all(`[role="switch"][aria-label="Claims on ${label}"]`)[0]!;
+/** One machine's row in the roster, by environment. */
+const machineRow = (page: Page, environmentId: string) =>
+  page.all(`[data-machine="${environmentId}"]`)[0]!.textContent ?? "";
 const isDisabled = (node: Element) => node.hasAttribute("data-disabled");
-/** Picks an environment in the belt's segmented control. */
+/** Picks a machine in the roster, which the rail and the update banner follow. */
 const pick = (page: Page, label: string) =>
-  page.click(
-    page
-      .all('[aria-label="Environments"] button')
-      .find((button) => button.textContent?.startsWith(label))!,
-  );
+  page.click(page.all(`button[aria-label="Show ${label} on the belt"]`)[0]!);
 const clock = (iso: string) => {
   const date = new Date(iso);
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
@@ -302,16 +304,16 @@ describe("the Factory page shows every environment that runs a factory", () => {
     expect(badge.text()).toBe("3");
   });
 
-  it("pauses only the environment picked in the belt", async () => {
+  it("shows a claims switch per machine and pauses only the one switched", async () => {
     await using _state = setup();
     const page = await show(createElement(FactoryPage));
-    expect(claimsSwitch(page).getAttribute("aria-label")).toBe("Claims on Desktop");
-    await pick(page, "Studio");
-    expect(claimsSwitch(page).getAttribute("aria-label")).toBe("Claims on Studio");
-    await page.click(claimsSwitch(page));
+    expect(page.all('[role="switch"]').map((node) => node.getAttribute("aria-label"))).toEqual([
+      "Claims on Desktop",
+      "Claims on Studio",
+    ]);
+    await page.click(switchOf(page, "Studio"));
     expect(calls.pause).toEqual([ENV_2]);
-    await pick(page, "Desktop");
-    expect(isDisabled(claimsSwitch(page))).toBe(false);
+    expect(isDisabled(switchOf(page, "Desktop"))).toBe(false);
   });
 
   it("disables only the environment whose pause is in flight, and enables it again when that settles", async () => {
@@ -333,30 +335,32 @@ describe("the Factory page shows every environment that runs a factory", () => {
       },
     });
     const page = await show(createElement(FactoryPage));
-    await pick(page, "Studio");
-    await page.click(claimsSwitch(page));
+    await page.click(switchOf(page, "Studio"));
     expect(calls.pause).toEqual([ENV_2]);
-    expect(isDisabled(claimsSwitch(page))).toBe(true);
-    await pick(page, "Desktop");
-    expect(isDisabled(claimsSwitch(page))).toBe(false);
+    expect(isDisabled(switchOf(page, "Studio"))).toBe(true);
+    expect(isDisabled(switchOf(page, "Desktop"))).toBe(false);
     await act(async () => finish());
     await settle();
-    await pick(page, "Studio");
-    expect(isDisabled(claimsSwitch(page))).toBe(false);
+    expect(isDisabled(switchOf(page, "Studio"))).toBe(false);
   });
 
-  it("resumes a paused environment and says since when for that one only", async () => {
+  it("says a machine is paused, and since when, without picking it, and resumes that one", async () => {
     await using _state = setup();
     worlds.get(ENV_2)!.status = statusBody("running", { paused: true });
     const page = await show(createElement(FactoryPage));
+    expect(machineRow(page, ENV_2)).toContain("Paused");
+    expect(machineRow(page, ENV_2)).toContain(`since ${clock("2026-10-17T11:00:00.000Z")}`);
+    expect(machineRow(page, ENV_1)).toContain("Running");
+    expect(page.text()).toContain("1 of 2 claiming");
+    expect(switchOf(page, "Desktop").getAttribute("aria-checked")).toBe("true");
+    expect(switchOf(page, "Studio").getAttribute("aria-checked")).toBe("false");
+    // The rail's Claimed post follows the picked machine.
     expect(page.text()).not.toContain("claims paused by hand");
-    expect(claimsSwitch(page).getAttribute("aria-checked")).toBe("true");
     await pick(page, "Studio");
     expect(page.text()).toContain(
       `claims paused by hand since ${clock("2026-10-17T11:00:00.000Z")}`,
     );
-    expect(claimsSwitch(page).getAttribute("aria-checked")).toBe("false");
-    await page.click(claimsSwitch(page));
+    await page.click(switchOf(page, "Studio"));
     expect(calls.resume).toEqual([ENV_2]);
     expect(calls.pause).toEqual([]);
   });
@@ -486,11 +490,10 @@ describe("the Factory page shows every environment that runs a factory", () => {
     await using _state = setup();
     worlds.set(ENV_1, { status: statusBody("idle", { reason: "no repos" }), runs: [] });
     const page = await show(createElement(FactoryPage));
-    expect(page.text()).toContain("Idle: no repos");
-    const controls = () => page.all('section[aria-label="Controls"]')[0]!.textContent;
-    expect(controls()).not.toContain("Running");
-    await pick(page, "Studio");
-    expect(controls()).toContain("Running");
+    expect(machineRow(page, ENV_1)).toContain("Idle");
+    expect(machineRow(page, ENV_1)).toContain("no repos");
+    expect(machineRow(page, ENV_1)).not.toContain("Running");
+    expect(machineRow(page, ENV_2)).toContain("Running");
     expect(page.text()).toContain("acme/widgets");
   });
 
@@ -551,10 +554,10 @@ describe("the Factory page shows every environment that runs a factory", () => {
       },
     });
     const page = await show(createElement(FactoryPage));
-    // The picked environment has no status to switch claims on; the other's is still there.
-    expect(isDisabled(claimsSwitch(page))).toBe(true);
-    await pick(page, "Studio");
-    expect(isDisabled(claimsSwitch(page))).toBe(false);
+    // The failed machine has no status to switch claims on; the other's is still there.
+    expect(machineRow(page, ENV_1)).toContain("No answer");
+    expect(isDisabled(switchOf(page, "Desktop"))).toBe(true);
+    expect(isDisabled(switchOf(page, "Studio"))).toBe(false);
   });
 
   it("names the environment whose runs could not be read, and keeps the rest", async () => {

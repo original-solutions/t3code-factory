@@ -1,6 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 
 import { Skeleton } from "~/components/ui/skeleton";
 import { Switch } from "~/components/ui/switch";
@@ -13,6 +13,7 @@ import { BeltDot } from "./BeltDot";
 import { BeltLowerRow, type EnvironmentAttention } from "./BeltLowerRow";
 import { useBeltMotion } from "./beltMotion";
 import { BeltRail } from "./BeltRail";
+import { MachineRoster, useSecond } from "./MachineRoster";
 import type { QueueOrigin } from "./runQueue";
 import { DeployBanner } from "./DeployBanner";
 import { dayStrip, type DayStrip as Strip } from "./dayStrip";
@@ -30,12 +31,6 @@ const LABEL = "text-3xs font-semibold uppercase tracking-widest text-muted-foreg
 
 const slotsText = ({ used, max }: FactoryStatus["slots"]) =>
   max === null ? `${used}` : `${used}/${max}`;
-
-const subscribeToSeconds = (onSecond: () => void) => {
-  const timer = setInterval(onSecond, 1000);
-  return () => clearInterval(timer);
-};
-const wholeSecond = () => Math.floor(Date.now() / 1000) * 1000;
 
 /** An accepted Update now: its build, what to say, and whether the server has since gone away. */
 interface Updating {
@@ -90,7 +85,7 @@ const withEntry = <K, V>(map: ReadonlyMap<K, V>, key: K, value: V | null): Reado
  * own timer, so nothing else on the page renders each second. Nothing before the factory has said.
  */
 function NextPass({ passes }: { passes: FactoryStatus["passes"] | undefined }) {
-  const nowMs = useSyncExternalStore(subscribeToSeconds, wholeSecond);
+  const nowMs = useSecond();
   const text = nextPassText(passes, nowMs);
   if (text === null) return null;
   return (
@@ -102,19 +97,24 @@ function NextPass({ passes }: { passes: FactoryStatus["passes"] | undefined }) {
 }
 
 /**
- * The selected environment's claims switch and state and its pass line, then what happened since
- * the viewer caught up, then today's strip over every environment. The switch is on while claims
- * run; an environment with no status says nothing about its claims and cannot be switched.
+ * The claims switch, state and pass line of the one environment, or the roster of every machine
+ * when there are several, then what happened since the viewer caught up, then today's strip over
+ * every environment. A switch is on while claims run; an environment with no status says nothing
+ * about its claims and cannot be switched.
  */
 function ControlBar({
+  environments,
   selected,
   busy,
   digest,
   strip,
+  onSelect,
   onTogglePause,
 }: {
+  environments: ReadonlyArray<FactoryEnvironment>;
   selected: FactoryEnvironment;
-  busy: boolean;
+  busy: ReadonlySet<EnvironmentId>;
+  onSelect: (environmentId: EnvironmentId) => void;
   /** What happened since the viewer caught up, when the page has it to show. */
   digest: ReactNode;
   /** Today's runs on the clock, once the recent runs lists are known. */
@@ -125,33 +125,43 @@ function ControlBar({
   const paused = report?.paused_by_hand != null;
   return (
     <section aria-label="Controls" className="flex flex-col rounded-lg border bg-card">
-      <div className="flex flex-wrap items-stretch">
-        <div className="flex items-center gap-3 px-5 py-2.5">
-          {/* The switch has no coarse-pointer hit area of its own; the label is the 44 px target. */}
-          <label className="inline-flex items-center justify-center pointer-coarse:min-h-11 pointer-coarse:min-w-11">
-            <Switch
-              aria-label={`Claims on ${selected.label}`}
-              checked={report !== null && !paused}
-              disabled={report === null || busy}
-              onCheckedChange={() => onTogglePause(selected)}
-            />
-          </label>
-          <div className="flex flex-col gap-1">
-            <span className={LABEL}>Claims</span>
-            <b className="text-sm font-semibold">
-              {report === null
-                ? "-"
-                : paused
-                  ? "Paused"
-                  : report.state === "idle"
-                    ? "Idle"
-                    : "Running"}
-            </b>
+      {environments.length > 1 ? (
+        <MachineRoster
+          busy={busy}
+          environments={environments}
+          onSelect={onSelect}
+          onTogglePause={onTogglePause}
+          selectedId={selected.environmentId}
+        />
+      ) : (
+        <div className="flex flex-wrap items-stretch">
+          <div className="flex items-center gap-3 px-5 py-2.5">
+            {/* The switch has no coarse-pointer hit area of its own; the label is the 44 px target. */}
+            <label className="inline-flex items-center justify-center pointer-coarse:min-h-11 pointer-coarse:min-w-11">
+              <Switch
+                aria-label={`Claims on ${selected.label}`}
+                checked={report !== null && !paused}
+                disabled={report === null || busy.has(selected.environmentId)}
+                onCheckedChange={() => onTogglePause(selected)}
+              />
+            </label>
+            <div className="flex flex-col gap-1">
+              <span className={LABEL}>Claims</span>
+              <b className="text-sm font-semibold">
+                {report === null
+                  ? "-"
+                  : paused
+                    ? "Paused"
+                    : report.state === "idle"
+                      ? "Idle"
+                      : "Running"}
+              </b>
+            </div>
           </div>
+          {/* A countdown from a read that has since failed would tick on a pass nobody can see. */}
+          <NextPass passes={selected.status.status === "error" ? undefined : report?.passes} />
         </div>
-        {/* A countdown from a read that has since failed would tick on a pass nobody can see. */}
-        <NextPass passes={selected.status.status === "error" ? undefined : report?.passes} />
-      </div>
+      )}
       {digest}
       <TodayStrip strip={strip} />
     </section>
@@ -201,7 +211,7 @@ function EnvironmentNote({
   );
 }
 
-/** Every factory environment as a segmented control with its slots, and the notes that some need. */
+/** One environment's slots and the note it may need; several are the control bar's roster instead. */
 function Environments({
   environments,
   selectedId,
@@ -211,6 +221,20 @@ function Environments({
   selectedId: EnvironmentId;
   onSelect: (environmentId: EnvironmentId) => void;
 }) {
+  // With several machines the control bar's roster picks one and says which load or idle; only a
+  // first read that failed stays here, for its Retry.
+  if (environments.length > 1) {
+    const failed = environments.filter(
+      ({ status }) => status.data === null && status.status === "error",
+    );
+    return failed.length === 0 ? null : (
+      <section aria-label="Factories" className="flex flex-col gap-2">
+        {failed.map((environment) => (
+          <EnvironmentNote environment={environment} key={environment.environmentId} />
+        ))}
+      </section>
+    );
+  }
   const notes = environments.filter(
     ({ status }) => status.data === null || status.data.state === "idle",
   );
@@ -419,8 +443,10 @@ export function FactoryBelt({
           </p>
         ) : null}
         <ControlBar
-          busy={busy.has(selected.environmentId)}
+          busy={busy}
           digest={digest}
+          environments={environments}
+          onSelect={setPickedId}
           onTogglePause={onTogglePause}
           selected={selected}
           strip={
