@@ -2,12 +2,15 @@
 
 The fork's web app has a Factory page, reached from the sidebar. It shows every connected environment that runs a factory, the primary environment first: what needs you and what happened while you were away at the top, then a belt with the runs of all of them, and below it one table of their runs. In the desktop app the primary is the LaunchAgent server once you have [paired it](/guide/install#install-the-desktop-app). Reading needs a normal paired session. Pausing claims, stopping a run and dismissing an item need the `orchestration:operate` scope, which a normal pairing carries.
 
-The pages work in a phone's browser too, paired over your tailnet as described in [remote access](https://github.com/pingdotgg/t3code/tree/main/docs/user/remote-access.md). The T3 mobile app is upstream's build and has no Factory screen.
+The pages work in a phone's browser too, paired over your tailnet as described in [remote access](https://github.com/pingdotgg/t3code/tree/main/docs/user/remote-access.md). On a narrow screen the repo tiles, the control bar's dials and the belt's posts stack in one column, in the same order. The T3 mobile app is upstream's build and has no Factory screen.
+
+<img class="screenshot light-only" src="/screenshots/factory-phone-light.jpg" width="300" alt="The Factory page in a phone's browser: the Live, Queue and Trends switch, the two repo tiles side by side, then the control bar's dials one under another, claims running on build-mac with 2 of 2 slots, the machine healthy, and the last day with 2 runs that need you, then the Today strip and the Claimed post" />
+<img class="screenshot dark-only" src="/screenshots/factory-phone-dark.jpg" width="300" alt="The Factory page in a phone's browser: the Live, Queue and Trends switch, the two repo tiles side by side, then the control bar's dials one under another, claims running on build-mac with 2 of 2 slots, the machine healthy, and the last day with 2 runs that need you, then the Today strip and the Claimed post" />
 
 ## The Factory page
 
-<img class="screenshot light-only" src="/screenshots/factory-page-light.png" alt="The Factory page: a tile per repo, one stuck and one waiting on an answer; the control bar with claims running and the next pass; what happened in the last day with the stuck and needs-info runs; the Today strip; and the belt with one run each at Claimed, Building, Gate and PR open, the Building post open on its run" />
-<img class="screenshot dark-only" src="/screenshots/factory-page-dark.png" alt="The Factory page: a tile per repo, one stuck and one waiting on an answer; the control bar with claims running and the next pass; what happened in the last day with the stuck and needs-info runs; the Today strip; and the belt with one run each at Claimed, Building, Gate and PR open, the Building post open on its run" />
+<img class="screenshot light-only" src="/screenshots/factory-page-light.jpg" alt="The Factory page: a tile per repo, both with stuck runs; the control bar's row of dials, claims running on build-mac with the next pass, the machine healthy with small disk, load and gate gauges, and the last day's counts with 2 that need you beside Mark caught up; the Today strip; the belt with one run each at Claimed, Building, Gate and PR open, the Building post open on its run; and the Needs attention, Needs info and Stuck bins" />
+<img class="screenshot dark-only" src="/screenshots/factory-page-dark.jpg" alt="The Factory page: a tile per repo, both with stuck runs; the control bar's row of dials, claims running on build-mac with the next pass, the machine healthy with small disk, load and gate gauges, and the last day's counts with 2 that need you beside Mark caught up; the Today strip; the belt with one run each at Claimed, Building, Gate and PR open, the Building post open on its run; and the Needs attention, Needs info and Stuck bins" />
 
 Read the page from the top down. Each part answers one question.
 
@@ -20,6 +23,9 @@ Until the factory has run anything, the page opens on what stands between it and
 ### Is the machine OK?
 
 The control bar reads in one row: the claims switch with the machine's slots and next pass, the **Machine** dial, and the catch-up. Click a dial to open its detail under the row, and click it again to fold it; one opens at a time, and the browser keeps it open for your next visit.
+
+<img class="screenshot light-only" src="/screenshots/machine-dial-light.jpg" alt="The control bar with the Machine dial open: under the row of dials, a full gauge each for Disk with the free space and the disk's size, Load with a tick where it would hold claims, and Gates, none running" />
+<img class="screenshot dark-only" src="/screenshots/machine-dial-dark.jpg" alt="The control bar with the Machine dial open: under the row of dials, a full gauge each for Disk with the free space and the disk's size, Load with a tick where it would hold claims, and Gates, none running" />
 
 The **Machine** dial says whether the machine under the factory is fine, and if not, what holds claims, with a small gauge each for the disk, load and gates. Open it for the full gauges: **Disk**, the free space where worktrees and gates write, with a tick at `min_free_gib`; **Load**, the 1-minute load with a tick at `max_load_per_core` times the cores; and **Gates**, how many run and how long the oldest has. A bar past its tick holds claims, and an amber one is getting close. Each hold is listed with what lifts it: the Claims switch for a pause, the install for a waiting update, free space for a low disk. A low disk says how much to free, copies a command that lists the biggest folders there, and links to Factory settings. The gauges read again with every status, so once you free enough space the line says the next pass claims again. Set the two limits in the [machine config](/guide/machine-config).
 
@@ -59,14 +65,21 @@ Turn a claims switch off to pause claims on that machine. While claims are pause
 
 Claims also stop while autodeploy has a new build waiting to install. The belt then shows an **Update waiting** banner naming the build, how long it has waited and when it installs at the latest, and what it waits for: each run in progress (a link to it), a factory pass running, and threads with an agent at work. It installs within 10 minutes of the last of those finishing. The Claimed post says `claims held for update`. **Snooze 1 hour** lets claims go on for an hour and holds the install. **Update now** installs it at once, over the runs in progress. Snoozing needs the `orchestration:operate` scope and Update now the `environment:maintain` scope. See [Follow main](/guide/install#follow-main).
 
+### Queue
+
+Switch the header to **Queue** for the `factory:ready` issues the factory hasn't claimed yet and why each waits. See [See what waits](/guide/filing-work#see-what-waits).
+
 ### Trends
+
+<img class="screenshot light-only" src="/screenshots/trends-light.jpg" alt="Trends: the last 7 weeks as a bar per week split into merged, stuck, needs info and in flight, this week against the four before it, a row per week with its runs, merged, stuck and needs-info shares and time to merge, and Why runs got stuck, with the time limit at 5 runs fading over the weeks and the failed gate at 3" />
+<img class="screenshot dark-only" src="/screenshots/trends-dark.jpg" alt="Trends: the last 7 weeks as a bar per week split into merged, stuck, needs info and in flight, this week against the four before it, a row per week with its runs, merged, stuck and needs-info shares and time to merge, and Why runs got stuck, with the time limit at 5 runs fading over the weeks and the failed gate at 3" />
 
 To see whether a change to how you write issues, or to a repo's config, is helping, switch the page header from **Live** to **Trends**. It counts every run by the week it was claimed, for up to eight weeks: a bar per week split by how its runs came out, and for each week how many merged, the share of ended runs that got stuck or needed info, and the median time from claim to merge. The top row sets this week against the four weeks before it, and **Why runs got stuck** lists the causes with a count per week, so a cause you fixed should fade. Pick a week's bar or row to narrow the causes to that week, and open a cause to list its runs; each opens its run page, where `j` and `k` step through the rest of that cause's runs. Trends follow the **Showing** line and read the full runs list once, as Show all runs does.
 
 ## A run's page
 
-<img class="screenshot light-only" src="/screenshots/run-page-light.png" alt="A PR open run's page: the run card with its repo and issue, the PR open chip and step, links to its thread, issue and pull request, and the five-post track filled up to PR open; then the timeline, where gate attempt 1 failed on npm test and was sent back before attempt 2 passed, and the last gate output" />
-<img class="screenshot dark-only" src="/screenshots/run-page-dark.png" alt="A PR open run's page: the run card with its repo and issue, the PR open chip and step, links to its thread, issue and pull request, and the five-post track filled up to PR open; then the timeline, where gate attempt 1 failed on npm test and was sent back before attempt 2 passed, and the last gate output" />
+<img class="screenshot light-only" src="/screenshots/run-page-light.jpg" alt="A PR open run's page: the run card with its repo and issue, the PR open chip and step, links to its thread, issue and pull request, and the five-post track filled up to PR open; then the bar with Timeline, Gate with a green dot, Issue & PR and Ledger with its count, Timeline open: claimed, the agent session, the pull request opened, gate attempt 1 failed on npm test and was sent back, and attempt 2 passed" />
+<img class="screenshot dark-only" src="/screenshots/run-page-dark.jpg" alt="A PR open run's page: the run card with its repo and issue, the PR open chip and step, links to its thread, issue and pull request, and the five-post track filled up to PR open; then the bar with Timeline, Gate with a green dot, Issue & PR and Ledger with its count, Timeline open: claimed, the agent session, the pull request opened, gate attempt 1 failed on npm test and was sent back, and attempt 2 passed" />
 
 Open a run from anywhere it is listed to see why it is where it is. The page's header names the issue, and the run card under it says where the run stands: its repo and issue, its state in the belt's colours with the current step, links to its **Thread**, **Issue** and **PR**, and a track of the five posts filled up to where the run got. A run that stopped shows its post in red or amber with "stuck" or "needs info" beside it.
 
@@ -74,15 +87,15 @@ While a run is unfinished, its Thread link here, on the belt and in the runs lis
 
 ### When it stopped: what to do next
 
-<img class="screenshot light-only" src="/screenshots/run-stuck-light.png" alt="A stuck run's page: the run card with its track red at PR open, then What to do next, headed The gate failed after 3 attempts, with step 1 to read the gate output, naming the command that failed, and step 2 to set factory:ready on the issue again, saying the new run continues the pull request" />
-<img class="screenshot dark-only" src="/screenshots/run-stuck-dark.png" alt="A stuck run's page: the run card with its track red at PR open, then What to do next, headed The gate failed after 3 attempts, with step 1 to read the gate output, naming the command that failed, and step 2 to set factory:ready on the issue again, saying the new run continues the pull request" />
+<img class="screenshot light-only" src="/screenshots/run-stuck-light.jpg" alt="A stuck run's page: the run card with its track red at PR open, then What to do next, headed The gate failed after 3 attempts, with step 1 to read the gate output, naming the command that failed, and step 2 to set factory:ready on the issue again, saying the new run continues the pull request; below, the bar open on Gate with a red dot, showing attempt 3's commands" />
+<img class="screenshot dark-only" src="/screenshots/run-stuck-dark.jpg" alt="A stuck run's page: the run card with its track red at PR open, then What to do next, headed The gate failed after 3 attempts, with step 1 to read the gate output, naming the command that failed, and step 2 to set factory:ready on the issue again, saying the new run continues the pull request; below, the bar open on Gate with a red dot, showing attempt 3's commands" />
 
 A stuck or needs-info run's page opens on **What to do next**. Its heading is the cause in plain words. Step 1 is the fix, with a button to where it starts: the session's thread, the gate output, the pull request's checks, or the issue to answer. Step 2 is the reminder to set `factory:ready` again, and says what the new run will build on. The reason in full sits under the steps. For a needs-info run, step 1 holds the session's questions with a box to answer each; see [needs-info](/guide/when-a-run-stops#needs-info).
 
 ### When it merged: how it went
 
-<img class="screenshot light-only" src="/screenshots/run-merged-light.png" alt="A merged run's page: the run card with its track full to Merged, then How it went: 5h 49m from claim to merge, First try, and a bar split into agent building, gate and waiting on review with the time and share of each" />
-<img class="screenshot dark-only" src="/screenshots/run-merged-dark.png" alt="A merged run's page: the run card with its track full to Merged, then How it went: 5h 49m from claim to merge, First try, and a bar split into agent building, gate and waiting on review with the time and share of each" />
+<img class="screenshot light-only" src="/screenshots/run-merged-light.jpg" alt="A merged run's page: the run card with its track full to Merged, then How it went: 5h 49m from claim to merge, First try, and a bar split into agent building, gate and waiting on review with the time and share of each; below, the timeline from the claim to the pull request merged" />
+<img class="screenshot dark-only" src="/screenshots/run-merged-dark.jpg" alt="A merged run's page: the run card with its track full to Merged, then How it went: 5h 49m from claim to merge, First try, and a bar split into agent building, gate and waiting on review with the time and share of each; below, the timeline from the claim to the pull request merged" />
 
 A run whose pull request was merged or closed opens on **How it went**: the time from claim to merge or close, and a bar of where that time went (the agent building, the gate, the pull request waiting on review). Dots on the bar mark where the run went back to the agent (a gate failure, review feedback) or the base branch moved. **First try** means it merged with nothing sent back.
 
@@ -94,7 +107,7 @@ Below the run card and its lead, the rest of the run sits behind one bar: **Time
 
 **Gate**, once a gate has run, is the last gate's output, with a dot for whether it passed: each command with its exit code and duration. When a command failed, it shows the failing lines of its output with a few lines around them, numbered and marked, with the whole output a click away and a button to copy it.
 
-**Issue & PR** shows what was asked and what the factory made, as GitHub has them now. **The ask** is the issue: its title, who wrote it, its labels and its text. **What it made** is the run's pull request: its state, its review decision, the lines added and removed, the files that changed most, and its description. Long text is folded; **Show all** opens it. The page reads GitHub once, when this part first opens, through the factory's own `gh`, and writes nothing. When that `gh` is not signed in on the run's machine, one line says so, with links to the issue and pull request on GitHub.
+**Issue & PR** (just **Issue** before the run has a pull request) shows what was asked and what the factory made, as GitHub has them now. **The ask** is the issue: its title, who wrote it, its labels and its text. **What it made** is the run's pull request: its state, its review decision, the lines added and removed, the files that changed most, and its description. Long text is folded; **Show all** opens it. The page reads GitHub once, when this part first opens, through the factory's own `gh`, and writes nothing. When that `gh` is not signed in on the run's machine, one line says so, with links to the issue and pull request on GitHub.
 
 **Ledger** is every event the factory recorded for the run, with their count on the bar.
 
@@ -108,8 +121,8 @@ A run in `factory:building` can be stopped from its page. See [Stopping a run by
 
 ## Needs attention
 
-<img class="screenshot light-only" src="/screenshots/needs-attention-light.png" alt="The bins under the belt: Needs attention with a stuck item and a needs-info item, each with View run and Dismiss, beside the Needs info bin with the run's questions and the Stuck bin with its runs folded under the cause, The gate failed after 3 attempts" />
-<img class="screenshot dark-only" src="/screenshots/needs-attention-dark.png" alt="The bins under the belt: Needs attention with a stuck item and a needs-info item, each with View run and Dismiss, beside the Needs info bin with the run's questions and the Stuck bin with its runs folded under the cause, The gate failed after 3 attempts" />
+<img class="screenshot light-only" src="/screenshots/needs-attention-light.jpg" alt="The bins under the belt: Needs attention with a stuck item and a needs-info item, each with View run and Dismiss; the Needs info bin with each run's questions; and the Stuck bin with its 8 runs folded under two causes, The run passed its time limit with 5 and The gate failed after 3 attempts with 3" />
+<img class="screenshot dark-only" src="/screenshots/needs-attention-dark.jpg" alt="The bins under the belt: Needs attention with a stuck item and a needs-info item, each with View run and Dismiss; the Needs info bin with each run's questions; and the Stuck bin with its 8 runs folded under two causes, The run passed its time limit with 5 and The gate failed after 3 attempts with 3" />
 
 Under the belt, the Factory page lists what needs a person in three bins: Needs attention, Needs info and Stuck. Needs info lists each run's issue with the questions it asked. Stuck sorts its runs by why they stopped: each cause, such as "The run passed its time limit", is a fold with its count and issue numbers, the biggest first, and opening it shows each run with its repo, age and the rest of its reason. The sidebar's Factory item shows how many items need attention, and a dot while runs are in flight or claims are held. Hover it for the runs in flight, each a link to its run, without leaving your thread. An item is raised when:
 
@@ -129,8 +142,8 @@ An item clears itself when its cause goes away: the config loads, a pass succeed
 
 ## Settings → Factory
 
-<img class="screenshot light-only" src="/screenshots/settings-factory-light.png" alt="Settings, Factory: the Machine config card with the GitHub config directory, poll seconds, the run and gate limits and feedback seconds, each number with its unit, the hand-edited keys as chips, and Save in the card's foot beside the file it writes" />
-<img class="screenshot dark-only" src="/screenshots/settings-factory-dark.png" alt="Settings, Factory: the Machine config card with the GitHub config directory, poll seconds, the run and gate limits and feedback seconds, each number with its unit, the hand-edited keys as chips, and Save in the card's foot beside the file it writes" />
+<img class="screenshot light-only" src="/screenshots/settings-factory-light.jpg" alt="Settings, Factory: the Machine config card with the GitHub config directory, poll seconds, the run and gate limits and feedback seconds, each number with its unit, the hand-edited keys as chips, and Save in the card's foot beside the file it writes" />
+<img class="screenshot dark-only" src="/screenshots/settings-factory-dark.jpg" alt="Settings, Factory: the Machine config card with the GitHub config directory, poll seconds, the run and gate limits and feedback seconds, each number with its unit, the hand-edited keys as chips, and Save in the card's foot beside the file it writes" />
 
 Use it to change the [machine config](/guide/machine-config) and to check which repos are watched. Until the factory has a watched repo it can build from, the page opens on the same first-run steps as the Factory page.
 
