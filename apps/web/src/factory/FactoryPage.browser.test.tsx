@@ -350,6 +350,38 @@ describe("FactoryPage", () => {
     expect(runLinks()).toHaveLength(1);
   });
 
+  it("charts every run by week under Trends, in the URL, and Live brings the belt back", async () => {
+    using _state = setup();
+    state.runs = resource({ data: { runs: [runRow()] } });
+    state.allRuns = resource({
+      data: {
+        runs: [
+          runRow({ state: "stuck", reason: "the run passed its time limit", finished: true }),
+          runRow({
+            id: "o__r__1__1",
+            started_ts: "2026-10-06T10:00:00.000Z",
+            state: "pr-open",
+            pr_end: "merged",
+            finished: true,
+            total_ms: 3_600_000,
+          }),
+        ],
+      },
+    });
+    await using page = await render(createElement(FactoryPage));
+    await page.click(page.button("Trends")!);
+    expect(state.search).toEqual({ view: "trends" });
+    const trends = () => page.all('section[aria-label="Trends"]')[0]?.textContent ?? "";
+    expect(trends()).toContain("The last 2 weeks");
+    expect(trends()).toContain("2 runs");
+    expect(trends()).toContain("The run passed its time limit");
+    expect(page.button("Show all runs")).toBeUndefined();
+    await page.click(page.button("Live")!);
+    expect(state.search).toEqual({});
+    expect(trends()).toBe("");
+    expect(page.button("Show all runs")).toBeDefined();
+  });
+
   it("keeps a run stuck for more than a week out of the Stuck bin when every run is shown", async () => {
     using _state = setup();
     const old = runRow({
@@ -1537,6 +1569,8 @@ describe("FactoryPage filters", () => {
     expect(runLinks(page)).toHaveLength(3);
     expect(validateFactorySearch({ runs: "attention" })).toEqual({ runs: "attention" });
     expect(validateFactorySearch({ runs: "bogus" })).toEqual({});
+    expect(validateFactorySearch({ view: "trends" })).toEqual({ view: "trends" });
+    expect(validateFactorySearch({ view: "live" })).toEqual({});
   });
 
   it("has no Environment select with one environment and no Repo select with one repo", async () => {

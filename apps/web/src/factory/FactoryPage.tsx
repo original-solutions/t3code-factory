@@ -9,6 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select";
+import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 
 import { factoryApi } from "./api";
 import type { EnvironmentAttention } from "./BeltLowerRow";
@@ -16,6 +17,7 @@ import { CatchUpCard } from "./CatchUpCard";
 import { FactoryBelt } from "./FactoryBelt";
 import { FactoryFrame } from "./FactoryFrame";
 import { FactoryError, FactoryLoading, FactoryReadFailure } from "./FactoryNotices";
+import { FactoryTrends } from "./FactoryTrends";
 import { messageOf, parseRunId } from "./format";
 import { neverBuilt, type FirstRun } from "./firstRun";
 import { RepoBoard } from "./RepoBoard";
@@ -97,16 +99,18 @@ export function FactoryPage() {
   const supported = useFactorySupported();
   // The recent window until the user asks for every run; the switch starts a fresh read.
   const [allRuns, setAllRuns] = useState(false);
+  // Trends chart every run; the full list is read once and shared with the table's Show all.
+  const trends = search.view === "trends";
   // Runs are read once an environment's status has answered with data: a status still loading may
   // yet say 404 (an upstream server, left out above), and one that failed shows its error in the
   // belt's environment control, so neither should raise a second notice for its runs.
   const answered = environments.filter(({ status }) => status.data !== null);
   const answeredIds = answered.map(({ environmentId }) => environmentId);
-  const runsOf = useFactoryRunsOf(answeredIds, allRuns);
+  const runsOf = useFactoryRunsOf(answeredIds, allRuns || trends);
   const runsById = new Map(answered.map(({ environmentId }, i) => [environmentId, runsOf[i]]));
   // The belt reads the recent window whether or not the table asks for every run. With the window
   // showing, this is the table's own read.
-  const recentOf = useFactoryRunsOf(answeredIds, false);
+  const recentOf = useFactoryRunsOf(trends ? [] : answeredIds, false);
   const recentById = new Map(answered.map(({ environmentId }, i) => [environmentId, recentOf[i]!]));
   // A machine whose recent window is empty may never have run anything: only then is every run read,
   // once, to tell a first run from a quiet week.
@@ -326,6 +330,26 @@ export function FactoryPage() {
     );
   } else if (environments.every(({ status }) => status.status === "loading")) {
     body = <FactoryLoading label="Loading factory" />;
+  } else if (trends) {
+    body = (
+      <>
+        {notices.map(({ environmentId, label, error, dataAt, retry }) => (
+          <FactoryReadFailure
+            dataAt={dataAt}
+            error={error}
+            key={environmentId}
+            label={label}
+            onRetry={retry}
+            verb="refresh"
+          />
+        ))}
+        {runsListed ? (
+          <FactoryTrends nowMs={nowMs} runs={scopedRuns.map(({ run }) => run)} />
+        ) : runsPending ? (
+          <FactoryLoading label="Loading every run" />
+        ) : null}
+      </>
+    );
   } else {
     body = (
       <>
@@ -415,7 +439,20 @@ export function FactoryPage() {
     <FactoryFrame
       header={
         <div className="flex min-w-0 flex-1 items-center gap-3">
-          <h1 className="min-w-0 truncate text-sm font-medium">Factory</h1>
+          <h1 className="shrink-0 text-sm font-medium">Factory</h1>
+          <ToggleGroup
+            aria-label="View"
+            onValueChange={(next) => {
+              const [value] = next;
+              // Picking the picked view again keeps it.
+              if (value !== undefined)
+                setSearch(withFilter(search, "view", value === "trends" ? "trends" : null));
+            }}
+            value={[trends ? "trends" : "live"]}
+          >
+            <Toggle value="live">Live</Toggle>
+            <Toggle value="trends">Trends</Toggle>
+          </ToggleGroup>
           <div className="ml-auto flex min-w-0 items-center gap-2">
             {/* A filter that is on keeps its select, so it can be cleared. */}
             {environments.length > 1 || environmentFilter !== null ? (

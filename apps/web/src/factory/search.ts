@@ -8,6 +8,8 @@ export interface FactorySearch {
   readonly repo?: string;
   /** One state chip of the runs ledger: only those runs. */
   readonly runs?: RunBucketFilter;
+  /** The weekly trends instead of the belt and the runs list. */
+  readonly view?: "trends";
 }
 
 /** The `/factory` route's search: each filter that is a non-empty string, and nothing else. */
@@ -17,4 +19,5 @@ export const validateFactorySearch = (raw: Record<string, unknown>): FactorySear
     : {}),
   ...(typeof raw.repo === "string" && raw.repo ? { repo: raw.repo } : {}),
   ...(isRunBucket(raw.runs) ? { runs: raw.runs } : {}),
+  ...(raw.view === "trends" ? { view: "trends" as const } : {}),
 });
