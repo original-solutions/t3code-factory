@@ -13,6 +13,7 @@ import { BeltDot } from "./BeltDot";
 import { formatAge, issueRef, parseRunId } from "./format";
 import { Ref } from "./Ref";
 import { stuckCauses } from "./stuckCauses";
+import { runLinkKey, runQueue, type QueueOrigin, type RunQueue } from "./runQueue";
 import { TouchLink } from "./TouchLink";
 
 /** An open attention item and the environment whose factory raised it. */
@@ -128,17 +129,28 @@ function AttentionSection({
   );
 }
 
+/** A bin's runs as a queue to step through, when the page said where to come back to. */
+const binQueue = (origin: QueueOrigin | undefined, runs: ReadonlyArray<BeltRun>) =>
+  origin === undefined
+    ? undefined
+    : runQueue(
+        origin,
+        runs.map((run) => ({ environmentId: run.environmentId, runId: run.id, title: run.title })),
+      );
+
 /** One run in a bin: its issue as a link to the run, the title, where and when, and the text below. */
 function BinRun({
   run,
   text,
   selectedId,
   nowMs,
+  queue,
 }: {
   run: BeltRun;
   text: string | null;
   selectedId: EnvironmentId;
   nowMs: number;
+  queue: RunQueue | undefined;
 }) {
   const repo = parseRunId(run.id)?.repo;
   return (
@@ -148,7 +160,9 @@ function BinRun({
           className="font-mono font-semibold"
           render={
             <Link
+              data-run-link={runLinkKey(run.environmentId, run.id)}
               params={{ environmentId: run.environmentId, runId: run.id }}
+              state={queue ? { factoryRunQueue: queue } : {}}
               to="/factory/$environmentId/$runId"
             />
           }
@@ -181,12 +195,19 @@ function StuckCauses({
   runs,
   selectedId,
   nowMs,
+  origin,
 }: {
   runs: ReadonlyArray<BeltRun>;
   selectedId: EnvironmentId;
   nowMs: number;
+  origin: QueueOrigin | undefined;
 }) {
   const causes = stuckCauses(runs);
+  // Stepping from a stuck run goes cause by cause, as the folds read.
+  const queue = binQueue(
+    origin,
+    causes.flatMap(({ entries }) => entries.map(({ run }) => run)),
+  );
   return (
     <div className="flex max-h-96 flex-col divide-y overflow-y-auto">
       {causes.map(({ cause, entries }) => (
@@ -209,6 +230,7 @@ function StuckCauses({
                 <BinRun
                   key={run.key}
                   nowMs={nowMs}
+                  queue={queue}
                   run={run}
                   selectedId={selectedId}
                   text={detail}
@@ -236,6 +258,7 @@ function Bin({
   known,
   selectedId,
   nowMs,
+  origin,
 }: {
   name: string;
   station: "stuck" | "info";
@@ -244,7 +267,9 @@ function Bin({
   known: boolean;
   selectedId: EnvironmentId;
   nowMs: number;
+  origin: QueueOrigin | undefined;
 }) {
+  const queue = station === "info" ? binQueue(origin, runs) : undefined;
   return (
     <section
       aria-label={name}
@@ -264,13 +289,14 @@ function Bin({
       ) : runs.length === 0 ? (
         <p className="text-sm text-muted-foreground">{empty}</p>
       ) : station === "stuck" ? (
-        <StuckCauses nowMs={nowMs} runs={runs} selectedId={selectedId} />
+        <StuckCauses nowMs={nowMs} origin={origin} runs={runs} selectedId={selectedId} />
       ) : (
         <ul className="flex max-h-72 flex-col divide-y overflow-y-auto">
           {runs.map((run) => (
             <BinRun
               key={run.key}
               nowMs={nowMs}
+              queue={queue}
               run={run}
               selectedId={selectedId}
               text={run.reason}
@@ -295,6 +321,7 @@ export function BeltLowerRow({
   showEnvironment,
   nowMs,
   onDismiss,
+  origin,
 }: {
   attention: ReadonlyArray<EnvironmentAttention>;
   /** Whether the recent runs lists the bins are made from have all answered. */
@@ -305,6 +332,7 @@ export function BeltLowerRow({
   showEnvironment: boolean;
   nowMs: number;
   onDismiss: (items: ReadonlyArray<EnvironmentAttention>) => void;
+  origin?: QueueOrigin | undefined;
 }) {
   return (
     <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,18rem),1fr))] items-start gap-4">
@@ -320,6 +348,7 @@ export function BeltLowerRow({
         name="Needs info"
         runs={needsInfo}
         nowMs={nowMs}
+        origin={origin}
         selectedId={selectedId}
         station="info"
       />
@@ -329,6 +358,7 @@ export function BeltLowerRow({
         name="Stuck"
         runs={stuck}
         nowMs={nowMs}
+        origin={origin}
         selectedId={selectedId}
         station="stuck"
       />

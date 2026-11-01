@@ -20,6 +20,8 @@ const state = vi.hoisted(() => ({
   search: {} as Record<string, string>,
   listeners: new Set<() => void>(),
   navigations: [] as Array<{ to: string; search: Record<string, string>; replace?: boolean }>,
+  // The history state the page was opened with: a run page coming back sets `factoryReturn`.
+  history: {} as Record<string, unknown>,
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
@@ -28,12 +30,16 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
     to,
     params,
     search,
+    state: linkState,
     children,
+    "data-run-link": runLink,
   }: {
     to: string;
     params?: Record<string, string>;
     search?: Record<string, string>;
+    state?: Record<string, unknown>;
     children?: ReactNode;
+    "data-run-link"?: string;
   }) =>
     createElement(
       "a",
@@ -41,9 +47,15 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
         "data-to": to,
         "data-params": JSON.stringify(params ?? {}),
         "data-search": JSON.stringify(search ?? {}),
+        "data-state": JSON.stringify(linkState ?? {}),
+        "data-run-link": runLink,
+        // A real link has an href, which makes it focusable.
+        tabIndex: 0,
       },
       children,
     ),
+  useRouterState: ({ select }: { select: (s: { location: { state: unknown } }) => unknown }) =>
+    select({ location: { state: state.history } }),
   useSearch: () =>
     useSyncExternalStore(
       (listener) => {
@@ -162,6 +174,7 @@ function setup(): Disposable {
   state.listed = true;
   state.search = {};
   state.navigations = [];
+  state.history = {};
   return {
     [Symbol.dispose]() {
       __setFactoryApiForTests();
@@ -1371,5 +1384,79 @@ describe("FactoryPage filters", () => {
     expect(
       both.all('[role="combobox"]').map((select) => select.getAttribute("aria-label")),
     ).toEqual(["Environment"]);
+  });
+});
+
+describe("FactoryPage from the keyboard", () => {
+  const RUNS = [
+    runRow({ id: "acme__w__7__1", state: "stuck", finished: true, title: "Export CSV" }),
+    runRow({ title: "Claim guard" }),
+    runRow({
+      id: "acme__w__8__1",
+      started_ts: "2026-10-16T10:00:00.000Z",
+      state: "stuck",
+      finished: true,
+      title: "Sign PDF",
+    }),
+  ];
+  const ledgerLinks = () =>
+    Array.from(document.querySelectorAll<HTMLElement>("[data-ledger] [data-run-link]"));
+  const focused = () => (document.activeElement as HTMLElement | null)?.dataset.runLink;
+
+  it("gives each run the list as shown, with the page's filters and search", async () => {
+    using _state = setup();
+    state.runs = resource({ data: { runs: RUNS } });
+    state.search = { runs: "attention" };
+    await using _page = await render(createElement(FactoryPage));
+    await userEvent.type(browser.getByRole("searchbox", { name: "Search runs" }), "acme");
+    const queues = ledgerLinks().map((a) => JSON.parse(a.dataset.state!).factoryRunQueue);
+    expect(queues).toHaveLength(2);
+    expect(queues[0]).toEqual({
+      search: { runs: "attention" },
+      query: "acme",
+      runs: [
+        { environmentId: "env-2", runId: "acme__w__7__1", title: "Export CSV" },
+        { environmentId: "env-2", runId: "acme__w__8__1", title: "Sign PDF" },
+      ],
+    });
+    expect(queues[1]).toEqual(queues[0]);
+  });
+
+  it("steps the focus through the runs with j and k, and / goes to the search and Escape leaves it", async () => {
+    using _state = setup();
+    state.runs = resource({ data: { runs: RUNS } });
+    await using _page = await render(createElement(FactoryPage));
+    const keys = ledgerLinks().map((a) => a.dataset.runLink);
+    await userEvent.keyboard("j");
+    expect(focused()).toBe(keys[0]);
+    await userEvent.keyboard("jj");
+    expect(focused()).toBe(keys[2]);
+    await userEvent.keyboard("j");
+    expect(focused()).toBe(keys[2]);
+    await userEvent.keyboard("k");
+    expect(focused()).toBe(keys[1]);
+    await userEvent.keyboard("/");
+    const search = browser.getByRole("searchbox", { name: "Search runs" }).element();
+    expect(document.activeElement).toBe(search);
+    // The "/" that moved the focus was not typed into the box.
+    await userEvent.keyboard("sign");
+    expect((search as HTMLInputElement).value).toBe("sign");
+    await userEvent.keyboard("{Escape}");
+    expect((search as HTMLInputElement).value).toBe("");
+    expect(document.activeElement).toBe(search);
+    await userEvent.keyboard("{Escape}j");
+    expect(focused()).toBe(keys[0]);
+  });
+
+  it("coming back from a run, keeps the search typed before and focuses that run", async () => {
+    using _state = setup();
+    state.runs = resource({ data: { runs: RUNS } });
+    state.history = { factoryReturn: { query: "pdf", focus: "env-2 acme__w__8__1" } };
+    await using _page = await render(createElement(FactoryPage));
+    const search = browser.getByRole("searchbox", { name: "Search runs" }).element();
+    expect((search as HTMLInputElement).value).toBe("pdf");
+    expect(ledgerLinks()).toHaveLength(1);
+    expect(focused()).toBe("env-2 acme__w__8__1");
+    expect(document.activeElement?.closest("[data-ledger]")).not.toBeNull();
   });
 });

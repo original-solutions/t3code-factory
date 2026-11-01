@@ -39,6 +39,9 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
   // The page's filters read the URL; these tests open it unfiltered and never change them.
   useSearch: () => ({}),
   useNavigate: () => () => Promise.resolve(),
+  // Opened directly: no list to step through, nothing to come back to.
+  useRouterState: ({ select }: { select: (s: { location: { state: object } }) => unknown }) =>
+    select({ location: { state: {} } }),
 }));
 
 import { FactoryNavIcon } from "./FactoryNavIcon";

@@ -1,12 +1,14 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { Link } from "@tanstack/react-router";
-import { ChevronRightIcon } from "lucide-react";
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
+import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useMediaQuery } from "~/hooks/useMediaQuery";
+import { cn } from "~/lib/utils";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "~/components/ui/collapsible";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import {
   Table,
   TableBody,
@@ -37,6 +39,13 @@ import {
   whyStopped,
 } from "./format";
 import { Ref } from "./Ref";
+import {
+  runLinkKey,
+  stepInQueue,
+  useFactoryKeys,
+  type QueuedRun,
+  type QueueStep,
+} from "./runQueue";
 import { RunTimeline } from "./RunTimeline";
 import { TouchLink } from "./TouchLink";
 import { useFactoryEnvironmentLabel, useFactoryRun } from "./useFactoryData";
@@ -193,6 +202,42 @@ function Ledger({
   );
 }
 
+/** Up and down the list the run was opened from, with where this run sits in it. */
+function QueueStepper({ step, onGo }: { step: QueueStep; onGo: (run: QueuedRun) => void }) {
+  return (
+    <div className="ml-auto flex shrink-0 items-center gap-1" role="group" aria-label="Runs list">
+      <Button
+        aria-keyshortcuts="k"
+        aria-label="Previous run"
+        disabled={step.previous === null}
+        onClick={() => step.previous && onGo(step.previous)}
+        size="icon-sm"
+        title="Previous run (k)"
+        variant="ghost"
+      >
+        <ChevronUpIcon />
+      </Button>
+      <span className="font-mono text-xs text-muted-foreground tabular-nums">
+        {step.position}
+        <span className="max-sm:hidden"> of </span>
+        <span className="sm:hidden">/</span>
+        {step.total}
+      </span>
+      <Button
+        aria-keyshortcuts="j"
+        aria-label="Next run"
+        disabled={step.next === null}
+        onClick={() => step.next && onGo(step.next)}
+        size="icon-sm"
+        title="Next run (j)"
+        variant="ghost"
+      >
+        <ChevronDownIcon />
+      </Button>
+    </div>
+  );
+}
+
 export function FactoryRunPage({
   environmentId,
   runId,
@@ -204,6 +249,32 @@ export function FactoryRunPage({
   const label = useFactoryEnvironmentLabel(environmentId);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const navigate = useNavigate();
+  // The list this run was opened from, if any: the header steps through it and goes back to it.
+  const queue = useRouterState({ select: ({ location }) => location.state.factoryRunQueue });
+  const queued = stepInQueue(queue, environmentId, runId);
+  const backSearch = queue?.search ?? {};
+  const backState = queue
+    ? { factoryReturn: { query: queue.query, focus: runLinkKey(environmentId, runId) } }
+    : {};
+  // Replacing, so the browser's Back still leaves the run pages for the list in one step.
+  const go = (next: QueuedRun) =>
+    void navigate({
+      to: "/factory/$environmentId/$runId",
+      params: { environmentId: next.environmentId, runId: next.runId },
+      state: queue ? { factoryRunQueue: queue } : {},
+      replace: true,
+    });
+  useFactoryKeys((key) => {
+    if (key === "back") {
+      void navigate({ to: "/factory", search: backSearch, state: backState });
+      return true;
+    }
+    const target = key === "next" ? queued?.next : key === "previous" ? queued?.previous : null;
+    if (!target) return false;
+    go(target);
+    return true;
+  });
 
   const stop = async () => {
     setBusy(true);
@@ -294,11 +365,35 @@ export function FactoryRunPage({
     <FactoryFrame
       header={
         <div className="flex min-w-0 flex-1 items-center gap-3">
-          <TouchLink render={<Link to="/factory" />} tone="muted">
+          <TouchLink
+            aria-keyshortcuts="Escape"
+            render={<Link search={backSearch} state={backState} to="/factory" />}
+            tone="muted"
+          >
             Back
           </TouchLink>
-          <h1 className="min-w-0 truncate font-mono text-sm font-medium">{runId}</h1>
-          <span className="min-w-0 shrink-0 truncate text-sm text-muted-foreground">{label}</span>
+          {queued?.title ? (
+            <Tooltip>
+              <TooltipTrigger render={<h1 className="min-w-0 truncate text-sm font-medium" />}>
+                {queued.title}
+              </TooltipTrigger>
+              <TooltipPopup side="bottom">
+                <span className="font-mono">{runId}</span>
+              </TooltipPopup>
+            </Tooltip>
+          ) : (
+            <h1 className="min-w-0 truncate font-mono text-sm font-medium">{runId}</h1>
+          )}
+          {/* On a phone the stepper takes the label's room; the run's own row still says where. */}
+          <span
+            className={cn(
+              "min-w-0 shrink-0 truncate text-sm text-muted-foreground",
+              queued && "max-sm:hidden",
+            )}
+          >
+            {label}
+          </span>
+          {queued ? <QueueStepper onGo={go} step={queued} /> : null}
         </div>
       }
     >

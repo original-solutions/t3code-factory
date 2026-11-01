@@ -1,5 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useNavigate, useSearch } from "@tanstack/react-router";
+import { useNavigate, useRouterState, useSearch } from "@tanstack/react-router";
 import { useState } from "react";
 
 import {
@@ -107,8 +107,10 @@ export function FactoryPage() {
   const [note, setNote] = useState<string | null>(null);
   // The attention items dismissed on this page, hidden before the server's next status says so.
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
+  // Coming back from a run page: the search typed before, and the run to focus.
+  const returned = useRouterState({ select: ({ location }) => location.state.factoryReturn });
   // Typed on this page only: the runs chip is in the URL, a half-typed search is not.
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(() => returned?.query ?? "");
 
   const togglePause = async ({ environmentId, status }: FactoryEnvironment) => {
     const paused = status.data?.paused_by_hand != null;
@@ -273,6 +275,7 @@ export function FactoryPage() {
           nowMs={nowMs}
           onDismiss={dismiss}
           onTogglePause={(environment) => void togglePause(environment)}
+          origin={{ search, query }}
           recent={recentById}
           showEnvironment={showEnvironment}
         />
@@ -307,7 +310,9 @@ export function FactoryPage() {
                 : undefined
             }
             onQuery={setQuery}
+            origin={{ search, query }}
             query={query}
+            returnFocus={returned?.focus}
             onShowAll={() => setAllRuns(true)}
             onShowRecent={() => setAllRuns(false)}
             partial={!allRuns}

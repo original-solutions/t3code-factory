@@ -1,10 +1,12 @@
 import { Link } from "@tanstack/react-router";
+import { useEffect, useRef, type RefObject } from "react";
 
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Empty, EmptyHeader, EmptyTitle } from "~/components/ui/empty";
 import { Input } from "~/components/ui/input";
+import { Kbd } from "~/components/ui/kbd";
 import {
   Table,
   TableBody,
@@ -29,6 +31,7 @@ import {
 } from "./format";
 import { Ref } from "./Ref";
 import { RUN_BUCKETS, groupByDay, type BucketCounts, type RunBucketFilter } from "./runLedger";
+import { runLinkKey, runQueue, useFactoryKeys, type QueueOrigin, type RunQueue } from "./runQueue";
 
 const startedMs = (run: FactoryRunRow) =>
   run.started_ts ? Date.parse(run.started_ts) : Number.NaN;
@@ -62,10 +65,12 @@ function RunCard({
   entry: { environmentId, label, run },
   showEnvironment,
   nowMs,
+  queue,
 }: {
   entry: EnvironmentRun;
   showEnvironment: boolean;
   nowMs: number;
+  queue: RunQueue;
 }) {
   const parsed = parseRunId(run.id);
   const issue = parsed ? issueRef(`${parsed.owner}/${parsed.repo}`, parsed.issue) : null;
@@ -73,8 +78,10 @@ function RunCard({
   return (
     <li className="flex flex-col rounded-lg border bg-card text-sm">
       <Link
-        className="flex min-h-11 flex-col gap-1 px-3 py-2"
+        className="flex min-h-11 flex-col gap-1 rounded-lg px-3 py-2 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+        data-run-link={runLinkKey(environmentId, run.id)}
         params={{ environmentId, runId: run.id }}
+        state={{ factoryRunQueue: queue }}
         to="/factory/$environmentId/$runId"
       >
         <span className="flex items-start justify-between gap-2">
@@ -109,12 +116,14 @@ function LedgerToolbar({
   onBucket,
   query,
   onQuery,
+  searchRef,
 }: {
   counts: BucketCounts;
   bucket: RunBucketFilter | null;
   onBucket: (bucket: RunBucketFilter | null) => void;
   query: string;
   onQuery: (query: string) => void;
+  searchRef: RefObject<HTMLInputElement | null>;
 }) {
   // A chip with no runs is left out unless it is the one picked, so it can be unpicked.
   const chips = RUN_BUCKETS.filter(({ value }) => counts[value] > 0 || value === bucket);
@@ -143,9 +152,17 @@ function LedgerToolbar({
       </div>
       <div className="w-full sm:ml-auto sm:w-64">
         <Input
+          aria-keyshortcuts="/"
           aria-label="Search runs"
           onChange={(event) => onQuery(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            // Escape clears a search, then leaves the box so j and k step the runs again.
+            if (query !== "") onQuery("");
+            else event.currentTarget.blur();
+          }}
           placeholder="Search title, repo or #issue"
+          ref={searchRef}
           size="sm"
           type="search"
           value={query}
@@ -154,6 +171,28 @@ function LedgerToolbar({
     </div>
   );
 }
+
+/** The keys the list answers to, said once above it where there is a keyboard. */
+function KeyHints() {
+  return (
+    <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground pointer-coarse:hidden">
+      <span>
+        <Kbd>j</Kbd> <Kbd>k</Kbd> step through runs
+      </span>
+      <span>
+        <Kbd>Enter</Kbd> open, where <Kbd>j</Kbd> <Kbd>k</Kbd> keep stepping and <Kbd>Esc</Kbd>{" "}
+        comes back
+      </span>
+      <span>
+        <Kbd>/</Kbd> search
+      </span>
+    </p>
+  );
+}
+
+/** The run links in `root`, in the order shown. */
+const runLinks = (root: HTMLElement | null) =>
+  Array.from(root?.querySelectorAll<HTMLElement>("[data-run-link]") ?? []);
 
 /**
  * The runs the server listed: by default every unfinished run and the finished ones of the last
@@ -173,6 +212,8 @@ export function RunsTable({
   onBucket,
   query,
   onQuery,
+  origin,
+  returnFocus,
 }: {
   runs: ReadonlyArray<EnvironmentRun>;
   /** Whether several environments are listed, so a run says which one it is from. */
@@ -189,9 +230,49 @@ export function RunsTable({
   onBucket: (bucket: RunBucketFilter | null) => void;
   query: string;
   onQuery: (query: string) => void;
+  /** The page's filters, carried to a run so it can step through this list and come back to it. */
+  origin: QueueOrigin;
+  /** The run a run page came back from (`runLinkKey`): it takes the focus once, on mount. */
+  returnFocus?: string | undefined;
 }) {
   const cards = useMediaQuery("max-sm");
+  const ledger = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const sorted = [...runs].sort(newestFirst);
+  const queue = runQueue(
+    origin,
+    sorted.map(({ environmentId, run }) => ({
+      environmentId,
+      runId: run.id,
+      title: run.title ?? null,
+    })),
+  );
+
+  useFactoryKeys((key) => {
+    if (key === "search") {
+      searchRef.current?.focus();
+      return searchRef.current !== null;
+    }
+    if (key === "back") return false;
+    const links = runLinks(ledger.current);
+    const at = links.indexOf(document.activeElement as HTMLElement);
+    const target = at === -1 ? links[0] : links[key === "next" ? at + 1 : at - 1];
+    if (target === undefined) return false;
+    target.focus();
+    target.scrollIntoView({ block: "nearest" });
+    return true;
+  });
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves DOM focus to the run left
+  useEffect(() => {
+    if (returnFocus === undefined) return;
+    // The run may be in a bin above the list as well as in it; the list's own link wins.
+    const target =
+      runLinks(ledger.current).find((link) => link.dataset.runLink === returnFocus) ??
+      runLinks(document.body).find((link) => link.dataset.runLink === returnFocus);
+    target?.focus({ preventScroll: true });
+    target?.scrollIntoView({ block: "center" });
+  }, [returnFocus]);
   const days = groupByDay(sorted, (entry) => startedMs(entry.run), nowMs);
   const toolbar =
     counts.all > 0 || query !== "" || bucket !== null ? (
@@ -201,6 +282,7 @@ export function RunsTable({
         onBucket={onBucket}
         onQuery={onQuery}
         query={query}
+        searchRef={searchRef}
       />
     ) : null;
   const showAll = partial ? (
@@ -217,7 +299,7 @@ export function RunsTable({
   );
   if (runs.length === 0) {
     return (
-      <>
+      <div className="contents" data-ledger="" ref={ledger}>
         {toolbar}
         <Empty size="compact">
           <EmptyHeader>
@@ -240,13 +322,14 @@ export function RunsTable({
             showAll
           )}
         </Empty>
-      </>
+      </div>
     );
   }
   if (cards) {
     return (
-      <>
+      <div className="contents" data-ledger="" ref={ledger}>
         {toolbar}
+        <KeyHints />
         <ul className="flex flex-col gap-2" data-layout="cards">
           {days.map(({ label, items }) => [
             <li
@@ -261,19 +344,21 @@ export function RunsTable({
                 entry={entry}
                 key={`${entry.environmentId} ${entry.run.id}`}
                 nowMs={nowMs}
+                queue={queue}
                 showEnvironment={showEnvironment}
               />
             )),
           ])}
         </ul>
         {showAll}
-      </>
+      </div>
     );
   }
   const columns = showEnvironment ? 7 : 6;
   return (
-    <>
+    <div className="contents" data-ledger="" ref={ledger}>
       {toolbar}
+      <KeyHints />
       <Table>
         <TableHeader>
           <TableRow>
@@ -304,8 +389,10 @@ export function RunsTable({
                 <TableRow key={`${environmentId} ${run.id}`}>
                   <TableCell className="max-w-0 w-full">
                     <Link
-                      className="flex min-w-0 flex-col underline-offset-2 hover:underline"
+                      className="-mx-1 flex min-w-0 flex-col rounded-sm px-1 underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                      data-run-link={runLinkKey(environmentId, run.id)}
                       params={{ environmentId, runId: run.id }}
+                      state={{ factoryRunQueue: queue }}
                       to="/factory/$environmentId/$runId"
                     >
                       <span className="truncate font-medium">{run.title ?? repo ?? run.id}</span>
@@ -328,6 +415,6 @@ export function RunsTable({
         </TableBody>
       </Table>
       {showAll}
-    </>
+    </div>
   );
 }

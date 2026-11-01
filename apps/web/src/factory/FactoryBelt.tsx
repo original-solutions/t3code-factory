@@ -13,6 +13,7 @@ import { BeltDot } from "./BeltDot";
 import { BeltLowerRow, type EnvironmentAttention } from "./BeltLowerRow";
 import { useBeltMotion } from "./beltMotion";
 import { BeltRail } from "./BeltRail";
+import type { QueueOrigin } from "./runQueue";
 import { DeployBanner } from "./DeployBanner";
 import { FactoryReadFailure } from "./FactoryNotices";
 import { messageOf } from "./format";
@@ -271,6 +272,7 @@ export function FactoryBelt({
   attention,
   showEnvironment,
   onDismiss,
+  origin,
 }: {
   /** Every factory environment, the primary first. */
   environments: ReadonlyArray<FactoryEnvironment>;
@@ -287,6 +289,8 @@ export function FactoryBelt({
   attention: ReadonlyArray<EnvironmentAttention>;
   showEnvironment: boolean;
   onDismiss: (items: ReadonlyArray<EnvironmentAttention>) => void;
+  /** The page's filters, so a bin's run can step through its bin and come back. */
+  origin?: QueueOrigin | undefined;
 }) {
   const [pickedId, setPickedId] = useState<EnvironmentId | null>(null);
   // The open post: undefined until the rail first has something to look at, then the user's.
@@ -455,6 +459,7 @@ export function FactoryBelt({
         needsInfo={shown.info}
         nowMs={nowMs}
         onDismiss={onDismiss}
+        origin={origin}
         selectedId={selected.environmentId}
         showEnvironment={showEnvironment}
         stuck={shown.stuck}

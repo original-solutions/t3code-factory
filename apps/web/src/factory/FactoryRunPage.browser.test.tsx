@@ -1,25 +1,52 @@
 import { createElement, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import { userEvent } from "vite-plus/test/browser";
+
 import { act } from "../../test/render";
 import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
 import type { FactoryResource } from "./useFactoryData";
 import { render, renderAt } from "./testing";
 
-const state = vi.hoisted(() => ({ run: null as unknown, environmentId: "env-1" as string }));
+const state = vi.hoisted(() => ({
+  run: null as unknown,
+  environmentId: "env-1" as string,
+  // The history state the run page was opened with, and where it navigated since.
+  history: {} as Record<string, unknown>,
+  navigations: [] as Array<Record<string, unknown>>,
+}));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tanstack/react-router")>()),
   Link: ({
     to,
     params,
+    search,
+    state: linkState,
     children,
   }: {
     to: string;
     params?: Record<string, string>;
+    search?: Record<string, string>;
+    state?: Record<string, unknown>;
     children?: ReactNode;
   }) =>
-    createElement("a", { "data-to": to, "data-params": JSON.stringify(params ?? {}) }, children),
+    createElement(
+      "a",
+      {
+        "data-to": to,
+        "data-params": JSON.stringify(params ?? {}),
+        "data-search": JSON.stringify(search ?? {}),
+        "data-state": JSON.stringify(linkState ?? {}),
+      },
+      children,
+    ),
+  useRouterState: ({ select }: { select: (s: { location: { state: unknown } }) => unknown }) =>
+    select({ location: { state: state.history } }),
+  useNavigate: () => (options: Record<string, unknown>) => {
+    state.navigations.push(options);
+    return Promise.resolve();
+  },
 }));
 vi.mock("./useFactoryData", () => ({
   useFactoryRun: () => state.run,
@@ -95,6 +122,8 @@ const openLedger = (page: Page) =>
 function setup(): Disposable {
   state.environmentId = "env-1";
   state.run = resource({ data: detail() });
+  state.history = {};
+  state.navigations = [];
   return { [Symbol.dispose]: () => __setFactoryApiForTests() };
 }
 
@@ -391,5 +420,81 @@ describe.each([
     const lists = page.all("ul").filter((ul) => ul.getAttribute("data-layout") === "list");
     expect(lists).toHaveLength(narrow ? 2 : 0);
     await page.unmount();
+  });
+});
+
+describe("FactoryRunPage opened from a list", () => {
+  const queue = {
+    search: { runs: "attention", repo: "original-solutions/t3code-factory" },
+    query: "sync",
+    runs: [
+      { environmentId: "env-2", runId: "before__x__1__1", title: "The one before" },
+      { environmentId: "env-1", runId: RUN_ID, title: "Sync fails checks" },
+      { environmentId: "env-1", runId: "after__x__2__1", title: null },
+    ],
+  };
+  const stepper = (page: Page) => page.all('[role="group"][aria-label="Runs list"]')[0];
+
+  it("titles the page with the run's title and says where it sits in the list", async () => {
+    using _state = setup();
+    state.history = { factoryRunQueue: queue };
+    await using page = await mount();
+    expect(page.all("h1")[0]!.textContent).toBe("Sync fails checks");
+    expect(stepper(page)?.textContent).toContain("2");
+    expect(stepper(page)?.textContent).toContain("3");
+    const back = page.all('a[data-to="/factory"]')[0]!;
+    expect(JSON.parse(back.dataset.search!)).toEqual(queue.search);
+    expect(JSON.parse(back.dataset.state!)).toEqual({
+      factoryReturn: { query: "sync", focus: `env-1 ${RUN_ID}` },
+    });
+  });
+
+  it("steps with j and k, replacing the entry and keeping the list, and goes back with Escape", async () => {
+    using _state = setup();
+    state.history = { factoryRunQueue: queue };
+    await using _page = await mount();
+    await userEvent.keyboard("j");
+    await userEvent.keyboard("k");
+    await userEvent.keyboard("{Escape}");
+    expect(state.navigations).toEqual([
+      {
+        to: "/factory/$environmentId/$runId",
+        params: { environmentId: "env-1", runId: "after__x__2__1" },
+        state: { factoryRunQueue: queue },
+        replace: true,
+      },
+      {
+        to: "/factory/$environmentId/$runId",
+        params: { environmentId: "env-2", runId: "before__x__1__1" },
+        state: { factoryRunQueue: queue },
+        replace: true,
+      },
+      {
+        to: "/factory",
+        search: queue.search,
+        state: { factoryReturn: { query: "sync", focus: `env-1 ${RUN_ID}` } },
+      },
+    ]);
+  });
+
+  it("stops at the ends of the list", async () => {
+    using _state = setup();
+    state.history = { factoryRunQueue: { ...queue, runs: queue.runs.slice(1, 2) } };
+    await using page = await mount();
+    const button = (label: string) =>
+      page.all("button").find((b) => b.getAttribute("aria-label") === label)!;
+    expect(button("Previous run").disabled).toBe(true);
+    expect(button("Next run").disabled).toBe(true);
+    await userEvent.keyboard("jk");
+    expect(state.navigations).toEqual([]);
+  });
+
+  it("has no stepper and goes back to the whole list when opened from no list", async () => {
+    using _state = setup();
+    await using page = await mount();
+    expect(stepper(page)).toBeUndefined();
+    expect(page.all("h1")[0]!.textContent).toBe(RUN_ID);
+    await userEvent.keyboard("j{Escape}");
+    expect(state.navigations).toEqual([{ to: "/factory", search: {}, state: {} }]);
   });
 });
