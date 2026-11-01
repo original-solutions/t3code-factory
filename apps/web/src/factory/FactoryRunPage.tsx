@@ -5,7 +5,6 @@ import { useState } from "react";
 
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { cn } from "~/lib/utils";
-import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "~/components/ui/collapsible";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -26,6 +25,7 @@ import { FactoryError, FactoryLoading, FactoryReadFailure } from "./FactoryNotic
 import {
   currentStep,
   issueRef,
+  issueTitleOf,
   labelForState,
   parseRunId,
   prEndOf,
@@ -33,7 +33,6 @@ import {
   runIsFinished,
   runState,
   shownState,
-  stateBadgeVariant,
   threadIdOf,
 } from "./format";
 import {
@@ -48,6 +47,9 @@ import { GateOutput } from "./GateOutput";
 import { RunNextStep } from "./RunNextStep";
 import { RunReportCard } from "./RunReportCard";
 import { RunTimeline } from "./RunTimeline";
+import { RunTrackLine } from "./RunTrackLine";
+import { runTrack, stateMark } from "./runTrack";
+import { StateChip } from "./StateChip";
 import { RunActions, useRunStop } from "./RunActionBar";
 import { runActions } from "./runActions";
 import { TouchLink } from "./TouchLink";
@@ -234,6 +236,9 @@ export function FactoryRunPage({
   const parsed = parseRunId(runId);
   const issue = parsed ? issueRef(`${parsed.owner}/${parsed.repo}`, parsed.issue) : null;
   const next = nextStep(entries);
+  const title = queued?.title ?? issueTitleOf(entries);
+  const track = runTrack(entries);
+  const { station } = stateMark(shown);
   // The Next step card is this page's own; every other action shows as it does on the belt and list.
   const actions = runActions({
     id: runId,
@@ -274,10 +279,32 @@ export function FactoryRunPage({
             verb="refresh"
           />
         ) : null}
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-          <Badge variant={stateBadgeVariant(shown)}>{labelForState(shown)}</Badge>
-          <span className="min-w-0 break-words text-muted-foreground">Step: {step ?? "-"}</span>
-          <span className="ml-auto">
+        <section
+          aria-label="Run"
+          className={cn(
+            "flex flex-col gap-4 rounded-xl border bg-card px-4 py-3.5",
+            station !== null && "border-t-3 border-t-(--factory-station)",
+          )}
+          data-station={station ?? undefined}
+        >
+          <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
+            <div className="flex min-w-0 flex-1 basis-72 flex-col gap-1.5">
+              {parsed ? (
+                <p className="min-w-0 truncate text-xs text-muted-foreground">
+                  {parsed.owner}/{parsed.repo}
+                  <span className="ml-1.5 font-mono font-medium text-foreground">
+                    #{parsed.issue}
+                  </span>
+                  {parsed.attempt > 1 ? ` · attempt ${parsed.attempt}` : null}
+                </p>
+              ) : null}
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                <StateChip state={shown} />
+                <span className="min-w-0 break-words text-muted-foreground">
+                  Step: {step ?? "-"}
+                </span>
+              </div>
+            </div>
             <RunActions
               actions={actions}
               environmentId={environmentId}
@@ -286,8 +313,9 @@ export function FactoryRunPage({
               stop={stopOf(environmentId, runId, issue?.text ?? runId)}
               touch
             />
-          </span>
-        </div>
+          </div>
+          <RunTrackLine track={track} />
+        </section>
         {note ? (
           <p className="break-words text-sm text-muted-foreground" role="status">
             {note}
@@ -328,10 +356,10 @@ export function FactoryRunPage({
           >
             Back
           </TouchLink>
-          {queued?.title ? (
+          {title ? (
             <Tooltip>
               <TooltipTrigger render={<h1 className="min-w-0 truncate text-sm font-medium" />}>
-                {queued.title}
+                {title}
               </TooltipTrigger>
               <TooltipPopup side="bottom">
                 <span className="font-mono">{runId}</span>

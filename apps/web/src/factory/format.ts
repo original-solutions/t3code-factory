@@ -58,16 +58,23 @@ export function currentStep(entries: ReadonlyArray<FactoryEntry>): string | null
   return null;
 }
 
-/** The `thread_id` of the last `session_launched` entry that has one. */
-export function threadIdOf(entries: ReadonlyArray<FactoryEntry>): string | null {
+/** A field of the last `session_launched` entry that has it. */
+function launchField(entries: ReadonlyArray<FactoryEntry>, key: string): string | null {
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
     if (entry.event !== "session_launched") continue;
-    const id = textField(entry.data, "thread_id");
-    if (id !== null) return id;
+    const value = textField(entry.data, key);
+    if (value !== null) return value;
   }
   return null;
 }
+
+/** The `thread_id` of the last `session_launched` entry that has one. */
+export const threadIdOf = (entries: ReadonlyArray<FactoryEntry>) =>
+  launchField(entries, "thread_id");
+
+/** The issue title a launch recorded; untrusted text. */
+export const issueTitleOf = (entries: ReadonlyArray<FactoryEntry>) => launchField(entries, "title");
 
 export interface GateCommand {
   readonly command: string;
@@ -132,23 +139,6 @@ export function formatAge(sinceMs: number, nowMs: number): string {
 
 export function labelForState(state: string | null): string {
   return state ?? "unknown";
-}
-
-export type StateBadgeVariant = "info" | "success" | "error" | "warning" | "secondary";
-
-export function stateBadgeVariant(state: string | null): StateBadgeVariant {
-  switch (state) {
-    case "building":
-      return "info";
-    case "pr-open":
-      return "success";
-    case "stuck":
-      return "error";
-    case "needs-info":
-      return "warning";
-    default:
-      return "secondary";
-  }
 }
 
 /** The `to` of the last `state_changed` entry. */

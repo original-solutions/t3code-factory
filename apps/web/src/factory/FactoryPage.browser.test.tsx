@@ -502,9 +502,9 @@ describe("FactoryPage", () => {
         .all("tr")
         .find((row) => row.textContent?.includes(repo))
         ?.querySelector('[data-slot="badge"]')?.textContent;
-    expect(badgeOf("acme/merged")).toBe("merged");
-    expect(badgeOf("acme/closed")).toBe("closed");
-    expect(badgeOf("acme/older")).toBe("pr-open");
+    expect(badgeOf("acme/merged")).toBe("Merged");
+    expect(badgeOf("acme/closed")).toBe("Closed");
+    expect(badgeOf("acme/older")).toBe("PR open");
   });
 
   it("marks an unreadable run", async () => {
@@ -939,7 +939,7 @@ describe("FactoryPage run cards at 375 px", () => {
           !a.closest('[aria-label="Today"]'),
       );
     expect(link).toBeDefined();
-    expect(link!.textContent).toContain("building");
+    expect(link!.textContent).toContain("Building");
     const text = link!.closest("li")!.textContent ?? "";
     for (const part of ["t3code-factory", "launch-sending", "2h"]) {
       expect(text).toContain(part);

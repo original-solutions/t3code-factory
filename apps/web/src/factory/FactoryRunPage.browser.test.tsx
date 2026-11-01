@@ -196,7 +196,7 @@ describe("FactoryRunPage", () => {
     await using page = await mount();
     const text = page.text();
     expect(text).toContain(RUN_ID);
-    expect(text).toContain("building");
+    expect(text).toContain("Building");
     expect(text).toContain("gate-checking");
     const thread = page
       .all("a")
@@ -437,7 +437,7 @@ describe("FactoryRunPage", () => {
       ]),
     });
     await using page = await mount();
-    expect(page.all('[data-slot="badge"]')[0]?.textContent).toBe("closed");
+    expect(page.all('[data-slot="badge"]')[0]?.textContent).toBe("Closed");
     expect(page.text()).toContain("Step: finished");
     expect(page.text()).not.toContain("Step: pr-watching");
   });

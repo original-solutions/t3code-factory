@@ -5,6 +5,7 @@ import {
   currentStep,
   formatAge,
   issueRef,
+  issueTitleOf,
   labelForState,
   lastGateOutput,
   parseRunId,
@@ -14,7 +15,6 @@ import {
   runIsFinished,
   runState,
   shownState,
-  stateBadgeVariant,
   threadIdOf,
 } from "./format";
 
@@ -102,6 +102,8 @@ describe("threadIdOf", () => {
   it("is null when no session was launched", () => {
     expect(threadIdOf([entry("claimed", {})])).toBeNull();
     expect(threadIdOf([entry("session_launched", {})])).toBeNull();
+    expect(issueTitleOf([entry("session_launched", { title: "feat: x" })])).toBe("feat: x");
+    expect(issueTitleOf([entry("session_launched", { thread_id: "t-1" })])).toBeNull();
   });
 });
 
@@ -169,19 +171,10 @@ describe("formatAge", () => {
   });
 });
 
-describe("labelForState and stateBadgeVariant", () => {
+describe("labelForState", () => {
   it("labels known states and falls back for others", () => {
     expect(labelForState("pr-open")).toBe("pr-open");
     expect(labelForState(null)).toBe("unknown");
-  });
-
-  it("picks a badge variant per state", () => {
-    expect(stateBadgeVariant("building")).toBe("info");
-    expect(stateBadgeVariant("pr-open")).toBe("success");
-    expect(stateBadgeVariant("stuck")).toBe("error");
-    expect(stateBadgeVariant("needs-info")).toBe("warning");
-    expect(stateBadgeVariant("triage")).toBe("secondary");
-    expect(stateBadgeVariant(null)).toBe("secondary");
   });
 });
 
@@ -209,7 +202,6 @@ describe("shownState and prEndOf", () => {
     expect(shownState("building", "closed")).toBe("closed");
     expect(shownState("pr-open", null)).toBe("pr-open");
     expect(shownState("stuck", undefined)).toBe("stuck");
-    expect(stateBadgeVariant(shownState("pr-open", "merged"))).toBe("secondary");
   });
 
   it("reads the pull request's end from the finished entry", () => {

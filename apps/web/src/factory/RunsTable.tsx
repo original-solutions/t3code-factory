@@ -22,18 +22,11 @@ import { cn } from "~/lib/utils";
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import type { FactoryRunRow } from "./api";
-import {
-  formatAge,
-  issueRef,
-  labelForState,
-  parseRunId,
-  prRef,
-  shownState,
-  stateBadgeVariant,
-} from "./format";
+import { formatAge, issueRef, parseRunId, prRef, shownState } from "./format";
 import { issueOf, newestAttempts } from "./belt";
 import { JUMP_TARGET_CLASS, jumpTarget } from "./pageSections";
 import { Ref } from "./Ref";
+import { StateChip } from "./StateChip";
 import { RunActions, type RunStop } from "./RunActionBar";
 import { runActions, type RunActionKind } from "./runActions";
 import {
@@ -66,8 +59,7 @@ const newestFirst = (a: EnvironmentRun, b: EnvironmentRun) => {
 
 const stateBadge = (run: FactoryRunRow) => {
   if (run.unreadable) return <Badge variant="error">unreadable</Badge>;
-  const state = shownState(run.state, run.pr_end);
-  return <Badge variant={stateBadgeVariant(state)}>{labelForState(state)}</Badge>;
+  return <StateChip state={shownState(run.state, run.pr_end)} />;
 };
 
 /**
