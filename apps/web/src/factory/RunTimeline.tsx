@@ -6,6 +6,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
 import type { FactoryEntry } from "./api";
+import { GateCommandChips } from "./GateOutput";
 import { Ref } from "./Ref";
 import { formatSpan, runStory, type StoryTone } from "./runStory";
 
@@ -104,27 +105,7 @@ export function RunTimeline({
                   </p>
                 ) : null}
                 {step.commands && step.commands.length > 0 ? (
-                  <div className="flex flex-wrap gap-1.5">
-                    {step.commands.map((command) => (
-                      <span
-                        className="inline-flex max-w-full items-center gap-1.5 rounded-md border bg-card px-2 py-0.5 font-mono text-xs"
-                        key={`${command.command} ${command.exit_code} ${command.duration_ms}`}
-                      >
-                        <span
-                          aria-hidden
-                          className={cn(
-                            "size-1.5 shrink-0 rounded-full",
-                            command.exit_code === 0 ? "bg-success" : "bg-destructive",
-                          )}
-                        />
-                        <span className="min-w-0 truncate">{command.command}</span>
-                        <span className="shrink-0 text-muted-foreground">
-                          {command.exit_code === 0 ? "" : `exit ${command.exit_code} · `}
-                          {formatSpan(command.duration_ms)}
-                        </span>
-                      </span>
-                    ))}
-                  </div>
+                  <GateCommandChips commands={step.commands} />
                 ) : null}
                 {step.threadId ? (
                   <span className="text-xs">

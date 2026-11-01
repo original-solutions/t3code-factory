@@ -25,7 +25,6 @@ import {
   currentStep,
   issueRef,
   labelForState,
-  lastGateOutput,
   parseRunId,
   prEndOf,
   prUrlOf,
@@ -43,7 +42,8 @@ import {
   type QueueStep,
 } from "./runQueue";
 import { nextStep } from "./nextStep";
-import { GATE_OUTPUT_ID, RunNextStep } from "./RunNextStep";
+import { GateOutput } from "./GateOutput";
+import { RunNextStep } from "./RunNextStep";
 import { RunTimeline } from "./RunTimeline";
 import { RunActions, useRunStop } from "./RunActionBar";
 import { runActions } from "./runActions";
@@ -59,68 +59,6 @@ function keyed<T>(items: ReadonlyArray<T>, base: (item: T) => string): Array<[st
     seen.set(name, n + 1);
     return [`${name}#${n}`, item];
   });
-}
-
-function GateOutput({ entries }: { entries: ReadonlyArray<FactoryEntry> }) {
-  const stacked = useMediaQuery("max-sm");
-  const gate = lastGateOutput(entries);
-  const empty = gate.commands.length === 0 && gate.message === null;
-  return (
-    <section className="flex scroll-mt-4 flex-col gap-2" id={GATE_OUTPUT_ID}>
-      <h2 className="text-sm font-medium">Last gate output</h2>
-      {empty ? <p className="text-sm text-muted-foreground">No gate has run</p> : null}
-      {gate.commands.length > 0 && stacked ? (
-        <ul className="flex flex-col gap-2" data-layout="list">
-          {keyed(gate.commands, (command) => command.command).map(([key, command]) => (
-            <li
-              className="flex flex-col gap-1 rounded-lg border bg-card px-3 py-2 text-sm"
-              key={key}
-            >
-              <span className="break-all font-mono text-xs">{command.command}</span>
-              <span className="flex items-center gap-3 text-xs text-muted-foreground">
-                <Badge variant={command.exit_code === 0 ? "success" : "error"}>
-                  {command.exit_code}
-                </Badge>
-                <span>{command.duration_ms} ms</span>
-              </span>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      {gate.commands.length > 0 && !stacked ? (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Command</TableHead>
-              <TableHead>Exit code</TableHead>
-              <TableHead>Duration (ms)</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {keyed(gate.commands, (command) => command.command).map(([key, command]) => (
-              <TableRow key={key}>
-                <TableCell>
-                  <span className="font-mono text-xs">{command.command}</span>
-                </TableCell>
-                <TableCell>
-                  <Badge variant={command.exit_code === 0 ? "success" : "error"}>
-                    {command.exit_code}
-                  </Badge>
-                </TableCell>
-                <TableCell>{command.duration_ms}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      ) : null}
-      {/* The session's own words: plain text in a pre, never markdown or HTML. */}
-      {gate.message !== null ? (
-        <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border bg-card p-3 font-mono text-xs">
-          {gate.message}
-        </pre>
-      ) : null}
-    </section>
-  );
 }
 
 function Ledger({

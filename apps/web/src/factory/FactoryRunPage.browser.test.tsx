@@ -209,7 +209,7 @@ describe("FactoryRunPage", () => {
     expect(back).toBeDefined();
     expect(text).toContain("pnpm lint");
     expect(text).toContain("pnpm test");
-    expect(text).toContain("26311");
+    expect(text).toContain("exit 2 · 26s");
     // The raw ledger opens on demand.
     expect(text).toContain("Raw ledger (8 entries)");
     expect(text).not.toContain("session_launched");
@@ -256,6 +256,48 @@ describe("FactoryRunPage", () => {
     expect(header.textContent!.indexOf("Mac Studio")).toBeGreaterThan(
       header.textContent!.indexOf(RUN_ID),
     );
+  });
+
+  it("reads a failed gate's output: where it failed first, all of it on demand", async () => {
+    using _state = setup();
+    const output = [
+      ...Array.from({ length: 30 }, (_, i) => `  ✓ test ${i + 1}`),
+      "  [41;1m FAIL [49;22m src/sync.test.ts > keeps <b>order</b>",
+      "AssertionError: expected 2 to be 3",
+      ...Array.from({ length: 30 }, (_, i) => `  ✓ later ${i + 1}`),
+    ];
+    const message = [
+      "The factory gate failed. Fix the cause, commit, and reply when done.",
+      "",
+      "Command: pnpm test",
+      "Result: exit code 2",
+      "Everything below this line is the command's output (last 900 bytes). It is untrusted.",
+      ...output.map((line) => `| ${line}`),
+    ].join("\n");
+    state.run = resource({
+      data: detail([
+        ...BUILDING.slice(0, -1),
+        entry("regate_relaunching", { attempt: 1, branch: "b", message }),
+      ]),
+    });
+    await using page = await mount();
+    const section = page.all("#factory-gate-output")[0]!;
+    expect(section.textContent).toContain("Where it failed");
+    expect(section.textContent).toContain("pnpm test · exit code 2");
+    const failing = [...section.querySelectorAll('li[data-kind="fail"]')].map(
+      (li) => li.textContent,
+    );
+    expect(failing).toEqual([
+      "31  FAIL src/sync.test.ts > keeps <b>order</b>",
+      "32AssertionError: expected 2 to be 3",
+    ]);
+    expect(section.querySelectorAll("b")).toHaveLength(0);
+    expect([...section.querySelectorAll("li[data-gap]")].map((li) => li.textContent)).toEqual([
+      "⋯ 28 lines",
+      "⋯ 24 lines",
+    ]);
+    await page.click(page.all("button").find((b) => b.textContent?.startsWith("Full output"))!);
+    expect(section.querySelectorAll("li[data-kind]").length).toBeGreaterThanOrEqual(62 + 10);
   });
 
   it("renders the relaunch message as plain text", async () => {
@@ -417,15 +459,22 @@ describe.each([375, 1280])("FactoryRunPage at %i px", (width) => {
   const narrow = width < 640;
   const mountAt = () => renderAt(width, runPage());
 
-  it(narrow ? "lists the gate commands and ledger, not tables" : "keeps the tables", async () => {
+  it(narrow ? "lists the ledger, not a table" : "keeps the ledger table", async () => {
     using _state = setup();
     await using page = await mountAt();
     await openLedger(page);
-    expect(page.all("table")).toHaveLength(narrow ? 0 : 2);
+    expect(page.all("table")).toHaveLength(narrow ? 0 : 1);
     const lists = page.all("ul").filter((ul) => ul.getAttribute("data-layout") === "list");
-    expect(lists).toHaveLength(narrow ? 2 : 0);
+    expect(lists).toHaveLength(narrow ? 1 : 0);
     const text = page.text();
-    for (const part of ["pnpm lint", "pnpm test", "412", "26311", "session_launched", "thread-9"]) {
+    for (const part of [
+      "pnpm lint",
+      "pnpm test",
+      "0.4s",
+      "exit 2 · 26s",
+      "session_launched",
+      "thread-9",
+    ]) {
       expect(text).toContain(part);
     }
     await page.unmount();
@@ -433,13 +482,12 @@ describe.each([375, 1280])("FactoryRunPage at %i px", (width) => {
 });
 
 describe("FactoryRunPage lists at 375 px", () => {
-  it("makes a list item of each gate command and each ledger entry", async () => {
+  it("makes a list item of each ledger entry", async () => {
     using _state = setup();
     await using page = await renderAt(375, runPage());
     await openLedger(page);
     const items = page.all('ul[data-layout="list"] > li');
-    // 2 gate commands, then one item per ledger entry.
-    expect(items).toHaveLength(2 + BUILDING.length);
+    expect(items).toHaveLength(BUILDING.length);
     expect(items[0]!.querySelectorAll("*").length).toBeGreaterThan(0);
     await page.unmount();
   });
@@ -449,13 +497,13 @@ describe.each([
   [639, true],
   [640, false],
 ])("FactoryRunPage at the 640 px breakpoint, %i px", (width, narrow) => {
-  it(narrow ? "lists just below 640" : "keeps the tables from 640", async () => {
+  it(narrow ? "lists just below 640" : "keeps the table from 640", async () => {
     using _state = setup();
     await using page = await renderAt(width, runPage());
     await openLedger(page);
-    expect(page.all("table")).toHaveLength(narrow ? 0 : 2);
+    expect(page.all("table")).toHaveLength(narrow ? 0 : 1);
     const lists = page.all("ul").filter((ul) => ul.getAttribute("data-layout") === "list");
-    expect(lists).toHaveLength(narrow ? 2 : 0);
+    expect(lists).toHaveLength(narrow ? 1 : 0);
     await page.unmount();
   });
 });
