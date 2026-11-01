@@ -13,7 +13,8 @@ export interface RunFacts {
 }
 
 export type RunAction =
-  | { readonly kind: "thread"; readonly threadId: string }
+  /** `live` while the run is unfinished: the link then says what its agent is doing. */
+  | { readonly kind: "thread"; readonly threadId: string; readonly live: boolean }
   /** The run stopped for a person: its page opens on what to do and how to start it again. */
   | { readonly kind: "next"; readonly tone: "stuck" | "info" }
   | { readonly kind: "issue"; readonly ref: LinkRef }
@@ -29,7 +30,8 @@ export type RunActionKind = RunAction["kind"];
  */
 export function runActions(run: RunFacts): ReadonlyArray<RunAction> {
   const actions: Array<RunAction> = [];
-  if (run.threadId !== null) actions.push({ kind: "thread", threadId: run.threadId });
+  if (run.threadId !== null)
+    actions.push({ kind: "thread", threadId: run.threadId, live: !run.finished });
   if (!run.superseded && run.state === "stuck") actions.push({ kind: "next", tone: "stuck" });
   if (!run.superseded && run.state === "needs-info") actions.push({ kind: "next", tone: "info" });
   const parsed = parseRunId(run.id);

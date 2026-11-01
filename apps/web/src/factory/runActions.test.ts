@@ -42,6 +42,15 @@ describe("runActions", () => {
     ).toEqual(["thread", "issue", "pr", "stop"]);
   });
 
+  it("shows the agent's state on the thread only while the run is unfinished", () => {
+    expect(runActions(run({ threadId: "t-1" }))[0]).toEqual({
+      kind: "thread",
+      threadId: "t-1",
+      live: true,
+    });
+    expect(runActions(run({ threadId: "t-1", finished: true }))[0]).toMatchObject({ live: false });
+  });
+
   it("points a run stopped for a person at its next step", () => {
     expect(runActions(run({ state: "stuck" }))).toContainEqual({ kind: "next", tone: "stuck" });
     expect(runActions(run({ state: "needs-info" }))).toContainEqual({ kind: "next", tone: "info" });

@@ -18,6 +18,7 @@ import {
   TableRow,
 } from "~/components/ui/table";
 
+import { RunAgentCard } from "./RunAgent";
 import { FactoryApiError, type FactoryEntry } from "./api";
 import { FactoryFrame } from "./FactoryFrame";
 import { FactoryError, FactoryLoading, FactoryReadFailure } from "./FactoryNotices";
@@ -291,6 +292,13 @@ export function FactoryRunPage({
             issue={issue}
             prUrl={prUrlOf(entries)}
             step={next}
+            threadId={threadId}
+          />
+        ) : null}
+        {threadId !== null && !runIsFinished(entries) ? (
+          <RunAgentCard
+            environmentId={environmentId}
+            stateLabel={labelForState(shown)}
             threadId={threadId}
           />
         ) : null}

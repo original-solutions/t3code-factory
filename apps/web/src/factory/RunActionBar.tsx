@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Button, InlineButton } from "~/components/ui/button";
 import { cn } from "~/lib/utils";
 
+import { AgentDot, useQuietRunAgent } from "./RunAgent";
 import { factoryApi } from "./api";
 import { messageOf } from "./format";
 import { Ref } from "./Ref";
@@ -47,17 +48,26 @@ export function RunActions({
     switch (action.kind) {
       case "thread":
         return [
-          <Inline
-            key="thread"
-            render={
-              <Link
-                params={{ environmentId, threadId: action.threadId }}
-                to="/$environmentId/$threadId"
-              />
-            }
-          >
-            Thread
-          </Inline>,
+          action.live ? (
+            <LiveThreadLink
+              environmentId={environmentId}
+              key="thread"
+              threadId={action.threadId}
+              touch={touch}
+            />
+          ) : (
+            <Inline
+              key="thread"
+              render={
+                <Link
+                  params={{ environmentId, threadId: action.threadId }}
+                  to="/$environmentId/$threadId"
+                />
+              }
+            >
+              Thread
+            </Inline>
+          ),
         ];
       case "next":
         return [
@@ -106,6 +116,34 @@ export function RunActions({
     >
       {items}
     </span>
+  );
+}
+
+/** An unfinished run's Thread link, with its agent's state beside it when this client holds it. */
+function LiveThreadLink({
+  environmentId,
+  threadId,
+  touch,
+}: {
+  environmentId: EnvironmentId;
+  threadId: string;
+  touch: boolean;
+}) {
+  const pulse = useQuietRunAgent(environmentId, threadId);
+  const Inline = touch ? TouchLink : InlineButton;
+  return (
+    <Inline
+      aria-label={pulse ? `Thread, agent ${pulse.word}` : undefined}
+      data-agent-tone={pulse?.tone}
+      render={<Link params={{ environmentId, threadId }} to="/$environmentId/$threadId" />}
+      title={pulse?.title}
+    >
+      <span className="inline-flex items-center gap-1.5">
+        {pulse ? <AgentDot tone={pulse.tone} /> : null}
+        Thread
+        {pulse ? <span className="font-normal text-muted-foreground">{pulse.word}</span> : null}
+      </span>
+    </Inline>
   );
 }
 
