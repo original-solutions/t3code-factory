@@ -42,7 +42,7 @@ const NOTE: Readonly<Record<Exclude<Station, "done">, string>> = {
 
 /**
  * Where each station sits on a wide belt: its own column, the post in the first row and the lane in
- * the second. Narrow, none of these apply and the posts, lanes and readout simply stack in order.
+ * the second. Narrow, none of these apply and each post and its lane fill one row, in order.
  * Written out so that Tailwind sees every class.
  */
 const PLACEMENT: Readonly<
@@ -105,7 +105,7 @@ function Post({
       aria-controls={open ? READOUT_ID : undefined}
       aria-expanded={open}
       className={cn(
-        "relative flex min-w-0 flex-col gap-1 rounded-lg border border-t-3 border-t-(--factory-station) bg-card px-3 py-2 text-left outline-none hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        "relative flex min-w-0 flex-col justify-center gap-1 rounded-lg @3xl:justify-start border border-t-3 border-t-(--factory-station) bg-card px-2.5 py-2 @3xl:px-3 text-left outline-none hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         PLACEMENT[station].post,
         open && "border-(--factory-station) bg-accent/30",
         dim && station !== "claimed" && "opacity-60 grayscale",
@@ -126,7 +126,10 @@ function Post({
           className={cn("size-3.5 shrink-0 text-muted-foreground", open && "rotate-180")}
         />
       </span>
-      {paused ? null : <span className="font-mono text-3xs text-muted-foreground">{tag}</span>}
+      {/* Narrow, a post shares its row with its lane, so only its name, count and a pause show. */}
+      {paused ? null : (
+        <span className="hidden font-mono text-3xs text-muted-foreground @3xl:block">{tag}</span>
+      )}
       {/* The pause note is not a Badge: a Badge never wraps, and the note takes two lines here. */}
       {note === "" ? null : (
         <span
@@ -134,7 +137,7 @@ function Post({
             "text-xs",
             paused
               ? "rounded-sm bg-warning/8 px-1.5 py-0.5 font-semibold text-warning-foreground dark:bg-warning/16"
-              : "text-muted-foreground",
+              : "hidden text-muted-foreground @3xl:block",
           )}
         >
           {note}
@@ -308,8 +311,7 @@ function DoneBin({ belt, known }: { belt: Belt; known: boolean }) {
 
 /**
  * Five posts, a lane of tiles under each, and the readout of the picked post. Wide, they are a grid
- * of five columns; narrow, the same elements in one column, each post followed by its lane and its
- * readout. The open post is the caller's, so the rail can come and go without losing it.
+ * of five columns; narrow, one row per post with its lane beside it, and the readout under the row. The open post is the caller's, so the rail can come and go without losing it.
  */
 export function BeltRail({
   belt,
@@ -347,7 +349,7 @@ export function BeltRail({
     return station === "done" ? "" : NOTE[station];
   };
   return (
-    <div className="grid grid-cols-1 gap-2 @3xl:grid-cols-(--factory-cols) @3xl:gap-y-0">
+    <div className="grid grid-cols-[10rem_minmax(0,1fr)] gap-2 @3xl:grid-cols-(--factory-cols) @3xl:gap-y-0">
       {STATIONS.map((station) => (
         <Fragment key={station}>
           <Post

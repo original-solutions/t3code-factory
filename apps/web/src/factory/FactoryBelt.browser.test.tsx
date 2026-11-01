@@ -1518,7 +1518,7 @@ describe("the belt's layout", () => {
     expect(moved.left + moved.width / 2).toBeLessThan(pr.right);
   });
 
-  it("stacks the posts at 390 px, each with its own tile row, and opens the readout under the tapped post", async () => {
+  it("gives each post one row at 390 px, its tiles beside it, and opens the readout under the tapped row", async () => {
     using _state = await setup(390);
     await using page = await render(createElement(FactoryBelt, twoEnvironments()));
     const names = ["claimed", "building", "gate", "pr", "done"];
@@ -1528,10 +1528,12 @@ describe("the belt's layout", () => {
     const lefts = names.map((name) => Math.round(station(page, name).getBoundingClientRect().left));
     expect(new Set(lefts).size).toBe(1);
     for (const name of names) {
-      const post = station(page, name);
-      expect(lane(page, name).getBoundingClientRect().top).toBeGreaterThanOrEqual(
-        post.getBoundingClientRect().bottom - 1,
-      );
+      const post = station(page, name).getBoundingClientRect();
+      const tiles = lane(page, name).getBoundingClientRect();
+      expect(Math.abs(tiles.top - post.top)).toBeLessThanOrEqual(1);
+      expect(tiles.left).toBeGreaterThanOrEqual(post.right);
+      // A row a phone takes in at a glance, not a post and a lane stacked per station.
+      expect(Math.max(post.height, tiles.height)).toBeLessThanOrEqual(80);
     }
     await page.click(station(page, "gate"));
     const post = station(page, "gate");

@@ -53,7 +53,7 @@ export function BeltReadout({
   return (
     <section
       aria-label={`${name} readout`}
-      className="relative mt-4 min-w-0 rounded-lg border border-(--factory-station) bg-card @3xl:col-span-5 @3xl:col-start-1 @3xl:row-start-3"
+      className="relative col-span-2 mt-2 min-w-0 rounded-lg border border-(--factory-station) bg-card @3xl:col-span-5 @3xl:mt-4 @3xl:col-start-1 @3xl:row-start-3"
       data-readout=""
       data-station={station}
       id={READOUT_ID}
