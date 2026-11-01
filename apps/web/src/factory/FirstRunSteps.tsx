@@ -4,7 +4,9 @@ import { CheckIcon, CopyIcon } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 
+import "./belt.css";
 import type { FirstRunConfig, firstRunSteps } from "./firstRun";
+import { withoutRepoPrefix } from "./format";
 import type { RepoBlock } from "./settings/api";
 import { Step } from "./settings/SetupStep";
 import { TouchLink } from "./TouchLink";
@@ -142,10 +144,14 @@ export function FirstRunSteps({
                   : `All ${repos.length} watched repos have an error, so nothing can be built yet.`}
               {onFactory ? null : " Each repo's errors are under Watched repos."}
             </p>
-            <p className="break-words rounded-md border border-destructive/24 bg-destructive/4 px-2.5 py-1.5 text-destructive-foreground">
-              <span className="line-clamp-3">
-                <span className="font-medium">{broken.title}:</span>{" "}
-                {broken.errors?.[0]?.message ?? ""}
+            <p className="flex min-w-0 gap-2 break-words">
+              <span
+                aria-hidden
+                className="mt-1.5 size-2 shrink-0 rounded-full bg-(--factory-stuck)"
+              />
+              <span className="line-clamp-3 min-w-0">
+                <span className="font-medium text-foreground">{broken.title}:</span>{" "}
+                {withoutRepoPrefix(broken.errors?.[0]?.message ?? "", broken.repo)}
               </span>
             </p>
             {onFactory ? SETTINGS : null}

@@ -12,6 +12,8 @@ import {
 } from "../../components/settings/settingsLayout";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../../components/ui/input-group";
+import { cn } from "../../lib/utils";
 import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
 import {
   fetchFactoryConfig,
@@ -47,23 +49,39 @@ const EMPTY_FORM: FormState = {
 const NUMBER_FIELDS: ReadonlyArray<{
   readonly key: Exclude<TuningKey, "gh_config_dir">;
   readonly description: string;
+  readonly unit: string;
 }> = [
-  { key: "poll_seconds", description: "How often the factory looks at GitHub." },
+  { key: "poll_seconds", unit: "s", description: "How often the factory looks at GitHub." },
   {
     key: "max_concurrent_runs",
+    unit: "runs",
     description: "Runs that may hold an issue at once, across every repo.",
   },
-  { key: "max_concurrent_gates", description: "Gates that may check a branch at once." },
+  {
+    key: "max_concurrent_gates",
+    unit: "gates",
+    description: "Gates that may check a branch at once.",
+  },
   {
     key: "feedback_seconds",
+    unit: "s",
     description:
       "How often the factory looks for comments and reviews on a ready pull request. 0 reads on every pass.",
   },
 ];
 
 /** The keys the page does not edit; `editMachineConfig` keeps them through a save. */
-const HAND_EDITED_KEYS =
-  "default_project, model_fallbacks, notify, min_free_gib, max_load_per_core, deploy_wait_minutes, keep_versions, prune_branches_after_days, prune_branches_dry_run";
+const HAND_EDITED_KEYS = [
+  "default_project",
+  "model_fallbacks",
+  "notify",
+  "min_free_gib",
+  "max_load_per_core",
+  "deploy_wait_minutes",
+  "keep_versions",
+  "prune_branches_after_days",
+  "prune_branches_dry_run",
+];
 
 const text = (value: unknown) => (value === undefined || value === null ? "" : String(value));
 
@@ -115,18 +133,23 @@ function FieldErrors({
     ));
 }
 
-/** A machine config field is a fixed width. */
+/** A machine config field: a path is wide, a number is as narrow as its value and unit. */
 function Field({
   name,
   errors,
+  wide = false,
   children,
 }: {
   readonly name: string;
   readonly errors: ReadonlyArray<ConfigError>;
+  readonly wide?: boolean;
   readonly children: React.ReactNode;
 }) {
   return (
-    <div data-field={name} className="flex w-full min-w-0 flex-col gap-1 sm:w-144">
+    <div
+      data-field={name}
+      className={cn("flex w-full min-w-0 flex-col gap-1", wide ? "sm:w-144" : "sm:w-36")}
+    >
       {children}
       <FieldErrors name={name} errors={errors} />
     </div>
@@ -306,7 +329,7 @@ function MachineConfigForm({
           title={FIELD_LABELS.gh_config_dir}
           description="Where the factory's gh credentials live."
           control={
-            <Field name="gh_config_dir" errors={errors}>
+            <Field name="gh_config_dir" errors={errors} wide>
               <Input
                 size="touch"
                 font="mono"
@@ -317,7 +340,7 @@ function MachineConfigForm({
             </Field>
           }
         />
-        {NUMBER_FIELDS.map(({ key, description }) => {
+        {NUMBER_FIELDS.map(({ key, description, unit }) => {
           const fallback = text(report.defaults[key]);
           const reading = readingOf(key, form[key]);
           const budget = key === "feedback_seconds" ? feedbackBudget(form) : null;
@@ -355,33 +378,46 @@ function MachineConfigForm({
               }
               control={
                 <Field name={key} errors={errors}>
-                  <Input
-                    size="touch"
-                    type="number"
-                    aria-label={FIELD_LABELS[key]}
-                    value={form[key]}
-                    onChange={setText(key)}
-                  />
+                  <InputGroup>
+                    <InputGroupInput
+                      size="touch"
+                      type="number"
+                      aria-label={FIELD_LABELS[key]}
+                      value={form[key]}
+                      onChange={setText(key)}
+                    />
+                    <InputGroupAddon align="inline-end">
+                      <span className="text-xs text-muted-foreground">{unit}</span>
+                    </InputGroupAddon>
+                  </InputGroup>
                 </Field>
               }
             />
           );
         })}
-        <p className="px-3 py-3 text-xs text-muted-foreground sm:px-4">
-          The rest of the file ({HAND_EDITED_KEYS}) is edited by hand, and a save keeps it as
-          written. The server reads the file only at start and on a save, so save here after a hand
-          edit to apply it.
-        </p>
+        <div className="flex flex-col gap-2 px-3 py-3 text-xs text-muted-foreground sm:px-4">
+          <p>
+            The rest of the file is edited by hand, and a save keeps it as written. The server reads
+            the file only at start and on a save, so save here after a hand edit to apply it.
+          </p>
+          <p data-hand-edited className="flex flex-wrap gap-1">
+            {HAND_EDITED_KEYS.map((key) => (
+              <code key={key} className="rounded bg-muted px-1 py-px font-mono text-2xs">
+                {key}
+              </code>
+            ))}
+          </p>
+        </div>
+        <SaveBar
+          file={report.file}
+          changes={changes}
+          canWrite={canWrite}
+          saving={saving}
+          saved={saveStatus === "saved"}
+          onSave={() => void save()}
+          onDiscard={discard}
+        />
       </SettingsSection>
-
-      <SaveBar
-        changes={changes}
-        canWrite={canWrite}
-        saving={saving}
-        saved={saveStatus === "saved"}
-        onSave={() => void save()}
-        onDiscard={discard}
-      />
 
       <WatchedRepos
         repos={report.repos}

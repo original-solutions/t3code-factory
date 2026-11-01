@@ -710,18 +710,29 @@ describe("FactorySettingsPanel", () => {
     expect(button(root, "Save").disabled).toBe(true);
     expect(textOf(root)).toContain("read-only");
   });
-  it("gives machine config fields twice the old width", async () => {
+  it("gives the path a wide field and each number a narrow one with its unit", async () => {
     resetMocks();
     mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
     await using panel = await open();
     const root = panel.container;
 
-    for (const name of ["gh_config_dir", "poll_seconds"]) {
-      const className = field(root, name)!.className;
-      expect(className).toContain("sm:w-144");
-      expect(className).not.toContain("sm:w-72");
-      expect(className).toContain("min-w-0");
-    }
+    expect(field(root, "gh_config_dir")!.className).toContain("sm:w-144");
+    const units = Object.fromEntries(
+      ["poll_seconds", "max_concurrent_runs", "max_concurrent_gates", "feedback_seconds"].map(
+        (name) => {
+          const holder = field(root, name)!;
+          expect(holder.className).toContain("sm:w-36");
+          expect(holder.className).toContain("min-w-0");
+          return [name, textOf(holder.querySelector('[data-slot="input-group-addon"]')!)];
+        },
+      ),
+    );
+    expect(units).toEqual({
+      poll_seconds: "s",
+      max_concurrent_runs: "runs",
+      max_concurrent_gates: "gates",
+      feedback_seconds: "s",
+    });
   });
 
   describe.each([375, 1280])("at %i px", (width) => {

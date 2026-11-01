@@ -2,12 +2,14 @@ import { ChevronRightIcon } from "lucide-react";
 
 import { SettingsGroup } from "../../components/settings/SettingsGroup";
 import { SettingsRow, SettingsSection } from "../../components/settings/settingsLayout";
-import { Badge } from "../../components/ui/badge";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../../components/ui/collapsible";
 import type { RepoBlock } from "./api";
 import { factoryBlockYaml, repoPlan } from "./repoPlan";
 import { repoRoster, type RepoHealth } from "./repoRoster";
+import { cn } from "../../lib/utils";
+import "../belt.css";
 import { Snippet } from "../FirstRunSteps";
+import { withoutRepoPrefix } from "../format";
 import { TouchLink } from "../TouchLink";
 
 function Commands({ factory }: { readonly factory: NonNullable<RepoBlock["factory"]> }) {
@@ -155,14 +157,12 @@ function RepoDetails({ block }: { readonly block: RepoBlock }) {
   );
 }
 
-const HEALTH: Record<
-  RepoHealth,
-  { readonly label: string; readonly variant: "error" | "secondary" | "info" | "success" }
-> = {
-  error: { label: "Error", variant: "error" },
-  unread: { label: "Not read yet", variant: "secondary" },
-  default: { label: "Defaults", variant: "info" },
-  ready: { label: "Ready", variant: "success" },
+/** Health as the Factory page says a repo's verdict: a word, coloured only by its dot. */
+const HEALTH: Record<RepoHealth, { readonly label: string; readonly tone: string }> = {
+  error: { label: "Error", tone: "bg-(--factory-stuck)" },
+  unread: { label: "Not read yet", tone: "bg-muted-foreground/60" },
+  default: { label: "Defaults", tone: "bg-(--factory-pr)" },
+  ready: { label: "Ready", tone: "bg-(--factory-done)" },
 };
 
 /** One watched repo as a line that opens to everything the factory read of it. */
@@ -175,32 +175,32 @@ function RepoEntry({
   readonly health: RepoHealth;
   readonly defaultOpen: boolean;
 }) {
-  const { label, variant } = HEALTH[health];
-  const firstError = block.errors?.[0]?.message;
+  const { label, tone } = HEALTH[health];
+  const firstMessage = block.errors?.[0]?.message;
+  const firstError =
+    firstMessage === undefined ? undefined : withoutRepoPrefix(firstMessage, block.repo);
   const gate = block.factory?.gate.length ?? 0;
   return (
     <Collapsible defaultOpen={defaultOpen} data-repo={block.repo} data-health={health}>
-      <CollapsibleTrigger className="group/repo flex min-h-14 w-full items-start gap-3 px-3 py-3 text-left outline-none hover:bg-accent/40 focus-visible:bg-accent/40 sm:px-4">
+      <CollapsibleTrigger className="group/repo flex min-h-14 w-full items-start gap-2.5 px-3 py-3 text-left outline-none hover:bg-accent/40 focus-visible:bg-accent/40 sm:px-4">
         <ChevronRightIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform group-data-panel-open/repo:rotate-90" />
         <span className="flex min-w-0 flex-1 flex-col gap-1">
-          <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
             <span className="font-medium text-foreground">{block.title}</span>
-            <Badge variant={variant}>{label}</Badge>
-            <span className="min-w-0 truncate font-mono text-xs text-muted-foreground">
-              {block.repo}
-            </span>
+            <span className="min-w-0 truncate text-xs text-muted-foreground">{block.repo}</span>
           </span>
-          {firstError !== undefined ? (
-            <span className="line-clamp-1 break-all text-xs text-muted-foreground">
-              {firstError}
-            </span>
-          ) : null}
+          <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+            <span aria-hidden className={cn("size-2 shrink-0 rounded-full", tone)} />
+            <span className="shrink-0 font-medium text-foreground">{label}</span>
+            {firstError !== undefined ? (
+              <span className="line-clamp-1 min-w-0 break-all">{`· ${firstError}`}</span>
+            ) : block.factory !== null ? (
+              <span className="min-w-0 truncate">
+                {`· ${block.factory.base} · ${gate} gate ${gate === 1 ? "command" : "commands"}`}
+              </span>
+            ) : null}
+          </span>
         </span>
-        {block.factory !== null ? (
-          <span className="hidden shrink-0 text-xs text-muted-foreground sm:block">
-            {`${block.factory.base} · ${gate} gate ${gate === 1 ? "command" : "commands"}`}
-          </span>
-        ) : null}
       </CollapsibleTrigger>
       <CollapsiblePanel animate={false}>
         <SettingsGroup variant="plain" className="border-t border-border/50 bg-muted/24 pl-7">

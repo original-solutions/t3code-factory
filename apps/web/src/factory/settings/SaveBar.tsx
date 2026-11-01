@@ -6,10 +6,11 @@ import type { PendingChange } from "./tuning";
 const shown = (value: string) => (value === "" ? "empty" : value);
 
 /**
- * The machine config's Save, pinned to the bottom of the page while there is something to save,
- * with each change it would write and a way back to what the file holds.
+ * The machine config card's foot: the file a save writes and its Save, pinned to the bottom of the
+ * view while there is something to save, with each change it would write and a way back.
  */
 export function SaveBar({
+  file,
   changes,
   canWrite,
   saving,
@@ -17,6 +18,7 @@ export function SaveBar({
   onSave,
   onDiscard,
 }: {
+  readonly file: string;
   readonly changes: ReadonlyArray<PendingChange>;
   readonly canWrite: boolean;
   readonly saving: boolean;
@@ -30,10 +32,11 @@ export function SaveBar({
       data-save-bar={dirty ? "dirty" : "clean"}
       className={
         dirty
-          ? "sticky bottom-3 z-10 mx-3 flex flex-col gap-3 rounded-xl border border-primary/40 bg-background px-3 py-2.5 shadow-lg sm:mx-4 sm:flex-row sm:items-center sm:px-4"
-          : "mx-3 flex flex-col gap-3 px-0 sm:mx-4 sm:flex-row sm:items-center"
+          ? "sticky bottom-0 z-10 flex flex-col gap-3 rounded-b-xl bg-card px-3 pt-3 pb-2.5 shadow-lg sm:flex-row sm:items-center sm:px-4"
+          : "flex flex-col gap-3 rounded-b-xl bg-muted/32 px-3 py-2.5 sm:flex-row sm:items-center sm:px-4"
       }
     >
+      {dirty ? <span aria-hidden className="absolute inset-x-0 top-0 h-0.75 bg-primary" /> : null}
       <div className="min-w-0 flex-1 text-sm">
         {dirty ? (
           <>
@@ -53,11 +56,12 @@ export function SaveBar({
               ))}
             </ul>
           </>
-        ) : saved ? (
-          <p role="status" className="text-muted-foreground">
-            Saved
+        ) : (
+          <p role={saved ? "status" : undefined} className="text-xs text-muted-foreground">
+            {saved ? "Saved to " : "Writes "}
+            <code className="break-all">{file}</code>
           </p>
-        ) : null}
+        )}
       </div>
       <div className="flex shrink-0 items-center gap-2">
         {dirty ? (
