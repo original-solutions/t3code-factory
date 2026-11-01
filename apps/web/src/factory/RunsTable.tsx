@@ -273,7 +273,7 @@ export function RunsTable({
   /** The session thread the status report names for an unfinished run; null where it names none. */
   threadOf: (environmentId: EnvironmentId, runId: string) => string | null;
   /** How a row's Stop stops its run; a row shows Stop only when {@link runActions} offers it. */
-  stopOf: (environmentId: EnvironmentId, runId: string, label: string) => RunStop;
+  stopOf: (environmentId: EnvironmentId, runId: string) => RunStop;
 }) {
   // Of each environment's runs listed, the newest attempt of each issue; an older attempt's next
   // step is already taken.
@@ -303,7 +303,7 @@ export function RunsTable({
         environmentId={environmentId}
         label={label}
         runId={run.id}
-        stop={stopOf(environmentId, run.id, label)}
+        stop={stopOf(environmentId, run.id)}
         touch={touch}
       />
     );

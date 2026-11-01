@@ -327,10 +327,7 @@ export function FactoryBelt({
   const [pickedId, setPickedId] = useState<EnvironmentId | null>(null);
   // The open post: undefined until the rail first has something to look at, then the user's.
   const [open, setOpen] = useState<Station | null | undefined>(undefined);
-  // The answer of the latest stop, which names its run: it outlives the readout.
-  const [stopNote, setStopNote] = useState<string | null>(null);
-  const stopRun = useRunStop(({ environmentId, label, message }) => {
-    setStopNote(`${label}: ${message}`);
+  const stopRun = useRunStop((environmentId) => {
     environments
       .find((environment) => environment.environmentId === environmentId)
       ?.status.refresh();
@@ -498,7 +495,7 @@ export function FactoryBelt({
             open={open}
             claimsHeld={held !== null && !Number.isNaN(held.since) ? held : null}
             selectedId={selected.environmentId}
-            stopOf={(run) => stopRun(run.environmentId, run.id, run.issue)}
+            stopOf={(run) => stopRun(run.environmentId, run.id)}
             tileRef={tileRef}
           />
         ) : (
@@ -506,11 +503,6 @@ export function FactoryBelt({
         )}
         {firstRun === false && open !== undefined ? (
           <BeltChanges at={heard.at} news={heard.news} />
-        ) : null}
-        {stopNote ? (
-          <p className="break-words text-sm text-muted-foreground" role="status">
-            {stopNote}
-          </p>
         ) : null}
       </section>
       {firstRun !== false && attention.length === 0 ? null : (

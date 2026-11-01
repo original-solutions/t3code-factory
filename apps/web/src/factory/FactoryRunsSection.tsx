@@ -35,7 +35,6 @@ export const FactoryRunsSection = memo(function FactoryRunsSection({
   onClearFilters,
   onShowAll,
   onShowRecent,
-  onNote,
 }: {
   /** The environments whose status answered, in the page's order. */
   environments: ReadonlyArray<ListedEnvironment>;
@@ -54,14 +53,12 @@ export const FactoryRunsSection = memo(function FactoryRunsSection({
   onClearFilters: () => void;
   onShowAll: () => void;
   onShowRecent: () => void;
-  onNote: (note: string) => void;
 }) {
   const runsOf = useFactoryRunsOf(
     environments.map(({ environmentId }) => environmentId),
     all,
   );
-  const stopOf = useRunStop(({ environmentId, label, message }) => {
-    onNote(`${label}: ${message}`);
+  const stopOf = useRunStop((environmentId) => {
     refreshFactoryStatus(environmentId);
     runsOf[environments.findIndex((entry) => entry.environmentId === environmentId)]?.refresh();
   });

@@ -439,7 +439,6 @@ export function FactoryPage() {
             environments={runsEnvironments}
             onBucket={onRunsBucket}
             onClearFilters={clearAll}
-            onNote={setNote}
             onQuery={setQuery}
             onShowAll={showAllRuns}
             onShowRecent={showRecentRuns}

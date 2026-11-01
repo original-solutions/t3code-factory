@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, fakeTimers } from "../../test/render";
 import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
+import { __resetStopDeskForTests, STOP_GRACE_MS } from "./stopDesk";
 import { render, setDocumentVisible } from "./testing";
 import {
   __resetFactoryStoresForTests,
@@ -233,6 +234,7 @@ function setup(): AsyncDisposable {
   __setFactoryApiForTests(fakeApi);
   stack.defer(() => {
     __resetFactoryStoresForTests();
+    __resetStopDeskForTests();
     __setFactoryApiForTests();
     worlds.clear();
     for (const list of Object.values(calls)) list.length = 0;
@@ -673,6 +675,7 @@ describe("the run page follows its environment", () => {
       { environmentId: ENV_2, threadId: "thread-9" },
     ]);
     await page.click(page.button("Stop")!);
+    await act(() => vi.advanceTimersByTimeAsync(STOP_GRACE_MS));
     expect(calls.stop).toEqual([[ENV_2, RUN_2]]);
   });
 });

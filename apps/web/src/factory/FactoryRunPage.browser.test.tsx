@@ -3,8 +3,9 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { userEvent } from "vite-plus/test/browser";
 
-import { act } from "../../test/render";
+import { act, fakeTimers } from "../../test/render";
 import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
+import { __resetStopDeskForTests, STOP_GRACE_MS } from "./stopDesk";
 import type { FactoryResource } from "./useFactoryData";
 import { render, renderAt } from "./testing";
 
@@ -126,7 +127,12 @@ function setup(): Disposable {
   state.run = resource({ data: detail() });
   state.history = {};
   state.navigations = [];
-  return { [Symbol.dispose]: () => __setFactoryApiForTests() };
+  return {
+    [Symbol.dispose]: () => {
+      __setFactoryApiForTests();
+      __resetStopDeskForTests();
+    },
+  };
 }
 
 describe("FactoryRunPage", () => {
@@ -324,52 +330,37 @@ describe("FactoryRunPage", () => {
     expect(text).toContain("4 unreadable lines skipped");
   });
 
-  it("stops a building run, shows the answer and refreshes", async () => {
+  it("holds a Stop with Undo, and Undo keeps the run building", async () => {
+    using _state = setup();
+    const stopRun = vi.fn();
+    __setFactoryApiForTests(api({ stopRun }));
+    await using page = await mount();
+    await page.click(page.button("Stop")!);
+    expect(page.button("Stop")).toBeUndefined();
+    await page.click(page.button("Undo stop")!);
+    expect(page.button("Stop")!.disabled).toBeFalsy();
+    expect(stopRun).not.toHaveBeenCalled();
+  });
+
+  it("sends the stop once its grace is over, and reads the run again", async () => {
     using _state = setup();
     const refresh = vi.fn();
     state.run = resource({ data: detail(), refresh });
-    const stopRun = vi.fn(async () => ({
-      stopped: "o__r__1__1",
-      already: false,
-      message: "stop requested: the issue goes to factory:stuck",
-    }));
-    __setFactoryApiForTests(api({ stopRun }));
-    await using page = await mount();
-    expect(page.button("Stop")!.disabled).toBeFalsy();
-    await page.click(page.button("Stop")!);
-    expect(stopRun).toHaveBeenCalledWith("env-1", RUN_ID);
-    expect(page.text()).toContain("stop requested");
-    expect(refresh).toHaveBeenCalled();
-  });
-
-  it("disables Stop while a stop request is in flight, and enables it again after", async () => {
-    using _state = setup();
     let resolve!: (value: Awaited<ReturnType<FactoryApi["stopRun"]>>) => void;
     const stopRun = vi.fn(
       () => new Promise<Awaited<ReturnType<FactoryApi["stopRun"]>>>((r) => (resolve = r)),
     );
     __setFactoryApiForTests(api({ stopRun }));
     await using page = await mount();
+    using _timers = fakeTimers();
     await page.click(page.button("Stop")!);
-    expect(page.button("Stop")!.disabled).toBe(true);
+    await act(() => vi.advanceTimersByTimeAsync(STOP_GRACE_MS));
+    expect(stopRun).toHaveBeenCalledWith("env-1", RUN_ID);
+    expect(page.button("Stopping")!.disabled).toBe(true);
     await act(async () =>
       resolve({ stopped: "o__r__1__1", already: false, message: "stop requested" }),
     );
-    expect(page.button("Stop")!.disabled).toBeFalsy();
-  });
-
-  it("shows the message of a run that is not building", async () => {
-    using _state = setup();
-    __setFactoryApiForTests(
-      api({
-        stopRun: async () => {
-          throw new FactoryApiError(409, "not_building", "run is not building");
-        },
-      }),
-    );
-    await using page = await mount();
-    await page.click(page.button("Stop")!);
-    expect(page.text()).toContain("run is not building");
+    expect(refresh).toHaveBeenCalled();
   });
 
   it("puts a stuck run's fix, its place to start and the label to set back above the timeline", async () => {

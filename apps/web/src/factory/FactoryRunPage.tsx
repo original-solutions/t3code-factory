@@ -190,10 +190,8 @@ export function FactoryRunPage({
 }) {
   const run = useFactoryRun(environmentId, runId);
   const label = useFactoryEnvironmentLabel(environmentId);
-  const [note, setNote] = useState<string | null>(null);
-  const stopOf = useRunStop(({ message }) => {
-    setNote(message);
-    run.refresh();
+  const stopOf = useRunStop((answered) => {
+    if (answered === environmentId) run.refresh();
   });
   const navigate = useNavigate();
   // The list this run was opened from, if any: the header steps through it and goes back to it.
@@ -319,7 +317,7 @@ export function FactoryRunPage({
               environmentId={environmentId}
               label={issue?.text ?? runId}
               runId={runId}
-              stop={stopOf(environmentId, runId, issue?.text ?? runId)}
+              stop={stopOf(environmentId, runId)}
               touch
             />
           </div>
@@ -328,11 +326,6 @@ export function FactoryRunPage({
             <RunAgentLine environmentId={environmentId} threadId={threadId} />
           ) : null}
         </FactoryCard>
-        {note ? (
-          <p className="break-words text-sm text-muted-foreground" role="status">
-            {note}
-          </p>
-        ) : null}
         <RunReportCard entries={entries} />
         {next ? (
           <RunNextStep

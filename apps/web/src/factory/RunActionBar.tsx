@@ -1,22 +1,22 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useEffectEvent } from "react";
 
 import { Button, InlineButton } from "~/components/ui/button";
 import { cn } from "~/lib/utils";
 
 import { AgentDot, useQuietRunAgent } from "./RunAgent";
-import { factoryApi } from "./api";
-import { messageOf } from "./format";
 import { Ref } from "./Ref";
 import type { RunAction } from "./runActions";
 import { runLinkKey } from "./runQueue";
+import { onStopAnswered, requestStop, type StopPhase, undoStop, useStopPhases } from "./stopDesk";
 import { TouchLink } from "./TouchLink";
 
-/** A stop the caller can make, and whether one for this run is in flight. */
+/** A stop the caller can make, and where this run's stop is: see {@link StopPhase}. */
 export interface RunStop {
-  readonly busy: boolean;
+  readonly phase: StopPhase | undefined;
   readonly onStop: () => void;
+  readonly onUndo: () => void;
 }
 
 /**
@@ -92,20 +92,31 @@ export function RunActions({
           />,
         ];
       case "stop":
-        return stop
-          ? [
-              <Button
-                aria-label={`Stop ${label}`}
-                disabled={stop.busy}
-                key="stop"
-                onClick={stop.onStop}
-                size="sm"
-                variant="destructive-outline"
-              >
-                Stop
-              </Button>,
-            ]
-          : [];
+        if (!stop) return [];
+        return [
+          stop.phase === "pending" ? (
+            <Button
+              aria-label={`Undo stop ${label}`}
+              key="stop"
+              onClick={stop.onUndo}
+              size="sm"
+              variant="outline"
+            >
+              Undo stop
+            </Button>
+          ) : (
+            <Button
+              aria-label={`Stop ${label}`}
+              disabled={stop.phase !== undefined}
+              key="stop"
+              onClick={stop.onStop}
+              size="sm"
+              variant="destructive-outline"
+            >
+              {stop.phase === "sent" ? "Stop sent" : stop.phase === "sending" ? "Stopping" : "Stop"}
+            </Button>
+          ),
+        ];
     }
   });
   if (items.length === 0) return null;
@@ -148,42 +159,20 @@ function LiveThreadLink({
 }
 
 /**
- * Stops runs from a list of them: which stops are in flight, by `runLinkKey`, so one row's Stop
- * never disables another's, and the server's answer for the caller to show and refresh after.
+ * Stops runs from a list of them through the tab's stop desk: a Stop waits a few seconds with
+ * Undo before it is sent, and every surface showing the run shows the same state. `onAnswered`
+ * hears the environment of each answered stop, to read it again.
  */
-export function useRunStop(
-  onAnswer: (answer: {
-    readonly environmentId: EnvironmentId;
-    readonly label: string;
-    readonly message: string;
-  }) => void,
-) {
-  const [stopping, setStopping] = useState<ReadonlySet<string>>(() => new Set());
-  const mark = (key: string, member: boolean) =>
-    setStopping((current) => {
-      const next = new Set(current);
-      if (member) next.add(key);
-      else next.delete(key);
-      return next;
-    });
-  const stopOf = (environmentId: EnvironmentId, runId: string, label: string): RunStop => {
-    const key = runLinkKey(environmentId, runId);
+export function useRunStop(onAnswered: (environmentId: EnvironmentId) => void) {
+  const phases = useStopPhases();
+  const answered = useEffectEvent(onAnswered);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a stop's answer can land after the page that asked for it has gone; the desk's listeners are how a mounted page hears it
+  useEffect(() => onStopAnswered((environmentId) => answered(environmentId)), []);
+  const stopOf = (environmentId: EnvironmentId, runId: string): RunStop => {
     return {
-      busy: stopping.has(key),
-      onStop: () => {
-        mark(key, true);
-        // No try/finally: the React Compiler cannot compile one.
-        void factoryApi
-          .stopRun(environmentId, runId)
-          .then(
-            (result) => result.message,
-            (error: unknown) => messageOf(error),
-          )
-          .then((message) => {
-            mark(key, false);
-            onAnswer({ environmentId, label, message });
-          });
-      },
+      phase: phases.get(runLinkKey(environmentId, runId)),
+      onStop: () => requestStop(environmentId, runId),
+      onUndo: () => undoStop(environmentId, runId),
     };
   };
   return stopOf;

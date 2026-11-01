@@ -8,6 +8,7 @@ import "~/index.css";
 import { act, fakeTimers } from "../../test/render";
 import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
 import type { FactoryRunRow, FactoryStatus } from "./api";
+import { __resetStopDeskForTests, STOP_GRACE_MS } from "./stopDesk";
 import { render } from "./testing";
 import type { FactoryEnvironment, FactoryResource } from "./useFactoryData";
 
@@ -203,6 +204,7 @@ async function setup(width = 1440): Promise<Disposable> {
   return {
     [Symbol.dispose]() {
       __setFactoryApiForTests();
+      __resetStopDeskForTests();
       vi.useRealTimers();
     },
   };
@@ -517,94 +519,30 @@ describe("stopping a run from the readout", () => {
     expect(await stops("done")).toEqual([false, false, false, false]);
   });
 
-  it("calls stopRun for that run, shows the answer, and reads the environment's status again", async () => {
+  it("holds the Stop of that run alone with Undo, then sends it and reads its environment again", async () => {
     using _state = await setup();
     const belt = twoEnvironments();
-    const stopRun = vi.fn(async () => ({
-      stopped: runId(7),
-      already: false,
-      message: "stopping #7",
-    }));
+    const stopRun = vi.fn(async () => ({ stopped: runId(7), already: false, message: "" }));
     __setFactoryApiForTests(api({ stopRun }));
     await using page = await render(createElement(FactoryBelt, belt));
+    using _timers = fakeTimers();
     await page.click(station(page, "building"));
+    const labels = () =>
+      rowsOf(page).map((row) =>
+        Array.from(row.querySelectorAll("button"))
+          .map((b) => b.textContent)
+          .find((text) => text?.includes("top")),
+      );
     const row = rowsOf(page).find((r) => r.textContent?.includes("Studio"))!;
     await page.click(
       Array.from(row.querySelectorAll("button")).find((b) => b.textContent === "Stop")!,
     );
+    expect(labels()).toEqual(["Undo stop", "Stop"]);
+    expect(stopRun).not.toHaveBeenCalled();
+    await act(() => vi.advanceTimersByTimeAsync(STOP_GRACE_MS));
     expect(stopRun).toHaveBeenCalledWith(STUDIO, runId(7));
-    const note = page.all('[role="status"]').find((p) => p.textContent === "#7: stopping #7");
-    expect(note).toBeDefined();
     expect(belt.environments[1]!.status.refresh).toHaveBeenCalled();
     expect(belt.environments[0]!.status.refresh).not.toHaveBeenCalled();
-  });
-
-  it("disables the Stop of the run being stopped and no other", async () => {
-    using _state = await setup();
-    __setFactoryApiForTests(api({ stopRun: () => new Promise(() => {}) }));
-    await using page = await render(createElement(FactoryBelt, twoEnvironments()));
-    await page.click(station(page, "building"));
-    const stops = () =>
-      rowsOf(page).map(
-        (row) =>
-          Array.from(row.querySelectorAll("button")).find((b) => b.textContent === "Stop")!
-            .disabled,
-      );
-    expect(stops()).toEqual([false, false]);
-    await page.click(
-      Array.from(rowsOf(page)[0]!.querySelectorAll("button")).find(
-        (b) => b.textContent === "Stop",
-      )!,
-    );
-    expect(stops()).toEqual([true, false]);
-  });
-
-  it("shows the message of a stop that fails, naming the run", async () => {
-    using _state = await setup();
-    __setFactoryApiForTests(
-      api({
-        stopRun: async () => {
-          throw new FactoryApiError(403, null, "Missing permission orchestration:operate");
-        },
-      }),
-    );
-    await using page = await render(createElement(FactoryBelt, twoEnvironments()));
-    await page.click(station(page, "building"));
-    const row = rowsOf(page).find((r) => r.textContent?.includes("Title of 2"))!;
-    await page.click(
-      Array.from(row.querySelectorAll("button")).find((b) => b.textContent === "Stop")!,
-    );
-    const note = page.all('[role="status"]').find((p) => p.textContent?.includes("Missing"));
-    expect(note?.textContent).toBe("#2: Missing permission orchestration:operate");
-  });
-
-  it("names the run in the note of every stop, so a later answer does not leave an earlier failure unattributed", async () => {
-    using _state = await setup();
-    __setFactoryApiForTests(
-      api({
-        stopRun: async (_environmentId, id) => {
-          if (id === runId(2)) throw new Error("timed out");
-          return { stopped: id, already: false, message: "stop requested" };
-        },
-      }),
-    );
-    await using page = await render(createElement(FactoryBelt, twoEnvironments()));
-    await page.click(station(page, "building"));
-    const stopOf = async (title: string) => {
-      const row = rowsOf(page).find((r) => r.textContent?.includes(title))!;
-      await page.click(
-        Array.from(row.querySelectorAll("button")).find((b) => b.textContent === "Stop")!,
-      );
-    };
-    const notes = () =>
-      page
-        .all('[role="status"]')
-        .map((p) => p.textContent)
-        .filter((text) => text?.startsWith("#"));
-    await stopOf("Title of 2");
-    expect(notes()).toEqual(["#2: timed out"]);
-    await stopOf("Title of 7");
-    expect(notes()).toEqual(["#7: stop requested"]);
   });
 });
 
@@ -1395,32 +1333,6 @@ describe("the rail keeps its pick", () => {
     expect(readout(page)!.getAttribute("aria-label")).toBe("Gate readout");
     await page.rerender(createElement(FactoryBelt, full));
     expect(readout(page)!.getAttribute("aria-label")).toBe("Gate readout");
-  });
-
-  it("keeps a stop's answer when its readout is folded before the call ends", async () => {
-    using _state = await setup();
-    let resolve!: (value: { stopped: string; already: boolean; message: string }) => void;
-    __setFactoryApiForTests(
-      api({
-        stopRun: () =>
-          new Promise((r) => {
-            resolve = r;
-          }),
-      }),
-    );
-    await using page = await render(createElement(FactoryBelt, twoEnvironments()));
-    await page.click(station(page, "building"));
-    await page.click(
-      Array.from(
-        rowsOf(page)
-          .find((r) => r.textContent?.includes("Title of 2"))!
-          .querySelectorAll("button"),
-      ).find((b) => b.textContent === "Stop")!,
-    );
-    await page.click(station(page, "building"));
-    expect(readout(page)).toBeUndefined();
-    await act(async () => resolve({ stopped: runId(2), already: false, message: "stopping #2" }));
-    expect(page.all('[role="status"]').some((p) => p.textContent === "#2: stopping #2")).toBe(true);
   });
 });
 
