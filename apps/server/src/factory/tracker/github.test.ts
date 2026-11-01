@@ -6818,6 +6818,21 @@ describe("retrying a call GitHub never received", () => {
     }),
   );
 
+  it.effect("a paginated read's unexpected EOF is retried", () =>
+    Effect.gen(function* () {
+      const t = setup(
+        fail(1, 'Get "https://api.github.com/repos/rawphp/softfac/labels": unexpected EOF'),
+        reply('[{"name":"bug"}]'),
+      );
+      const fiber = yield* Effect.forkChild(t.ok(t.github.labelNames()), {
+        startImmediately: true,
+      });
+      yield* TestClock.adjust("3 seconds");
+      assert.deepStrictEqual(yield* Fiber.join(fiber), ["bug"]);
+      assert.strictEqual(t.inputs.length, 2);
+    }),
+  );
+
   it.effect("a read that ends in unexpected EOF on all five attempts returns that failure", () =>
     Effect.gen(function* () {
       const eof = 'Post "https://api.github.com/graphql": unexpected EOF';

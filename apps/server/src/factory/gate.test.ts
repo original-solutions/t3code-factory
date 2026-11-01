@@ -2152,8 +2152,7 @@ describe("retrying a fetch the network dropped", () => {
     },
     { stderr: "fatal: early EOF", phrase: "early EOF" },
     {
-      stderr:
-        "fatal: unable to access 'https://github.com/x/y.git/': Get \"https://api.github.com/user\": unexpected EOF",
+      stderr: "fatal: unable to access 'https://github.com/x/y.git/': unexpected EOF",
       phrase: "unexpected EOF",
     },
   ];
