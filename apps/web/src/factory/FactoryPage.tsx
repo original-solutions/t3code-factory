@@ -17,6 +17,8 @@ import { FactoryBelt } from "./FactoryBelt";
 import { FactoryFrame } from "./FactoryFrame";
 import { FactoryError, FactoryLoading, FactoryReadFailure } from "./FactoryNotices";
 import { messageOf, parseRunId } from "./format";
+import { RepoBoard } from "./RepoBoard";
+import { repoBoard } from "./repoHealth";
 import { bucketOf, countBuckets, matchesQuery } from "./runLedger";
 import { runLinkKey } from "./runQueue";
 import { RunsTable } from "./RunsTable";
@@ -242,6 +244,16 @@ export function FactoryPage() {
       });
       return [{ environmentId, label, recent }];
     });
+  // The repos of the recent window, worst first; it follows the environment filter, not the repo one.
+  const board = repoBoard(
+    answered
+      .filter(({ environmentId }) => inEnvironment(environmentId))
+      .map(({ environmentId, status }) => ({
+        active: status.data?.runs ?? [],
+        recent: recentById.get(environmentId)?.data?.runs ?? [],
+      })),
+    nowMs,
+  );
   const scopedRuns = listedRuns.filter(
     ({ environmentId, repo }) => inEnvironment(environmentId) && inRepo(repo),
   );
@@ -310,6 +322,14 @@ export function FactoryPage() {
             verb="refresh"
           />
         ))}
+        {board.length > 1 || repoFilter !== null ? (
+          <RepoBoard
+            nowMs={nowMs}
+            onSelect={(repo) => setSearch(withFilter(search, "repo", repo))}
+            repos={board}
+            selected={repoFilter}
+          />
+        ) : null}
         <FactoryBelt
           attention={attention}
           busy={busy}
@@ -327,6 +347,7 @@ export function FactoryPage() {
           onTogglePause={(environment) => void togglePause(environment)}
           origin={{ search, query }}
           recent={recentById}
+          repo={repoFilter}
           showEnvironment={showEnvironment}
         />
         {note ? (

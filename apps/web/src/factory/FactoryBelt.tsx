@@ -19,6 +19,7 @@ import { dayStrip, type DayStrip as Strip } from "./dayStrip";
 import { TodayStrip } from "./TodayStrip";
 import { FactoryReadFailure } from "./FactoryNotices";
 import { messageOf } from "./format";
+import { repoOfRun } from "./repoHealth";
 import { useRunStop } from "./RunActionBar";
 import { TouchLink } from "./TouchLink";
 import type { FactoryEnvironment, FactoryResource } from "./useFactoryData";
@@ -263,6 +264,7 @@ export function FactoryBelt({
   onDismiss,
   origin,
   digest,
+  repo = null,
 }: {
   /** Every factory environment, the primary first. */
   environments: ReadonlyArray<FactoryEnvironment>;
@@ -283,6 +285,8 @@ export function FactoryBelt({
   origin?: QueueOrigin | undefined;
   /** What happened since the viewer caught up, shown in the control bar under the claims switch. */
   digest?: ReactNode;
+  /** The page's repo filter: the rail, the strip and the bins show only its runs. */
+  repo?: string | null;
 }) {
   const [pickedId, setPickedId] = useState<EnvironmentId | null>(null);
   // The open post: undefined until the rail first has something to look at, then the user's.
@@ -305,12 +309,16 @@ export function FactoryBelt({
   // The environment picked, else the first (the primary): one that has gone is no longer picked.
   const selected =
     environments.find(({ environmentId }) => environmentId === pickedId) ?? environments[0];
+  const inRepo = ({ id }: { readonly id: string }) =>
+    repo === null || repoOfRun(id)?.toLowerCase() === repo.toLowerCase();
+  const recentOf = (environmentId: EnvironmentId) =>
+    (recent.get(environmentId)?.data?.runs ?? []).filter(inRepo);
   const belt = deriveBelt(
     environments.map(({ environmentId, label, status }) => ({
       environmentId,
       label,
-      active: status.data?.runs ?? [],
-      recent: recent.get(environmentId)?.data?.runs ?? [],
+      active: (status.data?.runs ?? []).filter(inRepo),
+      recent: recentOf(environmentId),
     })),
     nowMs,
   );
@@ -413,7 +421,7 @@ export function FactoryBelt({
                   environments.map(({ environmentId, label }) => ({
                     environmentId,
                     label,
-                    recent: recent.get(environmentId)?.data?.runs ?? [],
+                    recent: recentOf(environmentId),
                   })),
                   nowMs,
                   held?.since ?? null,

@@ -138,6 +138,10 @@ const runRow = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+/** The page's text without the repo board, whose tiles name repos in their own order. */
+const ledgerText = (page: { text: () => string; all: (selector: string) => Array<Element> }) =>
+  page.text().replace(page.all('section[aria-label="Repos"]')[0]?.textContent ?? "", "");
+
 const api = (overrides: Partial<FactoryApi>): FactoryApi => ({
   status: vi.fn(),
   runs: vi.fn(),
@@ -368,7 +372,7 @@ describe("FactoryPage", () => {
       },
     });
     await using page = await render(createElement(FactoryPage));
-    const text = page.text();
+    const text = ledgerText(page);
     expect(text.indexOf("original-solutions/t3code-factory")).toBeLessThan(
       text.indexOf("acme/old"),
     );
@@ -874,7 +878,7 @@ describe("FactoryPage run cards at 375 px", () => {
       },
     });
     await using page = await renderAt(375, createElement(FactoryPage));
-    const text = page.text();
+    const text = ledgerText(page);
     expect(text.indexOf("original-solutions/t3code-factory")).toBeLessThan(
       text.indexOf("acme/old"),
     );
@@ -1127,6 +1131,35 @@ describe("FactoryPage filters", () => {
     expect(page.text()).toContain("the machine config failed to load");
     expect(page.text()).not.toContain("run ended stuck: the gate failed");
     expect(environmentChoices(page)).toHaveLength(2);
+  });
+
+  it("a repo tile, worst first, picks its repo for the whole page, the belt's bins too, and again clears it", async () => {
+    using _state = setup();
+    twoEnvironments();
+    state.others[0]!.runs = resource({
+      data: { runs: [runRow({ id: LAPTOP_RUN, state: "stuck", finished: true, reason: "x" })] },
+    });
+    await using page = await render(createElement(FactoryPage));
+    const tiles = () => page.all('section[aria-label="Repos"] button[aria-pressed]');
+    const tile = (repo: string) =>
+      tiles().find((node) => node.getAttribute("aria-label")?.startsWith(`${repo}:`))!;
+    const stuckBin = () =>
+      page.all("section").find((node) => node.getAttribute("aria-label") === "Stuck")!;
+    expect(tiles().map((node) => node.getAttribute("aria-label"))).toEqual([
+      "acme/widgets: 1 stuck",
+      "original-solutions/t3code-factory: Quiet",
+    ]);
+    expect(stuckBin().textContent).not.toContain("Nothing is stuck");
+
+    await userEvent.click(tile("original-solutions/t3code-factory"));
+    expect(state.navigations.at(-1)?.search).toEqual({ repo: "original-solutions/t3code-factory" });
+    expect(tile("original-solutions/t3code-factory").getAttribute("aria-pressed")).toBe("true");
+    expect(runLinks(page)).toEqual([RUN_ID]);
+    expect(stuckBin().textContent).toContain("Nothing is stuck");
+
+    await userEvent.click(tile("original-solutions/t3code-factory"));
+    expect(state.navigations.at(-1)?.search).toEqual({});
+    expect(stuckBin().textContent).not.toContain("Nothing is stuck");
   });
 
   it("lists the repos of the runs and items once each, sorted without regard to case", async () => {
