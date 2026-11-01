@@ -1462,6 +1462,18 @@ describe("the belt's layout", () => {
     expect(document.body.textContent).toContain(`#${100 + shown}`);
   });
 
+  it("keeps every post's name whole and gives the spare width to the busy lane", async () => {
+    using _state = await setup(1024);
+    await using page = await render(createElement(FactoryBelt, crowded(12)));
+    const posts = ["claimed", "building", "gate", "pr", "done"].map((name) => station(page, name));
+    expect(new Set(posts.map((post) => post.offsetTop)).size).toBe(1);
+    const names = posts.map((post) => post.querySelector<HTMLElement>(".truncate")!);
+    expect(names.every((name) => name.scrollWidth <= name.clientWidth)).toBe(true);
+    const [claimed, building, , pr] = posts.map((post) => post.offsetWidth);
+    expect(building).toBe(claimed);
+    expect(pr).toBeGreaterThan(claimed! * 2);
+  });
+
   it("opens that post's readout from its +N tile", async () => {
     using _state = await setup(1440);
     await using page = await render(createElement(FactoryBelt, crowded(12)));

@@ -366,6 +366,25 @@ export function holdBins(
   };
 }
 
+/** The most room, in shares, a lane takes however many tiles it holds; Done always takes this. */
+const MAX_LANE_SHARE = 6;
+const DONE_SHARE = 1.5;
+
+/**
+ * The wide belt's column template: every post has the floor `--factory-post-min` (belt.css), and the
+ * room past it goes to the lanes by how many tiles each holds, capped so one busy post cannot take
+ * the belt. The floor fits two tiles, so a lane of two or fewer keeps one share and the belt only
+ * reshapes when a lane would otherwise hide runs. Done's bin is text, so its share is fixed.
+ */
+export function beltColumns(tiles: Readonly<Record<Exclude<Station, "done">, number>>): string {
+  const share = (count: number) => Math.min(Math.max(count - 1, 1), MAX_LANE_SHARE);
+  return [tiles.claimed, tiles.building, tiles.gate, tiles.pr]
+    .map(share)
+    .concat(DONE_SHARE)
+    .map((fr) => `minmax(var(--factory-post-min), ${fr}fr)`)
+    .join(" ");
+}
+
 /**
  * How many tiles a lane shows of `count` runs given `slots` places. When every run has a place,
  * all show; otherwise the last place is the `+N` tile for the `hidden` rest.

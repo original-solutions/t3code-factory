@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { FactoryRunRow, FactoryStatus } from "./api";
 import {
+  beltColumns,
   deriveBelt,
   fitLane,
   formatClock,
@@ -145,6 +146,25 @@ describe("fitLane", () => {
   it("leaves only the +N tile when a single slot fits", () => {
     expect(fitLane(3, 1)).toEqual({ shown: 0, hidden: 3 });
     expect(fitLane(3, 0)).toEqual({ shown: 0, hidden: 3 });
+  });
+});
+
+describe("beltColumns", () => {
+  const weights = (template: string) =>
+    Array.from(template.matchAll(/minmax\(var\(--factory-post-min\), ([\d.]+)fr\)/g), (m) =>
+      Number(m[1]),
+    );
+
+  it("keeps one share per lane while its tiles fit the floor, so a run coming or going moves nothing", () => {
+    expect(weights(beltColumns({ claimed: 0, building: 1, gate: 2, pr: 0 }))).toEqual([
+      1, 1, 1, 1, 1.5,
+    ]);
+  });
+
+  it("widens a lane past two tiles, up to a cap, so one busy post cannot take the belt", () => {
+    expect(weights(beltColumns({ claimed: 1, building: 3, gate: 0, pr: 40 }))).toEqual([
+      1, 2, 1, 6, 1.5,
+    ]);
   });
 });
 

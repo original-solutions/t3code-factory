@@ -1,13 +1,13 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { useState, useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore, type CSSProperties } from "react";
 
 import { Skeleton } from "~/components/ui/skeleton";
 import { Switch } from "~/components/ui/switch";
 import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 
 import { factoryApi, type FactoryRunRow, type FactoryStatus } from "./api";
-import { deriveBelt, nextPassText, type BeltRun, type Station } from "./belt";
+import { beltColumns, deriveBelt, nextPassText, type BeltRun, type Station } from "./belt";
 import "./belt.css";
 import { BeltDot } from "./BeltDot";
 import { BeltLowerRow, type EnvironmentAttention } from "./BeltLowerRow";
@@ -382,7 +382,20 @@ export function FactoryBelt({
   const deployNote = deployNotes.get(selected.environmentId);
 
   return (
-    <div className="relative flex flex-col gap-4" data-factory-belt="">
+    <div
+      className="relative flex flex-col gap-4"
+      data-factory-belt=""
+      style={
+        {
+          "--factory-cols": beltColumns({
+            claimed: shown.runs.claimed.length,
+            building: shown.runs.building.length,
+            gate: shown.runs.gate.length,
+            pr: shown.runs.pr.length,
+          }),
+        } as CSSProperties
+      }
+    >
       <section
         aria-label="Production belt"
         className="@container flex min-w-0 flex-col gap-4 rounded-lg border bg-card p-4"

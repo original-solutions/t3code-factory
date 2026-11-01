@@ -46,11 +46,13 @@
 }
 
 /*
- * The columns of the posts, the lanes under them and the readout's notch row. One template, so the
- * notch sits under its post without measuring: PR open is the widest, being the longest lane.
+ * The columns of the posts, the lanes under them and the readout's notch row: one template, so the
+ * notch sits under its post without measuring. FactoryBelt sets `--factory-cols` from the lanes'
+ * loads (`beltColumns`). The floor fits a post's name, count and chevron, and never more than a fifth
+ * of the row, so five posts always fit at the narrowest wide belt.
  */
 [data-factory-belt] {
-  --factory-cols: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 3fr) minmax(0, 1.3fr);
+  --factory-post-min: min(9.25rem, calc((100% - 2rem) / 5));
 }
 
 /*
