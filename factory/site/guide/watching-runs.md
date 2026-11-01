@@ -17,7 +17,7 @@ With several environments, pick one in the belt's Environment control. Its tiles
 
 Turn the claims switch off to pause claims in the picked environment. While claims are paused the factory takes no new `factory:ready` issues in any repo. Runs already under way carry on: sessions, gates and feedback all continue. Turn the switch back on to start claiming again.
 
-Claims also stop while autodeploy has a new build waiting to install. The belt then shows an **Update waiting** banner naming the build and when it installs at the latest, and the Claimed post says `claims held for update`. **Snooze 1 hour** lets claims go on for an hour and holds the install; **Update now** installs it at once, over the runs in progress. Snoozing needs the `orchestration:operate` scope and Update now the `environment:maintain` scope. See [Follow main](/guide/install#follow-main).
+Claims also stop while autodeploy has a new build waiting to install. The belt then shows an **Update waiting** banner naming the build, how long it has waited and when it installs at the latest, and what it waits for: each run in progress (a link to it), a factory pass running, and threads with an agent at work. It installs within 10 minutes of the last of those finishing. The Claimed post says `claims held for update`. **Snooze 1 hour** lets claims go on for an hour and holds the install; **Update now** installs it at once, over the runs in progress. Snoozing needs the `orchestration:operate` scope and Update now the `environment:maintain` scope. See [Follow main](/guide/install#follow-main).
 
 ## A run's page
 

@@ -420,6 +420,8 @@ export function FactoryBelt({
             // A new build, or another environment, starts with its dialog closed.
             key={`${selected.environmentId} ${report.deploy_pending.since} ${report.deploy_pending.commit}`}
             busy={deployBusy.has(selected.environmentId)}
+            environmentId={selected.environmentId}
+            nowMs={nowMs}
             onDeployNow={() => void deploy(selected, true)}
             onSnooze={() => void deploy(selected, false)}
             status={report}

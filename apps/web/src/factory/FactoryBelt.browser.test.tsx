@@ -747,21 +747,33 @@ describe("a waiting update", () => {
   const dialogButton = (label: string) =>
     Array.from(dialog()?.querySelectorAll("button") ?? []).find((b) => b.textContent === label);
 
-  it("says which build waits, until when claims hold, and that runs in progress finish first", async () => {
+  it("says which build waits, how far through its wait it is, and what it installs after", async () => {
     using _state = await setup();
-    const desktop = withUpdate([statusRun(2), statusRun(4, { state: "pr-open" })]);
+    const desktop = withUpdate([statusRun(2), statusRun(4, { state: "pr-open" })], {
+      threads: { running: 1 },
+    });
     await using page = await render(createElement(FactoryBelt, props({ environments: [desktop] })));
     expect(banner(page)?.textContent).toBe(
       "Update waiting." +
-        `Build 0123456 is ready to install. The factory claims no new work until it installs, at ${clock(deployBy)} at the latest, or sooner once the runs in progress finish.` +
+        "Build 0123456 is ready to install. The factory claims no new work until it installs." +
+        `Waiting since ${clock(since)} · 50mInstalls by ${clock(deployBy)} at the latest` +
+        "Installs sooner once these finish:" +
+        "#2Title of 2Building" +
+        "1 thread with an agent at work" +
         "Snooze 1 hourUpdate now",
     );
+    const track = banner(page)!.querySelector('[role="progressbar"]')!;
+    expect(track.getAttribute("aria-valuenow")).toBe("42");
+    // Each run in the way opens its run, in the environment the banner is for.
+    const link = banner(page)!.querySelector("a")!;
+    expect(link.dataset.to).toBe("/factory/$environmentId/$runId");
+    expect(JSON.parse(link.dataset.params!)).toEqual({ environmentId: DESKTOP, runId: runId(2) });
     expect(station(page, "claimed").textContent).toContain(
       `claims held for update since ${clock(since)}`,
     );
   });
 
-  it("leaves out the runs clause with none in progress, and names no sha it does not have", async () => {
+  it("says nothing is in the way with none in progress, and names no sha it does not have", async () => {
     using _state = await setup();
     // A run on PR open, needs info or stuck is not in progress; an unreadable one is.
     const desktop = withUpdate(
@@ -774,7 +786,10 @@ describe("a waiting update", () => {
     );
     await using page = await render(createElement(FactoryBelt, props({ environments: [desktop] })));
     expect(banner(page)?.textContent).toContain(
-      `A new build is ready to install. The factory claims no new work until it installs, at ${clock(deployBy)} at the latest.Snooze`,
+      "A new build is ready to install. The factory claims no new work until it installs.",
+    );
+    expect(banner(page)?.textContent).toContain(
+      "Nothing is in the way: autodeploy installs it at its next check, within 10 minutes.Snooze",
     );
   });
 
@@ -1068,8 +1083,9 @@ describe("a waiting update", () => {
     const desktop = withUpdate([statusRun(2)], { deploy_pending: waiting({ deploy_by: null }) });
     await using page = await render(createElement(FactoryBelt, props({ environments: [desktop] })));
     expect(banner(page)?.textContent).toContain(
-      "The factory claims no new work until it installs.Snooze",
+      "The factory claims no new work until it installs.Installs sooner once this finishes:#2",
     );
+    expect(banner(page)!.querySelector('[role="progressbar"]')).toBeNull();
   });
 
   it("shows the message of an Update now the server refuses", async () => {
