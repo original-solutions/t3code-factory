@@ -41,9 +41,7 @@ export function TodayStrip({ strip }: { strip: Strip | null }) {
   return (
     <section aria-label="Today" className="w-full border-t px-5 pt-2.5 pb-2">
       <div className="flex items-baseline justify-between gap-3">
-        <span className="text-3xs font-semibold uppercase tracking-widest text-muted-foreground">
-          Today
-        </span>
+        <span className="text-xs text-muted-foreground">Today</span>
         <span className="text-xs text-muted-foreground">
           {strip === null
             ? "-"

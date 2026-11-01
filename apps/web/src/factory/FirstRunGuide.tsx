@@ -73,7 +73,7 @@ export function FirstRunGuide({
   return (
     <section
       aria-label="First run"
-      className="@container flex min-w-0 flex-col rounded-lg border bg-card"
+      className="@container flex min-w-0 flex-col rounded-xl border bg-card"
       data-factory-first-run=""
     >
       <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b px-4 py-3">
@@ -91,19 +91,17 @@ export function FirstRunGuide({
       <div className="grid min-w-0 @3xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <FirstRunSteps config={config} place={{ kind: "factory", busy, onResume }} steps={steps} />
         <div className="flex min-w-0 flex-col gap-3 border-t px-4 py-4 @3xl:border-t-0 @3xl:border-l">
-          <h3 className="text-3xs font-semibold uppercase tracking-widest text-muted-foreground">
-            How a run travels
-          </h3>
+          <h3 className="text-xs text-muted-foreground">How a run travels</h3>
           <ol className="flex flex-col gap-1.5">
             {STATIONS.map((station) => {
               const Icon = STATION_ICON[station];
               return (
                 <li
-                  className="flex min-w-0 gap-2.5 rounded-md border border-l-4 border-l-(--factory-station) bg-background/40 px-2.5 py-2"
+                  className="flex min-w-0 gap-2.5 rounded-md border bg-background/40 px-2.5 py-2"
                   data-station={station}
                   key={station}
                 >
-                  <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <Icon className="mt-0.5 size-4 shrink-0 text-(--factory-station)" />
                   <div className="flex min-w-0 flex-col gap-0.5">
                     <p className="flex flex-wrap items-baseline gap-x-2 text-sm font-medium">
                       {STATION_META[station].name}

@@ -1,6 +1,7 @@
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
+import { FactoryCard, FactoryCardHeader } from "./FactoryCard";
 import { formatAge } from "./format";
 import type { RepoDay, RepoHealth, RepoVerdict } from "./repoHealth";
 
@@ -79,8 +80,8 @@ function WeekBars({ days, scale }: { days: ReadonlyArray<RepoDay>; scale: number
 }
 
 /**
- * Every repo on the page as a tile, the ones that need a person first: its verdict on a coloured
- * rail, what else is in flight or waiting, and its week as bars. A tile picks that repo for the
+ * Every repo on the page as a tile, the ones that need a person first: its verdict as a coloured
+ * dot, what else is in flight or waiting, and its week as bars. A tile picks that repo for the
  * whole page (belt, bins and runs); the picked one again goes back to every repo.
  */
 export function RepoBoard({
@@ -113,13 +114,11 @@ export function RepoBoard({
   const picked = selected?.toLowerCase() ?? null;
 
   return (
-    <section aria-label="Repos" className="@container flex min-w-0 flex-col gap-2">
-      <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h2 className="text-sm font-medium">
-          {repos.length} {repos.length === 1 ? "repo" : "repos"}
-        </h2>
-        <span className="min-w-0 text-xs text-muted-foreground">{summary}</span>
-      </div>
+    <FactoryCard aria-label="Repos" className="@container">
+      <FactoryCardHeader
+        eyebrow={`${repos.length} ${repos.length === 1 ? "repo" : "repos"}`}
+        title={summary}
+      />
       <ul className="grid grid-cols-2 gap-2 @3xl:grid-cols-[repeat(auto-fill,minmax(17rem,1fr))]">
         {repos.map((repo) => {
           const slash = repo.repo.indexOf("/");
@@ -136,13 +135,12 @@ export function RepoBoard({
                       aria-label={`${repo.repo}: ${repoHeadline(repo)}`}
                       aria-pressed={on}
                       className={cn(
-                        "flex w-full min-w-0 items-center gap-2 rounded-lg border border-l-4 bg-card py-2 pr-2.5 pl-2.5 text-left outline-none hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                        "flex w-full min-w-0 items-center gap-2 rounded-lg border bg-background/40 px-2.5 py-2 text-left outline-none hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                         on && "bg-accent/40 ring-2 ring-inset ring-ring",
                         picked !== null && !on && "opacity-60 hover:opacity-100",
                       )}
                       data-verdict={repo.verdict}
                       onClick={() => onSelect(on ? null : repo.repo)}
-                      style={{ borderLeftColor: REPO_TONE[repo.verdict] }}
                       type="button"
                     />
                   }
@@ -182,6 +180,6 @@ export function RepoBoard({
           );
         })}
       </ul>
-    </section>
+    </FactoryCard>
   );
 }

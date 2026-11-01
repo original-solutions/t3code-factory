@@ -173,7 +173,7 @@ const binCount = (page: Page, name: string) =>
   page
     .all("section[data-bin]")
     .find((node) => node.dataset.bin === name)
-    ?.querySelector(":scope > div > span.font-mono")?.textContent;
+    ?.querySelector("[data-part=count]")?.textContent;
 /** Opens a post's readout, unless it is the one open: picking that one would fold it. */
 const openStation = async (page: Page, name: string) => {
   if (readout(page)?.dataset.station !== name) await page.click(station(page, name));
@@ -1296,7 +1296,7 @@ describe("what the belt does not know yet", () => {
         const header = page
           .all("section")
           .find((section) => section.getAttribute("aria-label") === name)!
-          .querySelector("h2")!.nextElementSibling!;
+          .querySelector("[data-part=count]")!;
         expect(header.textContent).toBe("-");
       }
       expect(countOf(station(page, "done"))).toBe("-");

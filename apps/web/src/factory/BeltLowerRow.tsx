@@ -1,8 +1,8 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { ChevronRightIcon } from "lucide-react";
+import { useState } from "react";
 
-import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "~/components/ui/collapsible";
 import { Skeleton } from "~/components/ui/skeleton";
@@ -11,7 +11,8 @@ import { cn } from "~/lib/utils";
 import type { FactoryAttentionItem } from "./api";
 import type { BeltRun } from "./belt";
 import { BeltDot } from "./BeltDot";
-import { formatAge, issueRef, parseRunId } from "./format";
+import { FactoryCard, FactoryCardHeader } from "./FactoryCard";
+import { formatAge, issueRef, parseRunId, withoutRepoPrefix } from "./format";
 import { JUMP_TARGET_CLASS, jumpTarget } from "./pageSections";
 import { Ref } from "./Ref";
 import { stuckCauses } from "./stuckCauses";
@@ -54,6 +55,65 @@ function ItemLink({
   return null;
 }
 
+/** Past this many characters an item's message folds to three lines until asked for the rest. */
+const LONG_MESSAGE = 180;
+
+/** One attention item: what raised it and where, its message, where it leads and its Dismiss. */
+function AttentionItem({
+  entry,
+  showEnvironment,
+  nowMs,
+  onDismiss,
+}: {
+  entry: EnvironmentAttention;
+  showEnvironment: boolean;
+  nowMs: number;
+  onDismiss: (items: ReadonlyArray<EnvironmentAttention>) => void;
+}) {
+  const { environmentId, label, item } = entry;
+  const message = withoutRepoPrefix(item.message, item.repo);
+  const long = message.length > LONG_MESSAGE;
+  const [whole, setWhole] = useState(false);
+  return (
+    <li className="flex flex-col gap-1 py-2 text-sm first:pt-0 last:pb-0">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+        <span aria-hidden className="size-2 shrink-0 rounded-full bg-(--factory-info)" />
+        <span className="font-medium">{item.kind}</span>
+        {item.repo ? (
+          <span className="min-w-0 break-all font-mono text-muted-foreground">
+            {item.issue !== null ? (
+              <Ref
+                href={issueRef(item.repo, String(item.issue)).href}
+                text={`${item.repo}#${item.issue}`}
+              />
+            ) : (
+              item.repo
+            )}
+          </span>
+        ) : null}
+        {showEnvironment ? (
+          <span className="min-w-0 break-words text-muted-foreground">{label}</span>
+        ) : null}
+        <span className="ml-auto text-muted-foreground">
+          {formatAge(Date.parse(item.first_seen), nowMs)}
+        </span>
+      </div>
+      <p className={cn("w-full break-words", long && !whole && "line-clamp-3")}>{message}</p>
+      <div className="flex flex-wrap items-center gap-x-3">
+        <ItemLink environmentId={environmentId} item={item} />
+        {long ? (
+          <Button aria-expanded={whole} onClick={() => setWhole(!whole)} size="xs" variant="ghost">
+            {whole ? "Less" : "More"}
+          </Button>
+        ) : null}
+        <Button className="ml-auto" onClick={() => onDismiss([entry])} size="xs" variant="ghost">
+          Dismiss
+        </Button>
+      </div>
+    </li>
+  );
+}
+
 /**
  * The open attention items in the order given, or a line saying none needs a person. With
  * `showEnvironment` each says which environment raised it. `onDismiss` gets the items to dismiss:
@@ -71,67 +131,40 @@ function AttentionSection({
   onDismiss: (items: ReadonlyArray<EnvironmentAttention>) => void;
 }) {
   return (
-    <section
+    <FactoryCard
       aria-label="Needs attention"
-      className={cn("flex min-w-0 flex-col gap-2 rounded-lg", JUMP_TARGET_CLASS)}
+      className={JUMP_TARGET_CLASS}
       {...jumpTarget("attention")}
     >
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-sm font-medium">Needs attention</h2>
-        {items.length === 0 ? null : (
-          <Button onClick={() => onDismiss(items)} size="sm" variant="ghost">
-            Dismiss all
-          </Button>
-        )}
-      </div>
+      <FactoryCardHeader
+        aside={
+          <>
+            {items.length === 0 ? null : (
+              <Button onClick={() => onDismiss(items)} size="xs" variant="ghost">
+                Dismiss all
+              </Button>
+            )}
+            <span className="font-mono text-lg font-semibold leading-none">{items.length}</span>
+          </>
+        }
+        title="Needs attention"
+      />
       {items.length === 0 ? (
-        <p className="rounded-lg border bg-card px-3 py-2 text-sm text-muted-foreground">
-          Nothing needs a person.
-        </p>
-      ) : null}
-      <ul className="flex flex-col gap-2">
-        {items.map((entry) => {
-          const { environmentId, label, item } = entry;
-          return (
-            <li
-              className="flex flex-col gap-1 rounded-lg border bg-card px-3 py-2 text-sm"
-              key={`${environmentId} ${item.id}`}
-            >
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <Badge variant="warning">{item.kind}</Badge>
-                {item.repo ? (
-                  <span className="min-w-0 break-all font-mono text-xs">
-                    {item.issue !== null ? (
-                      <Ref
-                        href={issueRef(item.repo, String(item.issue)).href}
-                        text={`${item.repo}#${item.issue}`}
-                      />
-                    ) : (
-                      item.repo
-                    )}
-                  </span>
-                ) : null}
-                {showEnvironment ? (
-                  <span className="min-w-0 break-words text-xs text-muted-foreground">{label}</span>
-                ) : null}
-                <span className="ml-auto text-xs text-muted-foreground">
-                  {formatAge(Date.parse(item.first_seen), nowMs)}
-                </span>
-              </div>
-              <p className="w-full break-words">{item.message}</p>
-              <div className="flex items-center justify-between gap-3">
-                <ItemLink environmentId={environmentId} item={item} />
-                <div className="ml-auto">
-                  <Button onClick={() => onDismiss([entry])} size="sm" variant="ghost">
-                    Dismiss
-                  </Button>
-                </div>
-              </div>
-            </li>
-          );
-        })}
-      </ul>
-    </section>
+        <p className="text-sm text-muted-foreground">Nothing needs a person.</p>
+      ) : (
+        <ul className="flex max-h-96 flex-col divide-y overflow-y-auto">
+          {items.map((entry) => (
+            <AttentionItem
+              entry={entry}
+              key={`${entry.environmentId} ${entry.item.id}`}
+              nowMs={nowMs}
+              onDismiss={onDismiss}
+              showEnvironment={showEnvironment}
+            />
+          ))}
+        </ul>
+      )}
+    </FactoryCard>
   );
 }
 
@@ -277,23 +310,27 @@ function Bin({
 }) {
   const queue = station === "info" ? binQueue(origin, runs) : undefined;
   return (
-    <section
+    <FactoryCard
       aria-label={name}
-      className={cn(
-        "flex min-w-0 flex-col gap-2 rounded-lg border border-t-3 border-t-(--factory-station) bg-card px-3 py-2.5",
-        JUMP_TARGET_CLASS,
-      )}
+      className={JUMP_TARGET_CLASS}
       data-bin={station}
       data-station={station}
+      rail
       {...jumpTarget(station)}
     >
-      <div className="flex items-center gap-2">
-        <span aria-hidden className="size-2.5 rounded-xs bg-(--factory-station)" />
-        <h2 className="text-sm font-medium">{name}</h2>
-        <span className="ml-auto font-mono text-lg font-semibold leading-none">
-          {known ? runs.length : "-"}
-        </span>
-      </div>
+      <FactoryCardHeader
+        aside={
+          <span className="font-mono text-lg font-semibold leading-none" data-part="count">
+            {known ? runs.length : "-"}
+          </span>
+        }
+        title={
+          <>
+            <span aria-hidden className="size-2.5 rounded-xs bg-(--factory-station)" />
+            {name}
+          </>
+        }
+      />
       {!known ? (
         <Skeleton aria-label={`Loading ${name}`} className="h-5 w-full" role="status" />
       ) : runs.length === 0 ? (
@@ -314,7 +351,7 @@ function Bin({
           ))}
         </ul>
       )}
-    </section>
+    </FactoryCard>
   );
 }
 

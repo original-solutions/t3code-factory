@@ -19,6 +19,7 @@ import {
 
 import { RunAgentLine } from "./RunAgent";
 import { FactoryApiError, type FactoryEntry } from "./api";
+import { FactoryCard } from "./FactoryCard";
 import { FactoryFrame } from "./FactoryFrame";
 import { FactoryKeysButton, FactoryKeysDialog } from "./FactoryKeys";
 import { FactoryError, FactoryLoading, FactoryReadFailure } from "./FactoryNotices";
@@ -281,13 +282,11 @@ export function FactoryRunPage({
             verb="refresh"
           />
         ) : null}
-        <section
+        <FactoryCard
           aria-label="Run"
-          className={cn(
-            "flex flex-col gap-4 rounded-xl border bg-card px-4 py-3.5",
-            station !== null && "border-t-3 border-t-(--factory-station)",
-          )}
+          className="gap-4 py-3.5"
           data-station={station ?? undefined}
+          rail={station !== null}
         >
           <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
             <div className="flex min-w-0 flex-1 basis-72 flex-col gap-1.5">
@@ -320,7 +319,7 @@ export function FactoryRunPage({
           {threadId !== null && !finished ? (
             <RunAgentLine environmentId={environmentId} threadId={threadId} />
           ) : null}
-        </section>
+        </FactoryCard>
         {note ? (
           <p className="break-words text-sm text-muted-foreground" role="status">
             {note}

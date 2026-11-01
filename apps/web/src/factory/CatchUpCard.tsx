@@ -186,13 +186,13 @@ export function CatchUpCard({
                 data-outcome={run.outcome}
                 key={run.key}
               >
-                <span
-                  aria-hidden
-                  className="w-0.5 shrink-0 self-stretch rounded-full"
-                  style={{ background: tone.color }}
-                />
                 <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <div className="flex flex-wrap items-baseline gap-x-2">
+                  <div className="flex flex-wrap items-center gap-x-2">
+                    <span
+                      aria-hidden
+                      className="size-2 shrink-0 rounded-full"
+                      style={{ background: tone.color }}
+                    />
                     <RunLink queue={stoppedQueue} run={run}>
                       {run.issue}
                     </RunLink>

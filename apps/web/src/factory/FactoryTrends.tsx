@@ -1,5 +1,6 @@
 import type { FactoryRunRow } from "./api";
 import "./belt.css";
+import { FactoryCard, FactoryCardHeader } from "./FactoryCard";
 import { factoryTrends, type TrendFigures, type TrendOutcome, type TrendWeek } from "./trends";
 
 /** Bottom to top: what ended well, then what stopped, then what is still going. */
@@ -75,7 +76,7 @@ function Figure({
   delta: ReturnType<typeof change>;
 }) {
   return (
-    <div className="flex min-w-0 flex-col gap-0.5 rounded-lg border bg-card px-3 py-2">
+    <div className="flex min-w-0 flex-col gap-0.5 rounded-lg bg-muted/40 px-3 py-2">
       <span className="text-xs text-muted-foreground">{label}</span>
       <b className="font-mono text-xl font-semibold leading-tight">{value}</b>
       <span className={`text-xs ${delta ? TONE_CLASS[delta.tone] : "text-muted-foreground"}`}>
@@ -210,11 +211,11 @@ function StuckCauses({
   if (causes.length === 0) return null;
   const scale = Math.max(1, ...causes.flatMap(({ perWeek }) => perWeek));
   return (
-    <section aria-label="Why runs got stuck" className="flex min-w-0 flex-col gap-2">
-      <h3 className="text-sm font-medium">Why runs got stuck</h3>
-      <ul className="flex flex-col divide-y rounded-lg border bg-card">
+    <FactoryCard aria-label="Why runs got stuck">
+      <FactoryCardHeader eyebrow="Stuck runs by cause" title="Why runs got stuck" />
+      <ul className="flex flex-col divide-y">
         {causes.slice(0, 6).map(({ cause, total, perWeek }) => (
-          <li className="flex min-w-0 items-center gap-3 px-3 py-2" key={cause}>
+          <li className="flex min-w-0 items-center gap-3 py-2 first:pt-0 last:pb-0" key={cause}>
             <span className="min-w-0 flex-1 text-sm break-words">{cause}</span>
             <span
               aria-label={`Per week: ${perWeek.join(", ")}`}
@@ -240,7 +241,7 @@ function StuckCauses({
           </li>
         ))}
       </ul>
-    </section>
+    </FactoryCard>
   );
 }
 
@@ -264,19 +265,20 @@ export function FactoryTrends({
   const total = weeks.reduce((sum, week) => sum + week.total, 0);
   return (
     <section aria-label="Trends" className="flex min-w-0 flex-col gap-4">
-      <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h2 className="text-sm font-medium">
-          The last {weeks.length} {weeks.length === 1 ? "week" : "weeks"}
-        </h2>
-        <span className="text-xs text-muted-foreground">
+      <FactoryCard>
+        <FactoryCardHeader
+          eyebrow="Runs per week"
+          title={`The last ${weeks.length} ${weeks.length === 1 ? "week" : "weeks"}`}
+        />
+        <p className="-mt-2 text-xs text-muted-foreground">
           {total} runs, each in the week it was claimed. Rates are of the runs that ended.
-        </span>
-      </div>
-      <Figures before={before} now={now} />
-      <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <WeekChart weeks={weeks} />
-        <WeekTable weeks={weeks} />
-      </div>
+        </p>
+        <Figures before={before} now={now} />
+        <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+          <WeekChart weeks={weeks} />
+          <WeekTable weeks={weeks} />
+        </div>
+      </FactoryCard>
       <StuckCauses causes={causes} weeks={weeks} />
     </section>
   );

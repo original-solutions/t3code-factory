@@ -16,6 +16,7 @@ import {
   runState,
   shownState,
   threadIdOf,
+  withoutRepoPrefix,
 } from "./format";
 
 let tick = 0;
@@ -243,5 +244,23 @@ describe("issueRef, prRef and prUrlOf", () => {
     );
     expect(prUrlOf([opened(1), entry("finished", { pr_url: null })])).toBe("https://x.test/pull/1");
     expect(prUrlOf([entry("claimed", {})])).toBeNull();
+  });
+});
+
+describe("withoutRepoPrefix", () => {
+  it("drops the repo the item already names from the front of its message", () => {
+    expect(withoutRepoPrefix("acme/web: project config not loaded", "acme/web")).toBe(
+      "project config not loaded",
+    );
+    expect(withoutRepoPrefix("Acme/Web:  config", "acme/web")).toBe("config");
+  });
+
+  it("keeps a message that does not start with the repo, or names no repo", () => {
+    expect(withoutRepoPrefix("the pass failed: acme/web: x", "acme/web")).toBe(
+      "the pass failed: acme/web: x",
+    );
+    expect(withoutRepoPrefix("acme/webapp: x", "acme/web")).toBe("acme/webapp: x");
+    expect(withoutRepoPrefix("acme/web: x", null)).toBe("acme/web: x");
+    expect(withoutRepoPrefix("acme/web:", "acme/web")).toBe("acme/web:");
   });
 });

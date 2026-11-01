@@ -1426,7 +1426,7 @@ describe("FactoryPage filters", () => {
       page
         .all("section[data-bin]")
         .find((node) => node.dataset.bin === "stuck")
-        ?.querySelector(":scope > div > span.font-mono")?.textContent;
+        ?.querySelector("[data-part=count]")?.textContent;
     const failing = () => {
       twoEnvironments();
       state.runs = resource({ status: "error", error: new Error("timed out") });

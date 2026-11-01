@@ -3,6 +3,7 @@ import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { cn } from "~/lib/utils";
 
 import type { FactoryEntry } from "./api";
+import { FactoryCard, FactoryCardHeader } from "./FactoryCard";
 import { prRef, prUrlOf } from "./format";
 import { Ref } from "./Ref";
 import { runReport, type ReportMarkKind, type ReportStage } from "./runReport";
@@ -48,14 +49,12 @@ export function RunReportCard({ entries }: { entries: ReadonlyArray<FactoryEntry
     ", ",
   );
   return (
-    <section
-      aria-label="Run report"
-      className="flex flex-col gap-3 rounded-xl border bg-card px-4 py-3"
-    >
-      <header className="flex flex-wrap items-end gap-x-3 gap-y-1">
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <p className="text-xs text-muted-foreground">How it went</p>
-          <h2 className="flex flex-wrap items-center gap-x-2 text-base font-medium">
+    <FactoryCard aria-label="Run report">
+      <FactoryCardHeader
+        aside={report.firstTry ? <Badge variant="success">First try</Badge> : null}
+        eyebrow="How it went"
+        title={
+          <>
             {merged ? (
               <PullRequestGlyph.merged aria-hidden className="size-4 text-success-foreground" />
             ) : (
@@ -63,14 +62,9 @@ export function RunReportCard({ entries }: { entries: ReadonlyArray<FactoryEntry
             )}
             {formatSpan(report.totalMs)} from claim to {merged ? "merge" : "close"}
             {pr ? <Ref {...pr} /> : null}
-          </h2>
-        </div>
-        {report.firstTry ? (
-          <Badge className="sm:ml-auto" variant="success">
-            First try
-          </Badge>
-        ) : null}
-      </header>
+          </>
+        }
+      />
       <div className="flex flex-col gap-1">
         <div
           aria-label={`Where the time went: ${split}`}
@@ -129,6 +123,6 @@ export function RunReportCard({ entries }: { entries: ReadonlyArray<FactoryEntry
             </li>
           ))}
       </ul>
-    </section>
+    </FactoryCard>
   );
 }

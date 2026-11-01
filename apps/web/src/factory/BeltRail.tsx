@@ -286,7 +286,7 @@ function DoneBin({ belt, known }: { belt: Belt; known: boolean }) {
   return (
     <div
       className={cn(
-        "flex min-h-16 min-w-0 items-center gap-3 overflow-hidden rounded-md border border-l-4 border-l-(--factory-station) bg-card px-3 py-2",
+        "flex min-h-16 min-w-0 items-center gap-3 overflow-hidden rounded-md border bg-card px-3 py-2",
         PLACEMENT.done.lane,
       )}
       data-bin="done"

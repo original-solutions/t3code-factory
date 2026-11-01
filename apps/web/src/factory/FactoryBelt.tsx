@@ -31,7 +31,7 @@ import { useRunStop } from "./RunActionBar";
 import { TouchLink } from "./TouchLink";
 import type { FactoryEnvironment, FactoryResource } from "./useFactoryData";
 
-const LABEL = "text-3xs font-semibold uppercase tracking-widest text-muted-foreground";
+const LABEL = "text-xs text-muted-foreground";
 
 const slotsText = ({ used, max }: FactoryStatus["slots"]) =>
   max === null ? `${used}` : `${used}/${max}`;
@@ -429,7 +429,7 @@ export function FactoryBelt({
       <section
         aria-label="Production belt"
         className={cn(
-          "@container flex min-w-0 flex-col gap-4 rounded-lg border bg-card p-4",
+          "@container flex min-w-0 flex-col gap-4 rounded-xl border bg-card p-4",
           JUMP_TARGET_CLASS,
         )}
         {...jumpTarget("belt")}

@@ -180,6 +180,15 @@ export interface LinkRef {
 }
 
 /** An issue of `owner/repo`: `#20` linked to GitHub when numeric, else the bare text. */
+/** A message without the `owner/repo:` it opens with when the item already names that repo. */
+export function withoutRepoPrefix(message: string, repo: string | null): string {
+  if (repo === null) return message;
+  const prefix = `${repo.toLowerCase()}:`;
+  if (!message.toLowerCase().startsWith(prefix)) return message;
+  const rest = message.slice(prefix.length).trim();
+  return rest === "" ? message : rest;
+}
+
 export const issueRef = (repo: string, issue: string): LinkRef =>
   /^[0-9]+$/.test(issue)
     ? { text: `#${issue}`, href: `https://github.com/${repo}/issues/${issue}` }

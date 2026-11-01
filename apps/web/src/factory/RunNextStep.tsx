@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 
+import { FactoryCard, FactoryCardHeader } from "./FactoryCard";
 import type { LinkRef } from "./format";
 import type { NextStep } from "./nextStep";
 import { formatSpan } from "./runStory";
@@ -92,15 +93,14 @@ export function RunNextStep({
   }
 
   return (
-    <section
+    <FactoryCard
       aria-label="Next step"
-      className="flex flex-col overflow-hidden rounded-xl border bg-card"
+      className="gap-0 overflow-hidden px-0 py-0"
       data-next-step={step.kind}
     >
-      <header className="flex flex-col gap-0.5 px-4 pt-3 pb-3">
-        <p className="text-xs text-muted-foreground">What to do next</p>
-        <h2 className="break-words text-base font-medium">{step.cause}</h2>
-      </header>
+      <div className="px-4 py-3">
+        <FactoryCardHeader eyebrow="What to do next" title={step.cause} />
+      </div>
       <ol className="flex flex-col px-4 pb-4">
         <Step n={1} title={step.fix}>
           {step.failedGate.length > 0 ? (
@@ -148,6 +148,6 @@ export function RunNextStep({
           </p>
         </div>
       ) : null}
-    </section>
+    </FactoryCard>
   );
 }
