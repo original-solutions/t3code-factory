@@ -2151,6 +2151,11 @@ describe("retrying a fetch the network dropped", () => {
       phrase: "Could not resolve host",
     },
     { stderr: "fatal: early EOF", phrase: "early EOF" },
+    {
+      stderr:
+        "fatal: unable to access 'https://github.com/x/y.git/': Get \"https://api.github.com/user\": unexpected EOF",
+      phrase: "unexpected EOF",
+    },
   ];
 
   it.live.each(flaky)(

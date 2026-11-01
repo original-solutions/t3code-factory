@@ -1688,8 +1688,9 @@ describe("liveWorld", () => {
     }),
   );
 
-  describe("a failed read is transient only when GitHub never received the call", () => {
+  describe("a failed read is transient only when another try may well succeed", () => {
     const TLS = `Get "https://api.github.com/repos/x/y/contents/.dw/config.yml": net/http: TLS handshake timeout`;
+    const EOF = `Get "https://api.github.com/repos/x/y/contents/.dw/config.yml": unexpected EOF`;
     // Past every wait between the gh attempts.
     const PAST_RETRIES = 60_000;
 
@@ -1708,18 +1709,20 @@ describe("liveWorld", () => {
 
     it.effect("a transient config read with a last good copy leaves the reading", () =>
       Effect.gen(function* () {
-        const { process } = baseConfigGh({ stderr: TLS });
-        // The copy is keyed lower-cased, as the pass keys it, whatever case the repo is watched in.
-        const fiber = yield* Effect.forkChild(
-          readProject(process, checkout("main").root, true, "RawPHP/Softfac"),
-          { startImmediately: true },
-        );
-        yield* TestClock.adjust(PAST_RETRIES);
-        const { result, readings } = yield* Fiber.join(fiber);
-        assert.isTrue(Result.isFailure(result));
-        if (Result.isFailure(result)) assert.strictEqual(result.failure.transient, true);
-        // The pass runs on the copy, so the settings page is not told the config failed.
-        assert.deepStrictEqual(readings, []);
+        for (const stderr of [TLS, EOF]) {
+          const { process } = baseConfigGh({ stderr });
+          // The copy is keyed lower-cased, as the pass keys it, whatever case the repo is watched in.
+          const fiber = yield* Effect.forkChild(
+            readProject(process, checkout("main").root, true, "RawPHP/Softfac"),
+            { startImmediately: true },
+          );
+          yield* TestClock.adjust(PAST_RETRIES);
+          const { result, readings } = yield* Fiber.join(fiber);
+          assert.isTrue(Result.isFailure(result), stderr);
+          if (Result.isFailure(result)) assert.strictEqual(result.failure.transient, true, stderr);
+          // The pass runs on the copy, so the settings page is not told the config failed.
+          assert.deepStrictEqual(readings, [], stderr);
+        }
       }),
     );
 
@@ -1750,18 +1753,23 @@ describe("liveWorld", () => {
       }),
     );
 
-    it.effect("a login read that GitHub never received is transient", () =>
-      Effect.gen(function* () {
-        const world = worldOf(failing(TLS));
-        const fiber = yield* Effect.forkChild(
-          Effect.result(world.trackerUser({ repo: REPO, path: "/p" })),
-          { startImmediately: true },
-        );
-        yield* TestClock.adjust(PAST_RETRIES);
-        const result = yield* Fiber.join(fiber);
-        assert.isTrue(Result.isFailure(result));
-        if (Result.isFailure(result)) assert.strictEqual(result.failure.transient, true);
-      }),
+    it.effect(
+      "a login read that GitHub never received, or that hit an unexpected EOF, is transient",
+      () =>
+        Effect.gen(function* () {
+          for (const stderr of [TLS, `Get "https://api.github.com/user": unexpected EOF`]) {
+            const world = worldOf(failing(stderr));
+            const fiber = yield* Effect.forkChild(
+              Effect.result(world.trackerUser({ repo: REPO, path: "/p" })),
+              { startImmediately: true },
+            );
+            yield* TestClock.adjust(PAST_RETRIES);
+            const result = yield* Fiber.join(fiber);
+            assert.isTrue(Result.isFailure(result), stderr);
+            if (Result.isFailure(result))
+              assert.strictEqual(result.failure.transient, true, stderr);
+          }
+        }),
     );
 
     it.effect("a login read GitHub refused is not transient", () =>

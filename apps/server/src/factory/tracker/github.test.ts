@@ -43,6 +43,7 @@ import {
   type GitHubError,
   isNotFound,
   isNotReceived,
+  isTransientRead,
   isPlainRefName,
   isSafeBranchName,
   makeGitHub,
@@ -999,6 +1000,30 @@ it("only a failure GitHub never received is not received", () => {
     new GitHubRateLimited({ args, stderr: "net/http: TLS handshake timeout" }),
   ];
   for (const other of others) assert.isFalse(isNotReceived(other), other._tag);
+});
+
+it("a read's unexpected EOF is transient, but GitHub may have received it", () => {
+  const args = ["api", "user"];
+  const failed = (stderr: string) => new GitHubFailed({ args, status: 1, stderr });
+  const eofs = [
+    failed('Get "https://api.github.com/user": unexpected EOF'),
+    failed('Post "https://api.github.com/graphql": unexpected EOF'),
+  ];
+  for (const eof of eofs) {
+    assert.isTrue(isTransientRead(eof), eof.stderr);
+    assert.isFalse(isNotReceived(eof), eof.stderr);
+  }
+  assert.isTrue(isTransientRead(failed("net/http: TLS handshake timeout")));
+  const others: ReadonlyArray<GitHubError> = [
+    failed("HTTP 502: Bad Gateway (https://api.github.com/graphql)"),
+    failed("failed to parse JSON: unexpected EOF"),
+    failed(
+      'Get "https://api.github.com/x": read tcp 10.0.0.2:5000->1.2.3.4:443: read: connection reset by peer',
+    ),
+    new GitHubTimedOut({ args, seconds: 30 }),
+    new GitHubRateLimited({ args, stderr: 'Get "https://api.github.com/user": unexpected EOF' }),
+  ];
+  for (const other of others) assert.isFalse(isTransientRead(other), other._tag);
 });
 
 it.effect("a signal-killed gh is a failure with status -1", () =>
@@ -6740,7 +6765,6 @@ describe("retrying a call GitHub never received", () => {
     Effect.gen(function* () {
       const stderrs = [
         "HTTP 502: Bad Gateway (https://api.github.com/graphql)",
-        'Post "https://api.github.com/graphql": unexpected EOF',
         'Get "https://api.github.com/x": read tcp 10.0.0.2:5000->140.82.112.6:443: read: connection reset by peer',
         'Get "https://api.github.com/x": read tcp 10.0.0.2:5000->140.82.112.6:443: i/o timeout',
         "HTTP 404: Not Found",
@@ -6751,6 +6775,70 @@ describe("retrying a call GitHub never received", () => {
         assert.strictEqual(error._tag, "GitHubFailed", stderr);
         assert.strictEqual(t.inputs.length, 1, stderr);
       }
+    }),
+  );
+
+  it.effect("a TLS timeout, then an unexpected EOF, then an answer: the read succeeds", () =>
+    Effect.gen(function* () {
+      const logs: Array<string> = [];
+      const capture = Logger.make(({ message }) => {
+        logs.push(String(Array.isArray(message) ? message[0] : message));
+      });
+      const t = setup(
+        fail(1, 'Get "https://api.github.com/user": net/http: TLS handshake timeout'),
+        fail(1, 'Get "https://api.github.com/user": unexpected EOF'),
+        reply('{"login":"rawphp"}'),
+      );
+      const fiber = yield* Effect.forkChild(
+        t
+          .ok(t.github.login())
+          .pipe(Effect.provide(Logger.layer([capture], { mergeWithExisting: false }))),
+        { startImmediately: true },
+      );
+      yield* TestClock.adjust(2_000 + 5_000 + 2_000);
+      assert.strictEqual(yield* Fiber.join(fiber), "rawphp");
+      assert.strictEqual(t.inputs.length, 3);
+      assert.match(logs[0]!, /^`gh api user` attempt 1 of 5 failed \(TLS handshake timeout\)/);
+      assert.match(logs[1]!, /^`gh api user` attempt 2 of 5 failed \(unexpected EOF\)/);
+    }),
+  );
+
+  it.effect("a GraphQL read's unexpected EOF is retried", () =>
+    Effect.gen(function* () {
+      const t = setup(
+        fail(1, 'Post "https://api.github.com/graphql": unexpected EOF'),
+        reply(LIST_ONE),
+      );
+      const fiber = yield* Effect.forkChild(t.ok(t.github.listIssues("ready")), {
+        startImmediately: true,
+      });
+      yield* TestClock.adjust("3 seconds");
+      assert.strictEqual((yield* Fiber.join(fiber)).items.length, 1);
+      assert.strictEqual(t.inputs.length, 2);
+    }),
+  );
+
+  it.effect("a read that ends in unexpected EOF on all five attempts returns that failure", () =>
+    Effect.gen(function* () {
+      const eof = 'Post "https://api.github.com/graphql": unexpected EOF';
+      const t = setup(fail(1, eof), fail(1, eof), fail(1, eof), fail(1, eof), fail(1, eof));
+      const fiber = yield* Effect.forkChild(t.err(t.github.listIssues("ready")), {
+        startImmediately: true,
+      });
+      yield* TestClock.adjust(2_000 + 5_000 + 15_000 + 30_000 + 4_000);
+      const error = yield* Fiber.join(fiber);
+      assert.strictEqual(t.inputs.length, 5);
+      assert.strictEqual(error._tag, "GitHubFailed");
+      if (error._tag === "GitHubFailed") assert.strictEqual(error.stderr, eof);
+    }),
+  );
+
+  it.effect("a write's unexpected EOF is not retried: GitHub may have applied it", () =>
+    Effect.gen(function* () {
+      const t = setup(fail(1, 'Post "https://api.github.com/graphql": unexpected EOF'), reply(""));
+      const error = yield* t.err(t.github.postComment(6, "hello"));
+      assert.strictEqual(error._tag, "GitHubFailed");
+      assert.strictEqual(t.inputs.length, 1);
     }),
   );
 
