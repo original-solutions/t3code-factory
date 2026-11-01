@@ -55,6 +55,8 @@ Under the belt, the Factory page lists what needs a person in three bins: Needs 
 
 An item for a stuck or held run links to it, and one for a config problem links to Settings → Factory; the archived-worktree item names its run in the message. Each new item also posts a macOS notification, as does a run abandoned because its issue was closed, on the server's Mac, unless `notify` is `false` in the [machine config](/guide/machine-config).
 
+The app you watch from tells you too, on any machine, following Settings → Notifications: while T3 Code has focus, a toast names the new item with a button to its run (none on a Factory page, which already shows it); while it doesn't, a system notification does the same. Several new items at once arrive as one notice with their count. The app hears of an item at its next status read, every half minute while you're using it.
+
 An item clears itself when its cause goes away: the config loads, a pass succeeds, the issue is claimed again, the disk has room again. An archived-worktree item stays until its issue is claimed again, so dismiss it once you've looked. Dismiss an item to hide it once you've dealt with it. A dismissed item stays hidden until its cause clears and comes back.
 
 ## Settings → Factory
