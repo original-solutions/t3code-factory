@@ -12,6 +12,8 @@ import "./belt.css";
 import { BeltDot } from "./BeltDot";
 import { BeltLowerRow, type EnvironmentAttention } from "./BeltLowerRow";
 import { useBeltMotion } from "./beltMotion";
+import { useBeltNews } from "./beltNews";
+import { BeltChanges } from "./BeltChanges";
 import { BeltRail } from "./BeltRail";
 import { MachineRoster, useSecond } from "./MachineRoster";
 import type { QueueOrigin } from "./runQueue";
@@ -356,6 +358,13 @@ export function FactoryBelt({
   );
   // The belt as drawn: a bin does not count a run until the run has slid into it.
   const { shown, tileRef, layerRef } = useBeltMotion(belt, open !== undefined);
+  const heard = useBeltNews(
+    belt,
+    open !== undefined,
+    `${repo ?? ""} ${environments.map(({ environmentId }) => environmentId).join(" ")}`,
+    showEnvironment,
+    nowMs,
+  );
   // What the recent runs lists say (the strip, Done, the bins, and the rail's first pick) is known
   // once some status has answered and no answered environment's list is still loading. A list that
   // failed before its first answer adds nothing; the page names it. The rail's pick is made then,
@@ -489,6 +498,9 @@ export function FactoryBelt({
         ) : (
           <Skeleton aria-label="Loading belt" className="h-40 w-full" role="status" />
         )}
+        {firstRun === false && open !== undefined ? (
+          <BeltChanges at={heard.at} news={heard.news} />
+        ) : null}
         {stopNote ? (
           <p className="break-words text-sm text-muted-foreground" role="status">
             {stopNote}

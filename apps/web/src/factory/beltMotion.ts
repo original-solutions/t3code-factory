@@ -40,7 +40,7 @@ interface Departed {
 const reducedMotion = () =>
   window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
 
-const samePlaces = (a: ReadonlyMap<string, Place>, b: ReadonlyMap<string, Place>) =>
+export const samePlaces = (a: ReadonlyMap<string, Place>, b: ReadonlyMap<string, Place>) =>
   a.size === b.size && Array.from(a).every(([key, place]) => b.get(key) === place);
 
 /** Plays `cls`, a one-shot animation of belt.css, from its start, and drops it when it ends. */

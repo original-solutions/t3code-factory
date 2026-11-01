@@ -2268,6 +2268,25 @@ describe("tile motion", () => {
       expect(page.all(".factory-tile-enter, .factory-tile-glow, .factory-post-flash")).toEqual([]);
     });
 
+    it("says what moved in a live region that was in the page before it moved, and a filter change says nothing", async () => {
+      using _state = await setup();
+      await using page = await render(
+        createElement(FactoryBelt, world([statusRun(2)], [recentRow(2)])),
+      );
+      using _motion = reduceMotion();
+      const news = () =>
+        page.all('p[role="status"]').find((node) => /^(Latest|$)/.test(node.textContent ?? ""))!;
+      const region = news();
+      expect(region.textContent).toBe("");
+      await page.rerender(createElement(FactoryBelt, world([gateRun(2)], [recentRow(2)])));
+      expect(news()).toBe(region);
+      expect(region.textContent).toMatch(
+        /^Latest change \d\d:\d\d: \S+ #2 moved from Building to Gate\.$/,
+      );
+      await page.rerender(createElement(FactoryBelt, { ...world([], []), repo: "someone/else" }));
+      expect(region.textContent).toBe("");
+    });
+
     it("changes a bin's count at once, and fades a new run in with nothing", async () => {
       using _state = await setup();
       await using page = await render(
