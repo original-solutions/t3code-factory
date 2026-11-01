@@ -48,8 +48,11 @@ export function RunNextStep({
   issue,
   prUrl,
   runKey,
+  onShowGate,
 }: {
   step: NextStep;
+  /** Opens the gate output and brings it into view. */
+  onShowGate: () => void;
   /** Names the run's answer drafts: its environment and id. */
   runKey: string;
   environmentId: EnvironmentId;
@@ -73,11 +76,7 @@ export function RunNextStep({
     );
   } else if (step.focus === "gate") {
     action = (
-      <Button
-        onClick={() => document.getElementById(GATE_OUTPUT_ID)?.scrollIntoView({ block: "start" })}
-        size="sm"
-        variant="outline"
-      >
+      <Button onClick={onShowGate} size="sm" variant="outline">
         <ArrowDownIcon />
         Show the gate output
       </Button>

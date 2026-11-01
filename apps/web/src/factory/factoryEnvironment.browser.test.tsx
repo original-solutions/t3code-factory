@@ -673,13 +673,16 @@ describe("the run page follows its environment", () => {
     const page = await show(createElement(FactoryRunPage, { environmentId: ENV_2, runId: RUN_2 }));
     expect(calls.runRead.length).toBeGreaterThan(0);
     expect(calls.runRead.every(([env, id]) => env === ENV_2 && id === RUN_2)).toBe(true);
-    expect(calls.gitHubRead).toEqual([[ENV_2, RUN_2]]);
-    expect(page.text()).toContain("GitHub can't be read from Studio");
     // The header's thread link and the timeline's session link.
     expect(linksTo(page, "/$environmentId/$threadId")).toEqual([
       { environmentId: ENV_2, threadId: "thread-9" },
       { environmentId: ENV_2, threadId: "thread-9" },
     ]);
+    // A building run opens on its timeline; GitHub is read only once its tab is opened.
+    expect(calls.gitHubRead).toEqual([]);
+    await page.click(page.all('button[data-tab="github"]')[0]!);
+    await vi.waitFor(() => expect(page.text()).toContain("GitHub can't be read from Studio"));
+    expect(calls.gitHubRead).toEqual([[ENV_2, RUN_2]]);
     await page.click(page.button("Stop")!);
     await act(() => vi.advanceTimersByTimeAsync(STOP_GRACE_MS));
     expect(calls.stop).toEqual([[ENV_2, RUN_2]]);

@@ -80,17 +80,17 @@ A stuck or needs-info run's page opens on **What to do next**. Its heading is th
 
 A run whose pull request was merged or closed opens on **How it went**: the time from claim to merge or close, and a bar of where that time went (the agent building, the gate, the pull request waiting on review). Dots on the bar mark where the run went back to the agent (a gate failure, review feedback) or the base branch moved. **First try** means it merged with nothing sent back.
 
-### The issue and the pull request
+### Timeline, Gate, Issue & PR and Ledger
 
-Above the timeline the page shows what was asked and what the factory made, as GitHub has them now. **The ask** is the issue: its title, who wrote it, its labels and its text. **What it made** is the run's pull request: its state, its review decision, the lines added and removed, the files that changed most, and its description. Long text is folded; **Show all** opens it. The page reads GitHub once when it opens, through the factory's own `gh`, and writes nothing. When that `gh` is not signed in on the run's machine, one line says so, with links to the issue and pull request on GitHub.
+Below the run card and its lead, the rest of the run sits behind one bar: **Timeline**, **Gate**, **Issue & PR** and **Ledger**. The page opens the part that matters for the run's state: the timeline while it builds, the gate output when the gate stopped it, the issue when it asked questions or ran out of time, and the pull request once it has one and the agent is done. Pick another part and it stays picked while the page refreshes. The bar stays at the top as a long part scrolls.
 
-### The timeline, the gate and the ledger
+**Timeline** is what happened, in plain words, timed from the claim. Each gate run is one step with its commands, each agent session links to its own thread, and the summary above it says how long the run took and how many gate runs failed.
 
-Below these is the run's timeline: what happened, in plain words, timed from the claim. Each gate run is one step with its commands, each agent session links to its own thread, and the summary above it says how long the run took and how many gate runs failed.
+**Gate**, once a gate has run, is the last gate's output, with a dot for whether it passed: each command with its exit code and duration. When a command failed, it shows the failing lines of its output with a few lines around them, numbered and marked, with the whole output a click away and a button to copy it.
 
-Once a gate has run, **Last gate output** comes next: each command with its exit code and duration. When a command failed, it shows the failing lines of its output with a few lines around them, numbered and marked, with the whole output a click away and a button to copy it.
+**Issue & PR** shows what was asked and what the factory made, as GitHub has them now. **The ask** is the issue: its title, who wrote it, its labels and its text. **What it made** is the run's pull request: its state, its review decision, the lines added and removed, the files that changed most, and its description. Long text is folded; **Show all** opens it. The page reads GitHub once, when this part first opens, through the factory's own `gh`, and writes nothing. When that `gh` is not signed in on the run's machine, one line says so, with links to the issue and pull request on GitHub.
 
-Last is the raw ledger, every event the factory recorded for the run, closed until you open it.
+**Ledger** is every event the factory recorded for the run, with their count on the bar.
 
 ### Moving between runs
 

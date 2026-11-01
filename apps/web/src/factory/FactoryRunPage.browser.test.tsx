@@ -122,8 +122,9 @@ const runPage = () =>
 const mount = () => render(runPage());
 
 type Page = Awaited<ReturnType<typeof render>>;
-const openLedger = (page: Page) =>
-  page.click(page.all("button").find((b) => b.textContent?.startsWith("Raw ledger"))!);
+const showPart = (page: Page, tab: string) => page.click(page.all(`button[data-tab="${tab}"]`)[0]!);
+const openLedger = (page: Page) => showPart(page, "ledger");
+const shownPart = (page: Page) => page.all("[data-panel]")[0]?.dataset.panel;
 
 function setup(): Disposable {
   state.environmentId = "env-1";
@@ -195,7 +196,7 @@ describe("FactoryRunPage", () => {
     state.run = resource({ data: detail([]) });
     await using page = await mount();
     expect(page.all("a").some((a) => a.textContent === "Thread")).toBe(false);
-    expect(page.text()).not.toContain("Last gate output");
+    expect(page.all('button[data-tab="gate"]')).toHaveLength(0);
     expect(page.text()).toContain("Nothing has happened yet");
     await openLedger(page);
     expect(page.text()).toContain("No ledger entries");
@@ -221,9 +222,12 @@ describe("FactoryRunPage", () => {
     expect(text).toContain("pnpm lint");
     expect(text).toContain("pnpm test");
     expect(text).toContain("exit 2 · 26s");
-    // The raw ledger opens on demand.
-    expect(text).toContain("Raw ledger (8 entries)");
+    // A building run opens on its timeline; the gate and the raw ledger are a tap away.
+    expect(shownPart(page)).toBe("timeline");
+    expect(page.all('button[data-tab="ledger"]')[0]!.textContent).toBe("Ledger8");
     expect(text).not.toContain("session_launched");
+    await showPart(page, "gate");
+    expect(page.text()).toContain("Last gate output");
     await openLedger(page);
     expect(page.text()).toContain("session_launched");
     expect(page.text()).toContain("thread-9");
@@ -296,6 +300,7 @@ describe("FactoryRunPage", () => {
       ]),
     });
     await using page = await mount();
+    await showPart(page, "gate");
     const section = page.all("#factory-gate-output")[0]!;
     expect(section.textContent).toContain("Where it failed");
     expect(section.textContent).toContain("pnpm test · exit code 2");
@@ -318,6 +323,7 @@ describe("FactoryRunPage", () => {
   it("renders the relaunch message as plain text", async () => {
     using _state = setup();
     await using page = await mount();
+    await showPart(page, "gate");
     const pre = page.all("pre")[0]!;
     expect(pre.textContent).toBe("<b>tests failed</b> fix them");
     expect(pre.children).toHaveLength(0);
@@ -328,6 +334,7 @@ describe("FactoryRunPage", () => {
     using _state = setup();
     state.run = resource({ data: detail(BUILDING, { truncated: true, skipped: 4 }) });
     await using page = await mount();
+    await openLedger(page);
     const text = page.text();
     expect(text).toContain("The last line of the ledger was unreadable and was dropped.");
     expect(text).not.toContain("older entries");
@@ -472,6 +479,26 @@ describe("FactoryRunPage", () => {
     await using page = await mount();
     expect(page.all('[data-slot="badge"]')[0]?.textContent).toBe("Closed");
     expect(page.text()).not.toContain("Step:");
+    expect(shownPart(page)).toBe("github");
+  });
+
+  it("opens a run stuck on its gate on the gate output, and the fix's button comes back to it", async () => {
+    using _state = setup();
+    state.run = resource({
+      data: detail([
+        ...BUILDING,
+        entry("stuck", { reason: "the gate failed after 3 attempts" }),
+        entry("state_changed", { from: "building", to: "stuck" }),
+        entry("finished", { outcome: "stuck" }),
+      ]),
+    });
+    await using page = await mount();
+    expect(shownPart(page)).toBe("gate");
+    await showPart(page, "timeline");
+    expect(page.all("#factory-gate-output")).toHaveLength(0);
+    await page.click(page.button("Show the gate output")!);
+    expect(shownPart(page)).toBe("gate");
+    expect(page.all("#factory-gate-output")).toHaveLength(1);
   });
 
   it("shows Stop only while the run is building and not finished", async () => {
@@ -494,20 +521,15 @@ describe.each([375, 1280])("FactoryRunPage at %i px", (width) => {
   it(narrow ? "lists the ledger, not a table" : "keeps the ledger table", async () => {
     using _state = setup();
     await using page = await mountAt();
+    for (const part of ["pnpm lint", "pnpm test", "0.4s", "exit 2 · 26s"]) {
+      expect(page.text()).toContain(part);
+    }
     await openLedger(page);
     expect(page.all("table")).toHaveLength(narrow ? 0 : 1);
     const lists = page.all("ul").filter((ul) => ul.getAttribute("data-layout") === "list");
     expect(lists).toHaveLength(narrow ? 1 : 0);
-    const text = page.text();
-    for (const part of [
-      "pnpm lint",
-      "pnpm test",
-      "0.4s",
-      "exit 2 · 26s",
-      "session_launched",
-      "thread-9",
-    ]) {
-      expect(text).toContain(part);
+    for (const part of ["session_launched", "thread-9"]) {
+      expect(page.text()).toContain(part);
     }
     await page.unmount();
   });
@@ -655,6 +677,7 @@ describe("FactoryRunPage opened from a list", () => {
       },
     });
     await using page = await mount();
+    await showPart(page, "github");
     const issue = page.all('[aria-label="The issue"]')[0]!;
     expect(issue.textContent).toContain("The ask · issue #20 by tom");
     expect(issue.textContent).toContain("Sync keeps failing");
@@ -675,6 +698,7 @@ describe("FactoryRunPage opened from a list", () => {
       data: { id: RUN_ID, issue: { kind: "signed-out", message: "x" }, pr: null },
     });
     await using page = await mount();
+    await showPart(page, "github");
     const card = page.all('[aria-label="GitHub"]')[0]!;
     expect(card.textContent).toContain("GitHub can't be read from env-1");
     expect(card.textContent).toContain("isn't signed in here");
