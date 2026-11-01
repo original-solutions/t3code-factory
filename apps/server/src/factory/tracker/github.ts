@@ -1124,7 +1124,7 @@ export const makeGitHub = (options: GitHubOptions) => {
    * never received ({@link NOT_RECEIVED}), or, when `read`, after an unexpected EOF too. The
    * last failure is returned as it is, so a caller sees what it would have without the retries.
    */
-  const retryNotReceived = Effect.fn("GitHub.retryNotReceived")(function* <A>(
+  const retryTransient = Effect.fn("GitHub.retryTransient")(function* <A>(
     attempt: Effect.Effect<A, GitHubError, FactoryProcess>,
     read = false,
   ): GitHubGen<A> {
@@ -1145,16 +1145,16 @@ export const makeGitHub = (options: GitHubOptions) => {
     }
   });
 
-  /** Runs `gh` with {@link retryNotReceived}, each attempt with the full time limit. */
+  /** Runs `gh` with {@link retryTransient}, each attempt with the full time limit. */
   const gh = Effect.fn("GitHub.gh")(function* (args: ReadonlyArray<string>): GitHubGen<string> {
-    return yield* retryNotReceived(ghOnce(args));
+    return yield* retryTransient(ghOnce(args));
   });
 
   /** {@link gh} for a call that changes nothing on GitHub, so an unexpected EOF is retried too. */
   const ghRead = Effect.fn("GitHub.ghRead")(function* (
     args: ReadonlyArray<string>,
   ): GitHubGen<string> {
-    return yield* retryNotReceived(ghOnce(args), true);
+    return yield* retryTransient(ghOnce(args), true);
   });
 
   const parseError = (args: ReadonlyArray<string>, expected: string) =>
@@ -2284,7 +2284,7 @@ export const makeGitHub = (options: GitHubOptions) => {
       "--add-label",
       stateLabel(to),
     ];
-    return yield* retryNotReceived(
+    return yield* retryTransient(
       Effect.gen(function* () {
         const stdout = yield* ghOnce(view);
         const current = yield* decode(AssigneesView, view, "an object with `assignees`", stdout);
