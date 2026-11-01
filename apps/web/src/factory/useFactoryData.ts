@@ -245,6 +245,15 @@ const snapshot = (key: string): Loaded<unknown> => {
   return store === undefined || tooOld(store, Date.now()) ? LOADING : store.state;
 };
 
+/**
+ * A resource's answer as its store holds it now, without subscribing: for a value built in an
+ * earlier render that is read again later, such as a palette submenu the palette kept open.
+ */
+export const peekFactoryResource = <T>(
+  environmentId: EnvironmentId,
+  resource: Resource,
+): Omit<FactoryResource<T>, "refresh"> => snapshot(keyOf(environmentId, resource)) as Loaded<T>;
+
 /** For tests: drop every store, so the next reader starts over. */
 export function __resetFactoryStoresForTests(): void {
   stores.clear();

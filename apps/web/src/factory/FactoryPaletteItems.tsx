@@ -11,11 +11,17 @@ import {
 } from "~/components/CommandPalette.logic";
 
 import type { EnvironmentId } from "@t3tools/contracts";
+import type { FactoryRunRow, FactoryStatus } from "./api";
 import "./belt.css";
 import { paletteFinds, type PaletteFinds, type RunFind } from "./paletteFinds";
 import type { RunQueue } from "./runQueue";
 import type { FactorySearch } from "./search";
-import { useFactoryEveryRunKept, useFactoryPaletteEnvironments } from "./useFactoryData";
+import {
+  peekFactoryResource,
+  useFactoryEveryRunKept,
+  useFactoryPaletteEnvironments,
+  type FactoryResource,
+} from "./useFactoryData";
 
 export interface PaletteOpeners {
   readonly openRun: (run: RunFind, queue: RunQueue) => Promise<void>;
@@ -124,6 +130,48 @@ export function factoryPaletteItem(
   };
 }
 
+/** One environment's two answers the submenu is built from. */
+interface PaletteAnswers {
+  readonly runs: Pick<
+    FactoryResource<{ readonly runs: ReadonlyArray<FactoryRunRow> }>,
+    "status" | "data"
+  >;
+  readonly status: Pick<FactoryResource<FactoryStatus>, "data">;
+}
+
+const sameAnswers = (a: ReadonlyArray<PaletteAnswers>, b: ReadonlyArray<PaletteAnswers>) =>
+  a.length === b.length &&
+  a.every(
+    (answers, i) =>
+      answers.runs.status === b[i]!.runs.status &&
+      answers.runs.data === b[i]!.runs.data &&
+      answers.status.data === b[i]!.status.data,
+  );
+
+/**
+ * The palette keeps the submenu object it opened and reads its `groups` on every render after, so
+ * they come from the stores as they are then: runs read after Factory was opened still show.
+ */
+function liveFactorySubmenu(
+  answers: ReadonlyArray<PaletteAnswers>,
+  answersNow: () => ReadonlyArray<PaletteAnswers>,
+  build: (answers: ReadonlyArray<PaletteAnswers>) => CommandPaletteSubmenuItem,
+): CommandPaletteSubmenuItem {
+  let seen = answers;
+  let item = build(answers);
+  return {
+    ...item,
+    get groups() {
+      const next = answersNow();
+      if (!sameAnswers(seen, next)) {
+        seen = next;
+        item = build(next);
+      }
+      return item.groups;
+    },
+  };
+}
+
 /**
  * The Factory submenu for the command palette, or nothing when no machine here has a factory. It
  * reads every run while the palette is open, at most once in ten minutes per machine; the palette
@@ -137,31 +185,47 @@ export function useFactoryPaletteItems(): ReadonlyArray<CommandPaletteSubmenuIte
   const ids: EnvironmentId[] = environments.map(({ environmentId }) => environmentId);
   const runsOf = useFactoryEveryRunKept(ids);
   if (environments.length === 0) return [];
-  const finds = paletteFinds(
-    environments.map(({ environmentId, label, status }, i) => ({
-      environmentId,
-      label,
-      runs: runsOf[i]?.data?.runs ?? null,
-      status: status.data,
-    })),
-    nowMs,
-  );
-  const loading = runsOf.some((runs) => runs.status === "loading");
+  const open: PaletteOpeners = {
+    openRun: async ({ environmentId, runId }, queue) => {
+      await navigate({
+        to: "/factory/$environmentId/$runId",
+        params: { environmentId, runId },
+        state: { factoryRunQueue: queue },
+      });
+    },
+    openFactory: async (search) => {
+      await navigate({ to: "/factory", search });
+    },
+    openSettings: async () => {
+      await navigate({ to: "/settings/factory" });
+    },
+  };
+  const build = (answers: ReadonlyArray<PaletteAnswers>) =>
+    factoryPaletteItem(
+      paletteFinds(
+        environments.map(({ environmentId, label }, i) => ({
+          environmentId,
+          label,
+          runs: answers[i]?.runs.data?.runs ?? null,
+          status: answers[i]?.status.data ?? null,
+        })),
+        nowMs,
+      ),
+      answers.some(({ runs }) => runs.status === "loading"),
+      open,
+    );
   return [
-    factoryPaletteItem(finds, loading, {
-      openRun: async ({ environmentId, runId }, queue) => {
-        await navigate({
-          to: "/factory/$environmentId/$runId",
-          params: { environmentId, runId },
-          state: { factoryRunQueue: queue },
-        });
-      },
-      openFactory: async (search) => {
-        await navigate({ to: "/factory", search });
-      },
-      openSettings: async () => {
-        await navigate({ to: "/settings/factory" });
-      },
-    }),
+    liveFactorySubmenu(
+      environments.map(({ status }, i) => ({ runs: runsOf[i]!, status })),
+      () =>
+        environments.map(({ environmentId }) => ({
+          runs: peekFactoryResource<{ readonly runs: ReadonlyArray<FactoryRunRow> }>(
+            environmentId,
+            "runs:all",
+          ),
+          status: peekFactoryResource<FactoryStatus>(environmentId, "status"),
+        })),
+      build,
+    ),
   ];
 }
