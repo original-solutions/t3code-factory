@@ -8,15 +8,7 @@ import { cn } from "~/lib/utils";
 import type { FactoryEntry } from "./api";
 import { GateCommandChips } from "./GateOutput";
 import { Ref } from "./Ref";
-import { formatSpan, runStory, type StoryTone } from "./runStory";
-
-const DOT: Record<StoryTone, string> = {
-  info: "bg-info",
-  success: "bg-success",
-  warning: "bg-warning",
-  error: "bg-destructive",
-  muted: "bg-muted-foreground/40",
-};
+import { formatSpan, runStory } from "./runStory";
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
@@ -64,8 +56,9 @@ export function RunTimeline({
                 <span
                   className={cn(
                     "relative mt-1.5 size-2.5 rounded-full ring-4 ring-background",
-                    DOT[step.tone],
+                    step.tone === "muted" ? "bg-muted-foreground/40" : "bg-(--factory-station)",
                   )}
+                  data-station={step.tone === "muted" ? undefined : step.tone}
                 />
               </span>
               <div className="flex min-w-0 flex-1 flex-col gap-1 pb-4 group-last/step:pb-0">

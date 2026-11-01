@@ -171,7 +171,7 @@ function FailureReader({ message }: { message: string }) {
 /** The last gate attempt: its commands, and why it failed when the factory sent the output on. */
 export function GateOutput({ entries }: { entries: ReadonlyArray<FactoryEntry> }) {
   const gate = lastGateOutput(entries);
-  const empty = gate.commands.length === 0 && gate.message === null;
+  if (gate.commands.length === 0 && gate.message === null) return null;
   return (
     <section className="flex scroll-mt-4 flex-col gap-2" id={GATE_OUTPUT_ID}>
       <div className="flex items-baseline gap-2">
@@ -180,7 +180,6 @@ export function GateOutput({ entries }: { entries: ReadonlyArray<FactoryEntry> }
           <span className="text-xs text-muted-foreground">attempt {gate.attempt}</span>
         ) : null}
       </div>
-      {empty ? <p className="text-sm text-muted-foreground">No gate has run</p> : null}
       {gate.commands.length > 0 ? <GateCommandChips commands={gate.commands} /> : null}
       {gate.message !== null ? <FailureReader message={gate.message} /> : null}
     </section>

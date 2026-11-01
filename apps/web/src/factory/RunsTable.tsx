@@ -59,7 +59,7 @@ const newestFirst = (a: EnvironmentRun, b: EnvironmentRun) => {
 
 const stateBadge = (run: FactoryRunRow) => {
   if (run.unreadable) return <Badge variant="error">unreadable</Badge>;
-  return <StateChip state={shownState(run.state, run.pr_end)} />;
+  return <StateChip lastEvent={run.last_event} state={shownState(run.state, run.pr_end)} />;
 };
 
 /**

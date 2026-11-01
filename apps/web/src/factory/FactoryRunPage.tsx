@@ -17,7 +17,7 @@ import {
   TableRow,
 } from "~/components/ui/table";
 
-import { RunAgentCard } from "./RunAgent";
+import { RunAgentLine } from "./RunAgent";
 import { FactoryApiError, type FactoryEntry } from "./api";
 import { FactoryFrame } from "./FactoryFrame";
 import { FactoryKeysButton, FactoryKeysDialog } from "./FactoryKeys";
@@ -26,7 +26,6 @@ import {
   currentStep,
   issueRef,
   issueTitleOf,
-  labelForState,
   parseRunId,
   prEndOf,
   prUrlOf,
@@ -231,19 +230,22 @@ export function FactoryRunPage({
   const state = runState(entries);
   const shown = shownState(state, prEndOf(entries));
   // A finished run's last step is over; the runs list says finished too.
-  const step = runIsFinished(entries) ? "finished" : currentStep(entries);
+  const finished = runIsFinished(entries);
+  // A finished run's track says where it ended; only a live run has a step to name.
+  const step = finished ? null : currentStep(entries);
+  const lastEvent = finished ? null : (entries.at(-1)?.event ?? null);
   const threadId = threadIdOf(entries);
   const parsed = parseRunId(runId);
   const issue = parsed ? issueRef(`${parsed.owner}/${parsed.repo}`, parsed.issue) : null;
   const next = nextStep(entries);
   const title = queued?.title ?? issueTitleOf(entries);
   const track = runTrack(entries);
-  const { station } = stateMark(shown);
+  const { station } = stateMark(shown, lastEvent);
   // The Next step card is this page's own; every other action shows as it does on the belt and list.
   const actions = runActions({
     id: runId,
     state,
-    finished: runIsFinished(entries),
+    finished,
     prUrl: prUrlOf(entries),
     threadId,
   }).filter((action) => action.kind !== "next");
@@ -299,10 +301,10 @@ export function FactoryRunPage({
                 </p>
               ) : null}
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-                <StateChip state={shown} />
-                <span className="min-w-0 break-words text-muted-foreground">
-                  Step: {step ?? "-"}
-                </span>
+                <StateChip lastEvent={lastEvent} state={shown} />
+                {step ? (
+                  <span className="min-w-0 break-words text-muted-foreground">Step: {step}</span>
+                ) : null}
               </div>
             </div>
             <RunActions
@@ -315,6 +317,9 @@ export function FactoryRunPage({
             />
           </div>
           <RunTrackLine track={track} />
+          {threadId !== null && !finished ? (
+            <RunAgentLine environmentId={environmentId} threadId={threadId} />
+          ) : null}
         </section>
         {note ? (
           <p className="break-words text-sm text-muted-foreground" role="status">
@@ -328,13 +333,6 @@ export function FactoryRunPage({
             issue={issue}
             prUrl={prUrlOf(entries)}
             step={next}
-            threadId={threadId}
-          />
-        ) : null}
-        {threadId !== null && !runIsFinished(entries) ? (
-          <RunAgentCard
-            environmentId={environmentId}
-            stateLabel={labelForState(shown)}
             threadId={threadId}
           />
         ) : null}

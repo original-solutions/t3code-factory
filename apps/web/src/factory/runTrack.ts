@@ -1,5 +1,5 @@
 import type { FactoryEntry } from "./api";
-import { STATIONS, type Station } from "./belt";
+import { STATIONS, stationOf, type Station } from "./belt";
 import { prEndOf, runState, textField, type PrEnd } from "./format";
 
 /** A colour of the belt's: a post's, or one of the two bins'. */
@@ -45,6 +45,7 @@ export function runTrack(entries: ReadonlyArray<FactoryEntry>): RunTrack {
 const MARKS: Record<string, { station: BeltColour | null; name: string }> = {
   triage: { station: "claimed", name: "Claimed" },
   building: { station: "building", name: "Building" },
+  gate: { station: "gate", name: "Gate" },
   "pr-open": { station: "pr", name: "PR open" },
   merged: { station: "done", name: "Merged" },
   closed: { station: null, name: "Closed" },
@@ -52,8 +53,15 @@ const MARKS: Record<string, { station: BeltColour | null; name: string }> = {
   "needs-info": { station: "info", name: "Needs info" },
 };
 
-/** A run's shown state as the belt names it, and the belt colour it wears (none for closed). */
-export function stateMark(state: string | null): { station: BeltColour | null; name: string } {
+/**
+ * A run's shown state as the belt names it, and the belt colour it wears (none for closed). A
+ * building run whose last ledger line is its gate's sits at Gate, as on the belt.
+ */
+export function stateMark(
+  state: string | null,
+  lastEvent: string | null = null,
+): { station: BeltColour | null; name: string } {
   if (state === null) return { station: null, name: "Unknown" };
-  return MARKS[state] ?? { station: null, name: state };
+  const at = state === "building" && stationOf({ state, last_event: lastEvent }) === "gate";
+  return MARKS[at ? "gate" : state] ?? { station: null, name: state };
 }

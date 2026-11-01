@@ -38,9 +38,9 @@ describe("runStory", () => {
       entry(49 * MIN, "worktree_removed", { path: "/w" }),
     ]);
     expect(story.steps.map((step) => [step.title, step.detail, step.tone, step.at])).toEqual([
-      ["Claimed", "by rawphp on personal-mac", "info", "+0s"],
-      ["Agent session started", "claude-opus-5-5", "info", "+0s"],
-      ["Opened pull request", null, "success", "+48m 0s"],
+      ["Claimed", "by rawphp on personal-mac", "claimed", "+0s"],
+      ["Agent session started", "claude-opus-5-5", "building", "+0s"],
+      ["Opened pull request", null, "pr", "+48m 0s"],
     ]);
     expect(story.steps[1]!.threadId).toBe("t-1");
     expect(story.steps[2]!.link).toEqual({ text: "#65", href: "https://github.com/o/r/pull/65" });
@@ -80,13 +80,13 @@ describe("runStory", () => {
       }),
     ]);
     expect(story.steps.map((step) => [step.title, step.detail, step.tone])).toEqual([
-      ["Claimed", null, "info"],
-      ["Gate failed", "attempt 1 · 26s", "error"],
-      ["Sent the failure back to the agent", null, "warning"],
+      ["Claimed", null, "claimed"],
+      ["Gate failed", "attempt 1 · 26s", "stuck"],
+      ["Sent the failure back to the agent", null, "building"],
       ["Base branch moved; gating again", null, "muted"],
-      ["Gate passed", "attempt 2 · 9.5s", "success"],
+      ["Gate passed", "attempt 2 · 9.5s", "gate"],
       ["Base branch moved; gating again", null, "muted"],
-      ["Gate passed", "attempt 2 · 0.3s", "success"],
+      ["Gate passed", "attempt 2 · 0.3s", "gate"],
     ]);
     expect(story.steps[1]!.commands).toEqual([
       { command: "lint", exit_code: 0, duration_ms: 412 },
@@ -115,7 +115,7 @@ describe("runStory", () => {
     expect(merged.steps.at(-1)).toMatchObject({
       title: "Pull request merged",
       detail: "after 2h 48m",
-      tone: "success",
+      tone: "done",
     });
     expect(merged.tookMs).toBe(10_096_159);
 
@@ -132,11 +132,11 @@ describe("runStory", () => {
       entry(4, "pr_ready_outside", { pr: 147, by: "tomkaczocha" }),
     ]);
     expect(story.steps.map((step) => [step.title, step.detail, step.tone])).toEqual([
-      ["Posted questions on the issue", "Which table?", "warning"],
-      ["Stuck", "the session run ended as failed", "error"],
-      ["Tracker error while forwarding", "HTTP 504", "error"],
-      ["Stop requested by operator", null, "warning"],
-      ["Pull request #147 marked ready by tomkaczocha", null, "info"],
+      ["Posted questions on the issue", "Which table?", "info"],
+      ["Stuck", "the session run ended as failed", "stuck"],
+      ["Tracker error while forwarding", "HTTP 504", "stuck"],
+      ["Stop requested by operator", null, "info"],
+      ["Pull request #147 marked ready by tomkaczocha", null, "pr"],
     ]);
   });
 

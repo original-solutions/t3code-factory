@@ -65,6 +65,16 @@ describe("stateMark", () => {
     expect(stateMark("needs-info")).toEqual({ station: "info", name: "Needs info" });
   });
 
+  it("puts a building run whose gate is running at Gate, as the belt does", () => {
+    expect(stateMark("building", "gate_checkout")).toEqual({ station: "gate", name: "Gate" });
+    expect(stateMark("building", "gate_command")).toEqual({ station: "gate", name: "Gate" });
+    expect(stateMark("building", "gate_sent_back")).toEqual({
+      station: "building",
+      name: "Building",
+    });
+    expect(stateMark("stuck", "gate_command")).toEqual({ station: "stuck", name: "Stuck" });
+  });
+
   it("leaves a closed, unknown or new state uncoloured", () => {
     expect(stateMark("closed")).toEqual({ station: null, name: "Closed" });
     expect(stateMark(null)).toEqual({ station: null, name: "Unknown" });

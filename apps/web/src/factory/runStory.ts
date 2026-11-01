@@ -1,7 +1,12 @@
 import type { FactoryEntry } from "./api";
 import { type GateCommand, type LinkRef, prRef, textField } from "./format";
+import type { BeltColour } from "./runTrack";
 
-export type StoryTone = "info" | "success" | "warning" | "error" | "muted";
+/**
+ * A step's colour in the belt's language: its post's, Stuck for a failure, Needs info for what a
+ * person may need to look at, muted for bookkeeping.
+ */
+export type StoryTone = BeltColour | "muted";
 
 /** One thing that happened to a run, in words a person reads. Detail text is untrusted. */
 export interface StoryStep {
@@ -85,12 +90,12 @@ function tell(entry: FactoryEntry, sessionsBefore: number): Told {
             : machine
               ? `on ${machine}`
               : null;
-      return { tone: "info", title: "Claimed", detail };
+      return { tone: "claimed", title: "Claimed", detail };
     }
     case "session_launched": {
       const threadId = by("thread_id");
       return {
-        tone: "info",
+        tone: "building",
         title: sessionsBefore === 0 ? "Agent session started" : "Agent session relaunched",
         detail: by("model"),
         ...(threadId ? { threadId } : {}),
@@ -99,7 +104,7 @@ function tell(entry: FactoryEntry, sessionsBefore: number): Told {
     case "pr_opened": {
       const link = prRef(by("url"));
       return {
-        tone: "success",
+        tone: "pr",
         title: link ? "Opened pull request" : `Opened ${prText(data).toLowerCase()}`,
         detail: null,
         ...(link ? { link } : {}),
@@ -108,24 +113,24 @@ function tell(entry: FactoryEntry, sessionsBefore: number): Told {
     case "gate_regate":
       return { tone: "muted", title: "Base branch moved; gating again", detail: null };
     case "gate_sent_back":
-      return { tone: "warning", title: "Sent the failure back to the agent", detail: null };
+      return { tone: "building", title: "Sent the failure back to the agent", detail: null };
     case "feedback_relaunching":
     case "feedback_forwarding": {
       const n = numberField(data, "n");
       return {
-        tone: "info",
+        tone: "building",
         title: "Forwarded review feedback to the agent",
         detail: n === null ? null : `${n} ${n === 1 ? "item" : "items"}`,
       };
     }
     case "comment_forwarded":
-      return { tone: "info", title: "Forwarded a comment to the agent", detail: null };
+      return { tone: "building", title: "Forwarded a comment to the agent", detail: null };
     case "pr_set_draft":
       return { tone: "muted", title: `${prText(data)} set to draft`, detail: null };
     case "pr_ready_outside": {
       const who = by("by");
       return {
-        tone: "info",
+        tone: "pr",
         title: `${prText(data)} marked ready${who ? ` by ${who}` : ""}`,
         detail: null,
       };
@@ -133,35 +138,35 @@ function tell(entry: FactoryEntry, sessionsBefore: number): Told {
     case "pr_left":
       return { tone: "muted", title: `Left ${prText(data).toLowerCase()}`, detail: null };
     case "session_interrupted":
-      return { tone: "warning", title: "Agent session interrupted", detail: null };
+      return { tone: "info", title: "Agent session interrupted", detail: null };
     case "session_rate_limited":
-      return { tone: "warning", title: "Agent hit a rate limit", detail: null };
+      return { tone: "info", title: "Agent hit a rate limit", detail: null };
     case "session_paused":
-      return { tone: "warning", title: "Agent session paused", detail: null };
+      return { tone: "info", title: "Agent session paused", detail: null };
     case "questions_posted":
       return {
-        tone: "warning",
+        tone: "info",
         title: "Posted questions on the issue",
         detail: firstLine(by("questions")),
       };
     case "stuck":
-      return { tone: "error", title: "Stuck", detail: firstLine(by("reason")) };
+      return { tone: "stuck", title: "Stuck", detail: firstLine(by("reason")) };
     case "stop_requested": {
       const who = by("by");
-      return { tone: "warning", title: `Stop requested${who ? ` by ${who}` : ""}`, detail: null };
+      return { tone: "info", title: `Stop requested${who ? ` by ${who}` : ""}`, detail: null };
     }
     case "error": {
       const kind = by("kind");
       const step = by("step");
       const what = kind ? `${kind[0]!.toUpperCase()}${kind.slice(1)} error` : "Error";
       const where = step ? ` while ${STEP_VERBS[step] ?? step}` : "";
-      return { tone: "error", title: `${what}${where}`, detail: firstLine(by("message")) };
+      return { tone: "stuck", title: `${what}${where}`, detail: firstLine(by("message")) };
     }
     case "finished": {
       const end = by("pr_end");
       const total = numberField(data, "total_ms");
       const detail = total === null ? null : `after ${formatSpan(total)}`;
-      if (end === "merged") return { tone: "success", title: "Pull request merged", detail };
+      if (end === "merged") return { tone: "done", title: "Pull request merged", detail };
       if (end === "closed") return { tone: "muted", title: "Pull request closed", detail };
       return { tone: "muted", title: `Finished: ${by("outcome") ?? "unknown"}`, detail };
     }
@@ -218,7 +223,7 @@ export function runStory(entries: ReadonlyArray<FactoryEntry>): RunStory {
       steps.push({
         ...base,
         ts: last.ts,
-        tone: passed ? "success" : "error",
+        tone: passed ? "gate" : "stuck",
         title: passed ? "Gate passed" : "Gate failed",
         detail: [attempt === null ? null : `attempt ${attempt}`, formatSpan(ms)]
           .filter(Boolean)

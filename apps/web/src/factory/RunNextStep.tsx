@@ -4,7 +4,6 @@ import { ArrowDownIcon, ExternalLinkIcon, MessageSquareIcon } from "lucide-react
 import type { ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
-import { cn } from "~/lib/utils";
 
 import type { LinkRef } from "./format";
 import type { NextStep } from "./nextStep";
@@ -95,16 +94,11 @@ export function RunNextStep({
   return (
     <section
       aria-label="Next step"
-      className={cn(
-        "flex flex-col overflow-hidden rounded-xl border border-l-4 bg-card",
-        stuck ? "border-l-destructive" : "border-l-warning",
-      )}
+      className="flex flex-col overflow-hidden rounded-xl border bg-card"
       data-next-step={step.kind}
     >
       <header className="flex flex-col gap-0.5 px-4 pt-3 pb-3">
-        <p className="text-xs text-muted-foreground">
-          {stuck ? "Stuck · what to do next" : "Needs info · what to do next"}
-        </p>
+        <p className="text-xs text-muted-foreground">What to do next</p>
         <h2 className="break-words text-base font-medium">{step.cause}</h2>
       </header>
       <ol className="flex flex-col px-4 pb-4">

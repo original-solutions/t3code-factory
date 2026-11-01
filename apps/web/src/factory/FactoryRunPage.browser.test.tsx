@@ -184,7 +184,7 @@ describe("FactoryRunPage", () => {
     state.run = resource({ data: detail([]) });
     await using page = await mount();
     expect(page.all("a").some((a) => a.textContent === "Thread")).toBe(false);
-    expect(page.text()).toContain("No gate has run");
+    expect(page.text()).not.toContain("Last gate output");
     expect(page.text()).toContain("Nothing has happened yet");
     await openLedger(page);
     expect(page.text()).toContain("No ledger entries");
@@ -222,7 +222,11 @@ describe("FactoryRunPage", () => {
     using _state = setup();
     await using page = await mount();
     const steps = page.all("li[data-tone]");
-    expect(steps.map((li) => li.getAttribute("data-tone"))).toEqual(["info", "info", "error"]);
+    expect(steps.map((li) => li.getAttribute("data-tone"))).toEqual([
+      "claimed",
+      "building",
+      "stuck",
+    ]);
     expect(steps[2]!.textContent).toContain("Gate failed");
     expect(steps[2]!.textContent).toContain("pnpm testexit 2 · 26s");
     const thread = steps[1]!.querySelector("a")!;
@@ -425,7 +429,7 @@ describe("FactoryRunPage", () => {
     );
   });
 
-  it("shows how a finished run's pull request ended, and its step as finished", async () => {
+  it("shows how a finished run's pull request ended, with no step left to name", async () => {
     using _state = setup();
     state.run = resource({
       data: detail([
@@ -438,8 +442,7 @@ describe("FactoryRunPage", () => {
     });
     await using page = await mount();
     expect(page.all('[data-slot="badge"]')[0]?.textContent).toBe("Closed");
-    expect(page.text()).toContain("Step: finished");
-    expect(page.text()).not.toContain("Step: pr-watching");
+    expect(page.text()).not.toContain("Step:");
   });
 
   it("shows Stop only while the run is building and not finished", async () => {

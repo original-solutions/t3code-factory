@@ -50,30 +50,27 @@ export function RunReportCard({ entries }: { entries: ReadonlyArray<FactoryEntry
   return (
     <section
       aria-label="Run report"
-      className={cn(
-        "flex flex-col gap-3 rounded-xl border border-l-4 bg-card px-4 py-3",
-        merged ? "border-l-success" : "border-l-border",
-      )}
+      className="flex flex-col gap-3 rounded-xl border bg-card px-4 py-3"
     >
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <h2 className="flex items-center gap-2 text-sm font-medium">
-          {merged ? (
-            <PullRequestGlyph.merged aria-hidden className="size-4 text-success-foreground" />
-          ) : (
-            <PullRequestGlyph.closed aria-hidden className="size-4 text-muted-foreground" />
-          )}
-          {merged ? "Merged" : "Closed without merging"}
-          {pr ? <Ref {...pr} /> : null}
-        </h2>
-        <span className="text-sm text-muted-foreground">
-          {formatSpan(report.totalMs)} from claim to {merged ? "merge" : "close"}
-        </span>
+      <header className="flex flex-wrap items-end gap-x-3 gap-y-1">
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <p className="text-xs text-muted-foreground">How it went</p>
+          <h2 className="flex flex-wrap items-center gap-x-2 text-base font-medium">
+            {merged ? (
+              <PullRequestGlyph.merged aria-hidden className="size-4 text-success-foreground" />
+            ) : (
+              <PullRequestGlyph.closed aria-hidden className="size-4 text-muted-foreground" />
+            )}
+            {formatSpan(report.totalMs)} from claim to {merged ? "merge" : "close"}
+            {pr ? <Ref {...pr} /> : null}
+          </h2>
+        </div>
         {report.firstTry ? (
           <Badge className="sm:ml-auto" variant="success">
             First try
           </Badge>
         ) : null}
-      </div>
+      </header>
       <div className="flex flex-col gap-1">
         <div
           aria-label={`Where the time went: ${split}`}
