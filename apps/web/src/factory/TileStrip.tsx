@@ -1,51 +1,32 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useEffect, useRef } from "react";
 
 import { cn } from "~/lib/utils";
-import { useThreadShell } from "~/state/entities";
 
-import { BEAT_GAP_MS, oneShot } from "./beltMotion";
+import { agentChanged, type AgentPulse } from "./agentPulse";
+import { oneShot } from "./beltMotion";
 
 /**
- * A tile's top strip in its post's colour. Each time the run's thread gains an item (a message, a
- * tool call), a light runs along it once, at most every `BEAT_GAP_MS`: the belt moves when the
- * agent does and is still otherwise. `idle` fades it while the agent is not at work.
+ * A tile's top strip in its post's colour. A light runs along it once when the run's agent changes
+ * state (starts working, waits on you, fails), never on routine thread activity, so a busy agent
+ * leaves the belt still. It fades while the agent is not at work.
  */
-export function TileStrip({
-  environmentId,
-  threadId,
-  idle,
-}: {
-  environmentId: EnvironmentId;
-  threadId: string | null;
-  idle: boolean;
-}) {
+export function TileStrip({ pulse }: { pulse: AgentPulse | null }) {
   const strip = useRef<HTMLSpanElement>(null);
-  const lastBeat = useRef(0);
-  // The live shell: the quiet one holds its item count through a turn.
-  const items =
-    useThreadShell(threadId === null ? null : scopeThreadRef(environmentId, threadId as ThreadId))
-      ?.itemCount ?? null;
-  const seen = useRef(items);
+  const seen = useRef(pulse);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- plays a CSS one-shot on the DOM when the thread grows
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- plays a CSS one-shot on the DOM when the agent changes state
   useEffect(() => {
     const before = seen.current;
-    seen.current = items;
-    if (items === null || before === null || items <= before) return;
-    const now = Date.now();
-    if (now - lastBeat.current < BEAT_GAP_MS) return;
-    lastBeat.current = now;
-    oneShot(strip.current, "factory-strip-beat");
-  }, [items]);
+    seen.current = pulse;
+    if (agentChanged(before, pulse)) oneShot(strip.current, "factory-strip-beat");
+  }, [pulse]);
 
   return (
     <span
       aria-hidden
       className={cn(
         "absolute inset-x-0 top-0 h-1 overflow-hidden bg-(--factory-station)",
-        idle && "opacity-40",
+        pulse !== null && pulse.tone !== "working" && "opacity-40",
       )}
       data-part="strip"
       ref={strip}

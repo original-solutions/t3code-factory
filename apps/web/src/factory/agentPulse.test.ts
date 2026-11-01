@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { agentCensus, agentPulse, type AgentThread } from "./agentPulse";
+import { agentCensus, agentChanged, agentPulse, type AgentThread } from "./agentPulse";
 
 type Runtime = NonNullable<AgentThread["runtime"]>;
 
@@ -128,5 +128,29 @@ describe("agentCensus", () => {
 
   it("says needs for one agent that waits on a person", () => {
     expect(agentCensus([pulse({ hasPendingApprovals: true })])).toBe("1 needs you");
+  });
+});
+
+describe("agentChanged", () => {
+  const working = (itemCount: number) => agentPulse(thread({ itemCount }));
+
+  it("stays still while the agent keeps adding to its thread in the same state", () => {
+    expect(agentChanged(working(12), working(13))).toBe(false);
+    expect(agentChanged(working(13), working(40))).toBe(false);
+  });
+
+  it("flashes when the agent changes state", () => {
+    expect(agentChanged(agentPulse(thread({ runtime: { status: "idle" } })), working(12))).toBe(
+      true,
+    );
+    expect(agentChanged(working(12), agentPulse(thread({ hasPendingApprovals: true })))).toBe(true);
+    expect(agentChanged(working(12), agentPulse(thread({ runtime: { status: "failed" } })))).toBe(
+      true,
+    );
+  });
+
+  it("stays still when the thread first appears or leaves this client", () => {
+    expect(agentChanged(null, working(12))).toBe(false);
+    expect(agentChanged(working(12), null)).toBe(false);
   });
 });

@@ -114,8 +114,8 @@
 }
 
 /*
- * A tile's strip when its agent's thread gains an item: one light runs along it and is gone. At most
- * one per BEAT_GAP_MS (beltMotion.ts), so a busy agent never keeps the belt painting.
+ * A tile's strip when its agent changes state: one light runs along it and is gone. Routine thread
+ * activity plays nothing, so a busy agent never keeps the belt painting.
  */
 .factory-strip-beat {
   transform-origin: top;

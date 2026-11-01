@@ -202,11 +202,7 @@ function Tile({
       ref={tileRef}
       to="/factory/$environmentId/$runId"
     >
-      <TileStrip
-        environmentId={run.environmentId}
-        idle={pulse !== null && pulse.tone !== "working"}
-        threadId={run.threadId}
-      />
+      <TileStrip pulse={pulse} />
       <span className="font-mono text-xs font-semibold leading-none">{run.issue}</span>
       <span className="flex items-center gap-1 font-mono text-3xs leading-none text-muted-foreground">
         <BeltDot selected={mine} tone={pulse?.tone} />

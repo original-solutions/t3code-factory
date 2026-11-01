@@ -6,8 +6,6 @@ import { holdBins, placesOf, tileMotions, type Belt, type Place, type TileMotion
 const SLIDE_MS = 750;
 /** How long the place of a tile that left its lane is remembered, for a bin to want it. */
 const MEMORY_MS = 5000;
-/** The least time between two beats of a tile's strip, so a busy agent never keeps it moving. */
-export const BEAT_GAP_MS = 2500;
 /** How big a tile is when it lands in a bin. */
 const BIN_SCALE = "scale(.55)";
 

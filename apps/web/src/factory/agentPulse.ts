@@ -149,3 +149,12 @@ export function agentCensus(pulses: ReadonlyArray<AgentPulse | null>): string | 
   ].filter((part) => part !== null);
   return parts.length === 0 ? null : parts.join(" · ");
 }
+
+/**
+ * Whether a tile's strip should flash: the agent went from one state to another it can name
+ * (`working` to `needs approval`), never on more thread activity in the same state, and not when
+ * the thread first shows up in this client.
+ */
+export function agentChanged(before: AgentPulse | null, now: AgentPulse | null): boolean {
+  return before !== null && now !== null && before.word !== now.word;
+}
