@@ -148,8 +148,10 @@ const props = (overrides: Partial<Belt> = {}): Belt => {
     nowMs: NOW,
     onTogglePause: vi.fn(),
     attention: [],
+    dismissed: [],
     showEnvironment: false,
     onDismiss: vi.fn(),
+    onRestore: vi.fn(),
     ...overrides,
   };
 };
@@ -193,6 +195,7 @@ const api = (overrides: Partial<FactoryApi>): FactoryApi => ({
   pauseClaims: vi.fn(),
   resumeClaims: vi.fn(),
   dismissAttention: vi.fn(),
+  restoreAttention: vi.fn(),
   runGitHub: vi.fn(),
   queue: vi.fn(),
   snoozeDeploy: vi.fn(),

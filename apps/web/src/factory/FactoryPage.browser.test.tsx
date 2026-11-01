@@ -173,6 +173,7 @@ const api = (overrides: Partial<FactoryApi>): FactoryApi => ({
   pauseClaims: vi.fn(),
   resumeClaims: vi.fn(),
   dismissAttention: vi.fn(),
+  restoreAttention: vi.fn(),
   runGitHub: vi.fn(),
   queue: vi.fn(),
   snoozeDeploy: vi.fn(),
@@ -1115,8 +1116,36 @@ describe("FactoryPage dismissing attention items", () => {
     );
   const itemOf = (page: Awaited<ReturnType<typeof render>>, message: string) =>
     Array.from(section(page)?.querySelectorAll("li") ?? []).find((li) => holdsText(li, message));
+  const dismissedFold = (page: Awaited<ReturnType<typeof render>>, count: number) =>
+    page.all("button").find((button) => button.textContent?.startsWith(`Dismissed (${count})`)) as
+      | HTMLButtonElement
+      | undefined;
+  // A run's item is dismissed; a condition (no run) is quieted.
   const dismissIn = (item: HTMLElement) =>
-    Array.from(item.querySelectorAll("button")).find((button) => holdsText(button, "Dismiss"))!;
+    Array.from(item.querySelectorAll("button")).find(
+      (button) => holdsText(button, "Dismiss") || holdsText(button, "Quiet"),
+    )!;
+
+  it("a quieted condition waits under Dismissed, still true, and Bring back lists it again", async () => {
+    using _state = setup();
+    state.status = resource({ data: statusData({ attention: [ATTENTION], dismissed: [CONFIG] }) });
+    const restoreAttention = vi.fn(async () => ({ restored: [CONFIG.id] }));
+    __setFactoryApiForTests(api({ restoreAttention }));
+    await using page = await render(createElement(FactoryPage));
+    expect(holdsText(dismissIn(itemOf(page, ATTENTION.message)!), "Dismiss")).toBe(true);
+    expect(page.text()).not.toContain(CONFIG.message);
+    const fold = dismissedFold(page, 1)!;
+    expect(fold.textContent).toContain("1 still true");
+    await page.click(fold);
+    const quieted = itemOf(page, CONFIG.message)!;
+    expect(quieted.textContent).toContain("Still true");
+    await page.click(
+      Array.from(quieted.querySelectorAll("button")).find((b) => holdsText(b, "Bring back"))!,
+    );
+    expect(restoreAttention).toHaveBeenCalledWith("env-2", [CONFIG.id]);
+    expect(dismissedFold(page, 1)).toBeUndefined();
+    expect(holdsText(dismissIn(itemOf(page, CONFIG.message)!), "Quiet")).toBe(true);
+  });
 
   it("Dismiss removes that item at once and sends its id", async () => {
     using _state = setup();
@@ -1148,8 +1177,9 @@ describe("FactoryPage dismissing attention items", () => {
     await page.click(dismissIn(itemOf(page, CONFIG.message)!));
     await page.click(page.button("Dismiss all")!);
     expect(dismissAttention).toHaveBeenLastCalledWith("env-2", [ATTENTION.id, PASS.id]);
-    expect(section(page)?.textContent).toContain("Nothing needs a person.");
+    expect(section(page)?.textContent).toContain("Nothing new needs a person.");
     expect(page.button("Dismiss all")).toBeUndefined();
+    expect(dismissedFold(page, 3)?.textContent).toContain("2 still true");
   });
 
   it("keeps the claims switch disabled when a dismiss finishes while the pause is pending", async () => {

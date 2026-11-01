@@ -184,6 +184,7 @@ const fakeApi: FactoryApi = {
     calls.dismiss.push([env, ids]);
     return { dismissed: ids };
   },
+  restoreAttention: async (_env, ids) => ({ restored: ids }),
   snoozeDeploy: async () => ({ snoozed_until: "2026-10-17T13:00:00.000Z" }),
   deployNow: async () => ({ commit: "abc", kicked: true, message: "installing" }),
 };
@@ -410,7 +411,9 @@ describe("the Factory page shows every environment that runs a factory", () => {
     expect(itemOf("third one").textContent).not.toContain("Desktop");
     const item = itemOf("third one");
     await page.click(
-      Array.from(item.querySelectorAll("button")).find((b) => b.textContent === "Dismiss")!,
+      Array.from(item.querySelectorAll("button")).find(
+        (b) => b.textContent === "Dismiss" || b.textContent === "Quiet",
+      )!,
     );
     expect(calls.dismiss).toEqual([[ENV_2, ["b1"]]]);
     await page.click(page.button("Dismiss all")!);
@@ -440,7 +443,9 @@ describe("the Factory page shows every environment that runs a factory", () => {
     const page = await show(createElement(FactoryPage));
     const item = page.all("li").find((li) => li.textContent?.includes("on desktop"))!;
     await page.click(
-      Array.from(item.querySelectorAll("button")).find((b) => b.textContent === "Dismiss")!,
+      Array.from(item.querySelectorAll("button")).find(
+        (b) => b.textContent === "Dismiss" || b.textContent === "Quiet",
+      )!,
     );
     expect(calls.dismiss).toEqual([[ENV_1, ["same"]]]);
     expect(page.text()).not.toContain("on desktop");

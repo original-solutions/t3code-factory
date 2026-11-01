@@ -57,6 +57,7 @@ const QUEUE_PATH = "/api/factory/queue";
 const PAUSE_PATH = "/api/factory/claims/pause";
 const RESUME_PATH = "/api/factory/claims/resume";
 export const DISMISS_PATH = "/api/factory/attention/dismiss";
+export const RESTORE_PATH = "/api/factory/attention/restore";
 export const CONFIG_PATH = "/api/factory/config";
 export const RESTART_PATH = "/api/factory/restart";
 export const CLIENTS_PATH = "/api/factory/auth/clients";
@@ -132,7 +133,9 @@ const statusRoute = Layer.unwrap(
       Effect.gen(function* () {
         const loop = yield* FactoryLoop;
         const paths = yield* FactoryPaths;
-        const attention = yield* (yield* Attention).list();
+        const store = yield* Attention;
+        const attention = yield* store.list();
+        const dismissed = yield* store.listDismissed();
         const passRunning = yield* loop.passRunning;
         const runningThreads = yield* loop.runningThreads.pipe(
           Effect.tapError((error) => Effect.logWarning(`status: ${error.message}`, error.cause)),
@@ -151,6 +154,7 @@ const statusRoute = Layer.unwrap(
             passRunning,
             runningThreads,
             attention,
+            dismissed,
             health,
             cache,
           }),
@@ -310,17 +314,31 @@ const idsOf = (body: unknown): ReadonlyArray<string> | null => {
   return Array.isArray(ids) && ids.every((id) => typeof id === "string") ? ids : null;
 };
 
-const dismissRoute = factoryRoute(
-  "POST",
-  DISMISS_PATH,
-  AuthOrchestrationOperateScope,
-  Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const body = yield* Effect.result(request.json);
-    const ids = Result.isSuccess(body) ? idsOf(body.success) : null;
-    if (ids === null) return invalidBody("the body must be { ids: [<id>, ...] }");
-    return respond({ dismissed: yield* (yield* Attention).dismiss(ids) });
-  }),
+/** A POST that takes `{ ids }` and answers what `act` changed, under `key`. */
+const attentionIdsRoute = (
+  path: `/${string}`,
+  key: "dismissed" | "restored",
+  act: (attention: Attention["Service"], ids: ReadonlyArray<string>) => Effect.Effect<unknown>,
+) =>
+  factoryRoute(
+    "POST",
+    path,
+    AuthOrchestrationOperateScope,
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const body = yield* Effect.result(request.json);
+      const ids = Result.isSuccess(body) ? idsOf(body.success) : null;
+      if (ids === null) return invalidBody("the body must be { ids: [<id>, ...] }");
+      return respond({ [key]: yield* act(yield* Attention, ids) });
+    }),
+  );
+
+const dismissRoute = attentionIdsRoute(DISMISS_PATH, "dismissed", (attention, ids) =>
+  attention.dismiss(ids),
+);
+
+const restoreRoute = attentionIdsRoute(RESTORE_PATH, "restored", (attention, ids) =>
+  attention.restore(ids),
 );
 
 const toFileError = Effect.mapError((cause: unknown) => new FactoryFileError({ cause }));
@@ -525,6 +543,7 @@ export const FactoryRoutes = Layer.mergeAll(
   pauseRoute,
   resumeRoute,
   dismissRoute,
+  restoreRoute,
   configRoute,
   saveConfigRoute,
   restartRoute,

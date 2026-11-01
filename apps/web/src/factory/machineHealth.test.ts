@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import type { FactoryHealth, FactoryStatus } from "./api";
-import { machineHealthView } from "./machineHealth";
+import { machineHealthView, machineHold } from "./machineHealth";
 
 const GIB = 1024 ** 3;
 
@@ -178,6 +178,9 @@ describe("machineHealthView", () => {
       },
     ]);
     expect(view.verdict).toEqual({ tone: "bad", text: "Claims held: gh signed out" });
+    const quieted = status({ dismissed: [signedOutItem("acme/web"), signedOutItem("acme/api")] });
+    expect(machineHealthView(quieted)!.holds).toEqual(view.holds);
+    expect(machineHold(quieted)?.word).toBe("gh signed out");
   });
 
   it("lists every hold in the order a person lifts them: pause, update, sign-in, disk, load, overdue pass", () => {

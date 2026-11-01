@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { causeCount, groupByCause, signedOutLine, signedOutCause } from "./attentionCauses";
+import {
+  causeCount,
+  groupByCause,
+  isCondition,
+  signedOutLine,
+  signedOutCause,
+  splitDismissed,
+  stillTrue,
+} from "./attentionCauses";
 
 const GH_SIGNED_OUT =
   "cannot read .dw/config.yml from GitHub: `gh api repos/acme/web` exited with status 4: To get started with GitHub CLI, please run: gh auth login Alternatively, populate the GH_TOKEN environment variable with a GitHub API authentication token.";
@@ -82,5 +90,42 @@ describe("causeCount and signedOutCause", () => {
     ],
   ])("words %j as one sentence", (repos, line) => {
     expect(signedOutLine(repos)).toBe(line);
+  });
+});
+
+describe("dismissing", () => {
+  const entry = (id: string, run: string | null = null) => ({
+    environmentId: "env-a",
+    item: { ...raw(id, null, id), run },
+  });
+  const key = (e: { readonly item: { readonly id: string } }) => e.item.id;
+
+  it("calls an item about one run, or an archived worktree, an event, and the rest conditions", () => {
+    expect(isCondition(entry("config").item)).toBe(true);
+    expect(isCondition(entry("low-disk").item)).toBe(true);
+    expect(isCondition(entry("run:a:stuck", "a").item)).toBe(false);
+    expect(isCondition(entry("worktree:/w/a").item)).toBe(false);
+  });
+
+  it("holds read the dismissed items too, and an older server's report without them", () => {
+    const open = [raw("a", null, "a")];
+    const dismissed = [raw("b", null, "b")];
+    expect(stillTrue({ attention: open, dismissed }).map(({ id }) => id)).toEqual(["a", "b"]);
+    expect(stillTrue({ attention: open }).map(({ id }) => id)).toEqual(["a"]);
+  });
+
+  it("moves an item the page dismissed or restored before the server's next status says so", () => {
+    const split = splitDismissed(
+      [entry("a"), entry("b")],
+      [entry("c"), entry("d")],
+      new Map([
+        ["b", true],
+        ["c", false],
+        ["d", true],
+      ]),
+      key,
+    );
+    expect(split.open.map(key)).toEqual(["a", "c"]);
+    expect(split.dismissed.map(key)).toEqual(["b", "d"]);
   });
 });

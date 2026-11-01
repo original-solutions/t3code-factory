@@ -10,7 +10,7 @@ import { cn } from "~/lib/utils";
 
 import type { FactoryAttentionItem } from "./api";
 import type { BeltRun } from "./belt";
-import { groupByCause, signedOutLine } from "./attentionCauses";
+import { groupByCause, isCondition, signedOutLine } from "./attentionCauses";
 import { BeltDot } from "./BeltDot";
 import { FactoryCard, FactoryCardHeader } from "./FactoryCard";
 import { formatAge, issueRef, parseRunId, withoutRepoPrefix } from "./format";
@@ -59,27 +59,84 @@ function ItemLink({
 /** Past this many characters an item's message folds to three lines until asked for the rest. */
 const LONG_MESSAGE = 180;
 
+/**
+ * The button that moves items between the list and the dismissed fold. A condition is quieted, not
+ * dismissed: it still holds whatever it holds until the server sees it end.
+ */
+function MoveButton({
+  entries,
+  dismissed,
+  onMove,
+}: {
+  entries: ReadonlyArray<EnvironmentAttention>;
+  dismissed: boolean;
+  onMove: (items: ReadonlyArray<EnvironmentAttention>) => void;
+}) {
+  const condition = isCondition(entries[0]!.item);
+  return (
+    <Button
+      className="ml-auto"
+      onClick={() => onMove(entries)}
+      size="xs"
+      title={
+        dismissed
+          ? "Back to Needs attention"
+          : condition
+            ? "Leaves the count; it still shows as a hold until it clears"
+            : "You've seen it; it moves to Dismissed"
+      }
+      variant="ghost"
+    >
+      {dismissed ? "Bring back" : condition ? "Quiet" : "Dismiss"}
+    </Button>
+  );
+}
+
+/** What a dismissed item still is: a condition is still true, an event was only seen. */
+function DismissedNote({ item }: { item: FactoryAttentionItem }) {
+  return isCondition(item) ? (
+    <span className="font-medium text-(--factory-info)">Still true</span>
+  ) : (
+    <span className="text-muted-foreground">Seen</span>
+  );
+}
+
 /** One attention item: what raised it and where, its message, where it leads and its Dismiss. */
 function AttentionItem({
   entry,
   showEnvironment,
   nowMs,
-  onDismiss,
+  dismissed = false,
+  onMove,
 }: {
   entry: EnvironmentAttention;
   showEnvironment: boolean;
   nowMs: number;
-  onDismiss: (items: ReadonlyArray<EnvironmentAttention>) => void;
+  /** Shown in the dismissed fold: muted, and its button brings it back. */
+  dismissed?: boolean;
+  onMove: (items: ReadonlyArray<EnvironmentAttention>) => void;
 }) {
   const { environmentId, label, item } = entry;
   const message = withoutRepoPrefix(item.message, item.repo);
   const long = message.length > LONG_MESSAGE;
   const [whole, setWhole] = useState(false);
   return (
-    <li className="flex flex-col gap-1 py-2 text-sm first:pt-0 last:pb-0">
+    <li
+      className={cn(
+        "flex flex-col gap-1 py-2 text-sm first:pt-0 last:pb-0",
+        dismissed && "text-muted-foreground",
+      )}
+    >
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-        <span aria-hidden className="size-2 shrink-0 rounded-full bg-(--factory-info)" />
+        <span
+          aria-hidden
+          className={cn(
+            "size-2 shrink-0 rounded-full",
+            dismissed ? "border border-(--factory-info)" : "bg-(--factory-info)",
+          )}
+        />
         <span className="font-medium">{item.kind}</span>
+        {dismissed ? <DismissedNote item={item} /> : null}
         {item.repo ? (
           <span className="min-w-0 break-all font-mono text-muted-foreground">
             {item.issue !== null ? (
@@ -107,9 +164,7 @@ function AttentionItem({
             {whole ? "Less" : "More"}
           </Button>
         ) : null}
-        <Button className="ml-auto" onClick={() => onDismiss([entry])} size="xs" variant="ghost">
-          Dismiss
-        </Button>
+        <MoveButton dismissed={dismissed} entries={[entry]} onMove={onMove} />
       </div>
     </li>
   );
@@ -117,7 +172,7 @@ function AttentionItem({
 
 /**
  * One environment's signed-out gh: one item, since every repo read and the pass fail on it, with
- * the way to the sign-in command and one Dismiss for all of them.
+ * the way to the sign-in command and one Quiet for all of them.
  */
 function SignedOutItem({
   entries,
@@ -125,22 +180,37 @@ function SignedOutItem({
   firstSeen,
   showEnvironment,
   nowMs,
-  onDismiss,
+  dismissed = false,
+  onMove,
 }: {
   entries: ReadonlyArray<EnvironmentAttention>;
   repos: ReadonlyArray<string>;
   firstSeen: string;
   showEnvironment: boolean;
   nowMs: number;
-  onDismiss: (items: ReadonlyArray<EnvironmentAttention>) => void;
+  dismissed?: boolean;
+  onMove: (items: ReadonlyArray<EnvironmentAttention>) => void;
 }) {
   const { environmentId, label } = entries[0]!;
   const [whole, setWhole] = useState(false);
   return (
-    <li className="flex flex-col gap-1 py-2 text-sm first:pt-0 last:pb-0" data-signed-out="">
+    <li
+      className={cn(
+        "flex flex-col gap-1 py-2 text-sm first:pt-0 last:pb-0",
+        dismissed && "text-muted-foreground",
+      )}
+      data-signed-out=""
+    >
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-        <span aria-hidden className="size-2 shrink-0 rounded-full bg-(--factory-stuck)" />
+        <span
+          aria-hidden
+          className={cn(
+            "size-2 shrink-0 rounded-full",
+            dismissed ? "border border-(--factory-stuck)" : "bg-(--factory-stuck)",
+          )}
+        />
         <span className="font-medium">GitHub sign-in</span>
+        {dismissed ? <DismissedNote item={entries[0]!.item} /> : null}
         {showEnvironment ? (
           <span className="min-w-0 break-words text-muted-foreground">{label}</span>
         ) : null}
@@ -168,31 +238,78 @@ function SignedOutItem({
         <Button aria-expanded={whole} onClick={() => setWhole(!whole)} size="xs" variant="ghost">
           {whole ? "Hide what gh said" : `What gh said (${entries.length})`}
         </Button>
-        <Button className="ml-auto" onClick={() => onDismiss(entries)} size="xs" variant="ghost">
-          Dismiss
-        </Button>
+        <MoveButton dismissed={dismissed} entries={entries} onMove={onMove} />
       </div>
     </li>
   );
 }
 
-/**
- * The open attention items in the order given, or a line saying none needs a person. With
- * `showEnvironment` each says which environment raised it. `onDismiss` gets the items to dismiss:
- * one, or every item shown for Dismiss all.
- */
-function AttentionSection({
+/** Attention rows, one per cause, each with its button to dismiss or bring back. */
+function AttentionRows({
   items,
   showEnvironment,
   nowMs,
-  onDismiss,
+  dismissed = false,
+  onMove,
 }: {
   items: ReadonlyArray<EnvironmentAttention>;
   showEnvironment: boolean;
   nowMs: number;
-  onDismiss: (items: ReadonlyArray<EnvironmentAttention>) => void;
+  dismissed?: boolean;
+  onMove: (items: ReadonlyArray<EnvironmentAttention>) => void;
 }) {
-  const rows = groupByCause(items);
+  return groupByCause(items).map((row) =>
+    row.kind === "one" ? (
+      <AttentionItem
+        dismissed={dismissed}
+        entry={row.entry}
+        key={`${row.entry.environmentId} ${row.entry.item.id}`}
+        nowMs={nowMs}
+        onMove={onMove}
+        showEnvironment={showEnvironment}
+      />
+    ) : (
+      <SignedOutItem
+        dismissed={dismissed}
+        entries={row.entries}
+        firstSeen={row.firstSeen}
+        key={`${row.environmentId} signed-out`}
+        nowMs={nowMs}
+        onMove={onMove}
+        repos={row.repos}
+        showEnvironment={showEnvironment}
+      />
+    ),
+  );
+}
+
+/**
+ * The open attention items in the order given, or a line saying none needs a person, then the
+ * dismissed ones in a fold, each with Bring back. With `showEnvironment` each says which
+ * environment raised it. `onDismiss` gets the items to dismiss: one, or every item shown for
+ * Dismiss all.
+ */
+function AttentionSection({
+  items,
+  dismissed,
+  showEnvironment,
+  nowMs,
+  onDismiss,
+  onRestore,
+}: {
+  items: ReadonlyArray<EnvironmentAttention>;
+  dismissed: ReadonlyArray<EnvironmentAttention>;
+  showEnvironment: boolean;
+  nowMs: number;
+  onDismiss: (items: ReadonlyArray<EnvironmentAttention>) => void;
+  onRestore: (items: ReadonlyArray<EnvironmentAttention>) => void;
+}) {
+  const count = groupByCause(items).length;
+  const dismissedRows = groupByCause(dismissed);
+  const stillTrueCount = dismissedRows.filter((row) =>
+    isCondition(row.kind === "one" ? row.entry.item : row.entries[0]!.item),
+  ).length;
+  const [showDismissed, setShowDismissed] = useState(false);
   return (
     <FactoryCard
       aria-label="Needs attention"
@@ -207,37 +324,52 @@ function AttentionSection({
                 Dismiss all
               </Button>
             )}
-            <span className="font-mono text-lg font-semibold leading-none">{rows.length}</span>
+            <span className="font-mono text-lg font-semibold leading-none">{count}</span>
           </>
         }
         title="Needs attention"
       />
       {items.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Nothing needs a person.</p>
+        <p className="text-sm text-muted-foreground">
+          {dismissed.length === 0 ? "Nothing needs a person." : "Nothing new needs a person."}
+        </p>
       ) : (
         <ul className="flex max-h-96 flex-col divide-y overflow-y-auto">
-          {rows.map((row) =>
-            row.kind === "one" ? (
-              <AttentionItem
-                entry={row.entry}
-                key={`${row.entry.environmentId} ${row.entry.item.id}`}
-                nowMs={nowMs}
-                onDismiss={onDismiss}
-                showEnvironment={showEnvironment}
-              />
-            ) : (
-              <SignedOutItem
-                entries={row.entries}
-                firstSeen={row.firstSeen}
-                key={`${row.environmentId} signed-out`}
-                nowMs={nowMs}
-                onDismiss={onDismiss}
-                repos={row.repos}
-                showEnvironment={showEnvironment}
-              />
-            ),
-          )}
+          <AttentionRows
+            items={items}
+            nowMs={nowMs}
+            onMove={onDismiss}
+            showEnvironment={showEnvironment}
+          />
         </ul>
+      )}
+      {dismissedRows.length === 0 ? null : (
+        <div className="flex flex-col gap-2 border-t pt-2" data-dismissed="">
+          <button
+            aria-expanded={showDismissed}
+            className="group/dismissed flex min-h-9 w-full items-center gap-2 rounded-sm text-left text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11"
+            data-open={showDismissed ? "" : undefined}
+            onClick={() => setShowDismissed(!showDismissed)}
+            type="button"
+          >
+            <ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-data-open/dismissed:rotate-90" />
+            <span className="font-medium">Dismissed ({dismissedRows.length})</span>
+            {stillTrueCount === 0 ? null : (
+              <span className="ml-auto text-(--factory-info)">{stillTrueCount} still true</span>
+            )}
+          </button>
+          {showDismissed ? (
+            <ul className="flex max-h-72 flex-col divide-y overflow-y-auto">
+              <AttentionRows
+                dismissed
+                items={dismissed}
+                nowMs={nowMs}
+                onMove={onRestore}
+                showEnvironment={showEnvironment}
+              />
+            </ul>
+          ) : null}
+        </div>
       )}
     </FactoryCard>
   );
@@ -443,9 +575,12 @@ export function BeltLowerRow({
   showEnvironment,
   nowMs,
   onDismiss,
+  onRestore,
+  dismissed,
   origin,
 }: {
   attention: ReadonlyArray<EnvironmentAttention>;
+  dismissed: ReadonlyArray<EnvironmentAttention>;
   /** Whether the recent runs lists the bins are made from have all answered. */
   known: boolean;
   needsInfo: ReadonlyArray<BeltRun>;
@@ -454,14 +589,17 @@ export function BeltLowerRow({
   showEnvironment: boolean;
   nowMs: number;
   onDismiss: (items: ReadonlyArray<EnvironmentAttention>) => void;
+  onRestore: (items: ReadonlyArray<EnvironmentAttention>) => void;
   origin?: QueueOrigin | undefined;
 }) {
   return (
     <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,18rem),1fr))] items-start gap-4">
       <AttentionSection
+        dismissed={dismissed}
         items={attention}
         nowMs={nowMs}
         onDismiss={onDismiss}
+        onRestore={onRestore}
         showEnvironment={showEnvironment}
       />
       <Bin

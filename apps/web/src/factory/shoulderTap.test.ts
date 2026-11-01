@@ -50,6 +50,12 @@ describe("attentionNews", () => {
     expect(attentionNews(third.seen, [stuck, disk]).fresh).toEqual([disk]);
   });
 
+  it("takes an item brought back from Dismissed as seen, not news", () => {
+    const disk = item({ id: "low-disk" });
+    const quiet = attentionNews(new Set(), [stuck], [disk]);
+    expect(attentionNews(quiet.seen, [stuck, disk]).fresh).toEqual([]);
+  });
+
   it("takes a signed-out gh as news once, not again for each repo it then fails", () => {
     const first = attentionNews(new Set(), [signedOut("acme/web")]);
     expect(first.fresh).toEqual([signedOut("acme/web")]);

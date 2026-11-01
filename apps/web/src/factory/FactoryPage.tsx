@@ -4,7 +4,8 @@ import { useState } from "react";
 
 import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 
-import { factoryApi } from "./api";
+import { factoryApi, type FactoryAttentionItem, type FactoryStatus } from "./api";
+import { splitDismissed, stillTrue } from "./attentionCauses";
 import type { EnvironmentAttention } from "./BeltLowerRow";
 import { CatchUpCard } from "./CatchUpCard";
 import { FactoryBelt } from "./FactoryBelt";
@@ -118,8 +119,9 @@ export function FactoryPage() {
   // The environments with a pause or resume in flight: one environment's control never disables another's.
   const [busy, setBusy] = useState<ReadonlySet<EnvironmentId>>(() => new Set());
   const [note, setNote] = useState<string | null>(null);
-  // The attention items dismissed on this page, hidden before the server's next status says so.
-  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
+  // The attention items dismissed (true) or restored (false) on this page, moved before the
+  // server's next status says so.
+  const [overrides, setOverrides] = useState<ReadonlyMap<string, boolean>>(() => new Map());
   // Coming back from a run page: the search typed before, and the run to focus.
   const returned = useRouterState({ select: ({ location }) => location.state.factoryReturn });
   // Typed on this page only: the runs chip is in the URL, a half-typed search is not.
@@ -140,14 +142,23 @@ export function FactoryPage() {
     status.refresh();
   };
 
-  const allAttention = environments
-    .flatMap(({ environmentId, label, status }) =>
-      (status.data?.attention ?? []).map((item) => ({ environmentId, label, item })),
-    )
-    .filter((entry) => !dismissed.has(attentionKey(entry)))
-    .sort((a, b) => Date.parse(a.item.first_seen) - Date.parse(b.item.first_seen));
+  const entriesOf = (pick: (status: FactoryStatus) => ReadonlyArray<FactoryAttentionItem>) =>
+    environments.flatMap(({ environmentId, label, status }) =>
+      (status.data ? pick(status.data) : []).map((item) => ({ environmentId, label, item })),
+    );
+  const byFirstSeen = (a: EnvironmentAttention, b: EnvironmentAttention) =>
+    Date.parse(a.item.first_seen) - Date.parse(b.item.first_seen);
+  const split = splitDismissed(
+    entriesOf((data) => data.attention),
+    entriesOf((data) => data.dismissed ?? []),
+    overrides,
+    attentionKey,
+  );
+  const allAttention = split.open.toSorted(byFirstSeen);
+  const allDismissed = split.dismissed.toSorted(byFirstSeen);
 
-  const dismiss = (entries: ReadonlyArray<EnvironmentAttention>) => {
+  /** Dismisses (`hide`) or restores the entries, at once on the page and then on their servers. */
+  const setDismissedOn = (entries: ReadonlyArray<EnvironmentAttention>, hide: boolean) => {
     const byEnvironment = new Map<EnvironmentId, Array<EnvironmentAttention>>();
     for (const entry of entries) {
       byEnvironment.set(entry.environmentId, [
@@ -155,26 +166,26 @@ export function FactoryPage() {
         entry,
       ]);
     }
-    const change = (group: ReadonlyArray<EnvironmentAttention>, hide: boolean) =>
-      setDismissed((current) => {
-        const next = new Set(current);
+    const change = (group: ReadonlyArray<EnvironmentAttention>, value: boolean | null) =>
+      setOverrides((current) => {
+        const next = new Map(current);
         for (const entry of group) {
-          if (hide) next.add(attentionKey(entry));
-          else next.delete(attentionKey(entry));
+          if (value === null) next.delete(attentionKey(entry));
+          else next.set(attentionKey(entry), value);
         }
         return next;
       });
     for (const [environmentId, group] of byEnvironment) {
-      change(group, true);
+      change(group, hide);
+      const ids = group.map(({ item }) => item.id);
       // Not through `togglePause`: a dismiss that ends must not clear the busy flag of a pause or
       // resume still in flight.
-      factoryApi
-        .dismissAttention(
-          environmentId,
-          group.map(({ item }) => item.id),
-        )
+      (hide
+        ? factoryApi.dismissAttention(environmentId, ids)
+        : factoryApi.restoreAttention(environmentId, ids)
+      )
         .catch((error: unknown) => {
-          change(group, false);
+          change(group, null);
           setNote(messageOf(error));
         })
         .finally(() =>
@@ -184,6 +195,8 @@ export function FactoryPage() {
         );
     }
   };
+  const dismiss = (entries: ReadonlyArray<EnvironmentAttention>) => setDismissedOn(entries, true);
+  const restore = (entries: ReadonlyArray<EnvironmentAttention>) => setDismissedOn(entries, false);
 
   const nowMs = Math.max(
     0,
@@ -233,9 +246,10 @@ export function FactoryPage() {
     inEnvironment(environmentId),
   );
   // An item with no repo is about the machine, not a repo, so a repo filter keeps it.
-  const attention = allAttention.filter(
-    ({ environmentId, item }) => inEnvironment(environmentId) && (!item.repo || inRepo(item.repo)),
-  );
+  const shownItem = ({ environmentId, item }: EnvironmentAttention) =>
+    inEnvironment(environmentId) && (!item.repo || inRepo(item.repo));
+  const attention = allAttention.filter(shownItem);
+  const dismissedAttention = allDismissed.filter(shownItem);
   // The digest follows the page's filters; it reads the recent window, whatever the table shows.
   const caughtUpRecent = answered
     .filter(({ environmentId }) => inEnvironment(environmentId))
@@ -368,7 +382,7 @@ export function FactoryPage() {
           environments={shownEnvironments.flatMap(({ environmentId, label, status }) =>
             status.data === null
               ? []
-              : [{ environmentId, label, attention: status.data.attention }],
+              : [{ environmentId, label, attention: stillTrue(status.data) }],
           )}
           recent={
             new Map(
@@ -432,6 +446,7 @@ export function FactoryPage() {
         <FactoryBelt
           attention={attention}
           busy={busy}
+          dismissed={dismissedAttention}
           digest={
             firstRun ? null : (
               <CatchUpCard
@@ -446,6 +461,7 @@ export function FactoryPage() {
           environments={environments}
           nowMs={nowMs}
           onDismiss={dismiss}
+          onRestore={restore}
           onTogglePause={(environment) => void togglePause(environment)}
           origin={origin}
           recent={recentById}

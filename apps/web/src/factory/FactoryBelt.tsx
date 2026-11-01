@@ -15,7 +15,7 @@ import { useBeltNews } from "./beltNews";
 import { BeltChanges } from "./BeltChanges";
 import { BeltRail, type ClaimsHeldWhy } from "./BeltRail";
 import { machineHold } from "./machineHealth";
-import { signedOutCause } from "./attentionCauses";
+import { signedOutCause, stillTrue } from "./attentionCauses";
 import { MachineHealthPanel } from "./MachineHealthPanel";
 import { ControlFoldProvider, DIAL_CELL } from "./ControlFold";
 import { MachineRoster, useSecond } from "./MachineRoster";
@@ -281,8 +281,10 @@ export function FactoryBelt({
   nowMs,
   onTogglePause,
   attention,
+  dismissed,
   showEnvironment,
   onDismiss,
+  onRestore,
   origin,
   digest,
   repo = null,
@@ -301,8 +303,11 @@ export function FactoryBelt({
   onTogglePause: (environment: FactoryEnvironment) => void;
   /** The attention items to show, after the page's dismissals and filters. */
   attention: ReadonlyArray<EnvironmentAttention>;
+  /** The items a person dismissed whose cause still holds, after the same filters. */
+  dismissed: ReadonlyArray<EnvironmentAttention>;
   showEnvironment: boolean;
   onDismiss: (items: ReadonlyArray<EnvironmentAttention>) => void;
+  onRestore: (items: ReadonlyArray<EnvironmentAttention>) => void;
   /** The page's filters, so a bin's run can step through its bin and come back. */
   origin?: QueueOrigin | undefined;
   /** What happened since the viewer caught up, shown in the control bar under the claims switch. */
@@ -393,7 +398,9 @@ export function FactoryBelt({
   // A hand pause names the hold before an update does.
   const report = selected.status.data;
   // A low disk has no since of its own; its attention item says when the pass first held for it.
-  const lowDiskSince = report?.attention.find((item) => item.id === "low-disk")?.first_seen;
+  const lowDiskSince = (report ? stillTrue(report) : []).find(
+    (item) => item.id === "low-disk",
+  )?.first_seen;
   const held: { why: ClaimsHeldWhy; since: number | null } | null = report?.paused_by_hand
     ? { why: "paused by hand", since: Date.parse(report.paused_by_hand.since) }
     : report?.deploy_pending && report.deploy_pending.snoozed_until === null
@@ -406,7 +413,7 @@ export function FactoryBelt({
         : report && machineHold(report)?.word === "gh signed out"
           ? {
               why: "held for GitHub sign-in",
-              since: Date.parse(signedOutCause(report.attention)!.firstSeen),
+              since: Date.parse(signedOutCause(stillTrue(report))!.firstSeen),
             }
           : null;
   const deployNote = deployNotes.get(selected.environmentId);
@@ -508,13 +515,15 @@ export function FactoryBelt({
           <BeltChanges at={heard.at} news={heard.news} />
         ) : null}
       </section>
-      {firstRun !== false && attention.length === 0 ? null : (
+      {firstRun !== false && attention.length === 0 && dismissed.length === 0 ? null : (
         <BeltLowerRow
           attention={attention}
+          dismissed={dismissed}
           known={known}
           needsInfo={shown.info}
           nowMs={nowMs}
           onDismiss={onDismiss}
+          onRestore={onRestore}
           origin={origin}
           selectedId={selected.environmentId}
           showEnvironment={showEnvironment}

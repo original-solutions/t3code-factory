@@ -60,6 +60,8 @@ export interface FactoryStatus {
     readonly unreadable: boolean;
   }>;
   readonly attention: ReadonlyArray<FactoryAttentionItem>;
+  /** Items a person dismissed whose cause still holds; absent from older servers. */
+  readonly dismissed?: ReadonlyArray<FactoryAttentionItem>;
   readonly slots: { readonly used: number; readonly max: number | null };
   /**
    * Threads with an agent at work, a person's or the factory's, which an update interrupts; null
@@ -225,6 +227,11 @@ export interface FactoryDismissResult {
   readonly dismissed: ReadonlyArray<string>;
 }
 
+export interface FactoryRestoreResult {
+  /** The ids the server listed again; an id that was not dismissed is left out. */
+  readonly restored: ReadonlyArray<string>;
+}
+
 export interface FactorySnoozeResult {
   /** ISO time the snooze ends. */
   readonly snoozed_until: string;
@@ -282,6 +289,10 @@ export interface FactoryApi {
     environmentId: EnvironmentId,
     ids: ReadonlyArray<string>,
   ) => Promise<FactoryDismissResult>;
+  readonly restoreAttention: (
+    environmentId: EnvironmentId,
+    ids: ReadonlyArray<string>,
+  ) => Promise<FactoryRestoreResult>;
 }
 
 /**
@@ -405,6 +416,8 @@ const httpApi: FactoryApi = {
   deployNow: (environmentId, commit) => post(environmentId, "/api/factory/deploy/now", { commit }),
   dismissAttention: (environmentId, ids) =>
     post(environmentId, "/api/factory/attention/dismiss", { ids }),
+  restoreAttention: (environmentId, ids) =>
+    post(environmentId, "/api/factory/attention/restore", { ids }),
 };
 
 let override: FactoryApi | undefined;
@@ -429,4 +442,6 @@ export const factoryApi: FactoryApi = {
   deployNow: (environmentId, commit) => (override ?? httpApi).deployNow(environmentId, commit),
   dismissAttention: (environmentId, ids) =>
     (override ?? httpApi).dismissAttention(environmentId, ids),
+  restoreAttention: (environmentId, ids) =>
+    (override ?? httpApi).restoreAttention(environmentId, ids),
 };

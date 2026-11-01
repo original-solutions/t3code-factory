@@ -96,3 +96,40 @@ export const signedOutLine = (repos: ReadonlyArray<string>): string =>
     : `The factory's gh is signed out, so it cannot read ${
         repos.length === 1 ? repos[0] : `any of its ${repos.length} repos: ${repoNames(repos)}`
       }.`;
+
+/**
+ * Whether an item is a condition the server clears itself once it ends (a config, a sign-in, low
+ * disk, a rate limit), rather than an event about one run or an archived worktree. Dismissing a
+ * condition only quiets it: whatever it holds is still shown until it clears.
+ */
+export const isCondition = (item: { readonly id: string; readonly run: string | null }): boolean =>
+  item.run === null && !item.id.startsWith("worktree:");
+
+/** Every item whose cause holds, dismissed or not: holds read these; counts read only the open ones. */
+export const stillTrue = <I>(status: {
+  readonly attention: ReadonlyArray<I>;
+  readonly dismissed?: ReadonlyArray<I> | undefined;
+}): ReadonlyArray<I> => [...status.attention, ...(status.dismissed ?? [])];
+
+/**
+ * The open and dismissed items as the page shows them, after its own dismissals and restores the
+ * server has not echoed yet: `overrides` maps an entry's key to whether it is dismissed.
+ */
+export function splitDismissed<E>(
+  open: ReadonlyArray<E>,
+  dismissed: ReadonlyArray<E>,
+  overrides: ReadonlyMap<string, boolean>,
+  key: (entry: E) => string,
+): { readonly open: ReadonlyArray<E>; readonly dismissed: ReadonlyArray<E> } {
+  const isDismissed = (entry: E, server: boolean) => overrides.get(key(entry)) ?? server;
+  return {
+    open: [
+      ...open.filter((entry) => !isDismissed(entry, false)),
+      ...dismissed.filter((entry) => !isDismissed(entry, true)),
+    ],
+    dismissed: [
+      ...open.filter((entry) => isDismissed(entry, false)),
+      ...dismissed.filter((entry) => isDismissed(entry, true)),
+    ],
+  };
+}

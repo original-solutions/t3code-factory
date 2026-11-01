@@ -166,11 +166,13 @@ const statusCall = (
       ),
       Context.add(Attention, {
         list: () => Effect.succeed([]),
+        listDismissed: () => Effect.succeed([]),
         raise: () => Effect.void,
         clear: () => Effect.void,
         passEnded: () => Effect.void,
         setNotify: () => Effect.void,
         dismiss: () => Effect.succeed([]),
+        restore: () => Effect.succeed([]),
       }),
       Context.add(FactoryPaths, {
         baseDir: dir,

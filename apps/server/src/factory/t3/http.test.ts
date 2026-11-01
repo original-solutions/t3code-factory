@@ -55,6 +55,7 @@ import {
   DEPLOY_NOW_PATH,
   DEPLOY_SNOOZE_PATH,
   DISMISS_PATH,
+  RESTORE_PATH,
   FactoryRoutes,
   RESTART_PATH,
   STATUS_PATH,
@@ -195,6 +196,7 @@ interface World {
   /** Threads with an agent at work, or "fails" for a read that fails. */
   readonly runningThreads?: number | "fails";
   readonly attention?: ReadonlyArray<AttentionItem>;
+  readonly dismissed?: ReadonlyArray<AttentionItem>;
   /** The factory dir; the machine config is `<dir>/config.yml`. */
   readonly dir?: string;
   /** What the loop last read of each repo's project config. */
@@ -225,15 +227,21 @@ interface Calls {
   kicks: number;
 }
 
-const attentionWith = (items: ReadonlyArray<AttentionItem>) =>
+const attentionWith = (
+  items: ReadonlyArray<AttentionItem>,
+  dismissed: ReadonlyArray<AttentionItem> = [],
+) =>
   Attention.of({
     list: () => Effect.succeed(items),
+    listDismissed: () => Effect.succeed(dismissed),
     raise: () => Effect.void,
     clear: () => Effect.void,
     passEnded: () => Effect.void,
     setNotify: () => Effect.void,
     dismiss: (ids) =>
       Effect.succeed(items.filter((item) => ids.includes(item.id)).map((item) => item.id)),
+    restore: (ids) =>
+      Effect.succeed(dismissed.filter((item) => ids.includes(item.id)).map((item) => item.id)),
   });
 
 const worldContext = (
@@ -302,7 +310,7 @@ const worldContext = (
         health: Effect.succeed(world.health ?? null),
       }),
     ),
-    Context.add(Attention, attentionWith(world.attention ?? [])),
+    Context.add(Attention, attentionWith(world.attention ?? [], world.dismissed ?? [])),
     Context.add(FactoryPaths, {
       baseDir: dir,
       worktreesDir: NodePath.join(dir, "worktrees"),
@@ -411,6 +419,7 @@ const FACTORY_ROUTES = [
   ["POST", "/api/factory/claims/pause"],
   ["POST", "/api/factory/claims/resume"],
   ["POST", "/api/factory/attention/dismiss"],
+  ["POST", "/api/factory/attention/restore"],
   ["GET", "/api/factory/config"],
   ["POST", "/api/factory/config"],
   ["POST", "/api/factory/restart"],
@@ -471,6 +480,7 @@ describe("every factory route", () => {
         "/api/factory/claims/pause",
         "/api/factory/claims/resume",
         "/api/factory/attention/dismiss",
+        "/api/factory/attention/restore",
         "/api/factory/restart",
         "/api/factory/deploy/snooze",
         "/api/factory/deploy/now",
@@ -519,6 +529,7 @@ describe("GET /api/factory/status", () => {
         "problems",
         "health",
         "attention",
+        "dismissed",
       ]);
       assert.strictEqual((body.passes as { poll_seconds: unknown }).poll_seconds, null);
       assert.deepStrictEqual(body.slots, { used: 0, max: null });
@@ -558,21 +569,34 @@ describe("GET /api/factory/status", () => {
     }),
   );
 
-  it.effect("carries the open attention items", () =>
-    serving({ status: running, attention: [attentionItem()] }, async (call, { tokens }) => {
-      const body = await json(await call("GET", STATUS_PATH, tokens.read));
-      assert.deepStrictEqual(body.attention, [
-        {
-          id: "stuck:a/b#1",
-          kind: "stuck",
-          repo: "a/b",
-          issue: 1,
-          run: "a__b__1__1",
-          message: "run went stuck",
-          first_seen: formatTs(T0),
-        },
-      ]);
-    }),
+  it.effect("carries the open attention items, and the dismissed ones apart", () =>
+    serving(
+      {
+        status: running,
+        attention: [attentionItem()],
+        dismissed: [
+          attentionItem({ id: "low-disk", kind: "attention", repo: null, issue: null, run: null }),
+        ],
+      },
+      async (call, { tokens }) => {
+        const body = await json(await call("GET", STATUS_PATH, tokens.read));
+        assert.deepStrictEqual(
+          (body.dismissed as Array<{ id: string }>).map((item) => item.id),
+          ["low-disk"],
+        );
+        assert.deepStrictEqual(body.attention, [
+          {
+            id: "stuck:a/b#1",
+            kind: "stuck",
+            repo: "a/b",
+            issue: 1,
+            run: "a__b__1__1",
+            message: "run went stuck",
+            first_seen: formatTs(T0),
+          },
+        ]);
+      },
+    ),
   );
 
   it.effect("carries the machine's health the loop reads", () => {
@@ -1380,6 +1404,20 @@ describe("POST /api/factory/attention/dismiss", () => {
         assert.strictEqual(response.status, 400, JSON.stringify(body));
         assert.strictEqual((await json(response)).code, "invalid_body");
       }
+    }),
+  );
+});
+
+describe("POST /api/factory/attention/restore", () => {
+  it.effect("answers 200 with the ids it restored, ignoring ids that are not dismissed", () =>
+    serving({ dismissed: [attentionItem()] }, async (call, { tokens }) => {
+      const response = await call("POST", RESTORE_PATH, tokens.operate, {
+        ids: ["stuck:a/b#1", "gone"],
+      });
+      assert.strictEqual(response.status, 200);
+      assert.deepStrictEqual(await response.json(), { restored: ["stuck:a/b#1"] });
+      const bad = await call("POST", RESTORE_PATH, tokens.operate, { ids: "stuck:a/b#1" });
+      assert.strictEqual(bad.status, 400);
     }),
   );
 });

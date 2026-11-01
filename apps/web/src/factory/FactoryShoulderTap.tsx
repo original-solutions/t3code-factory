@@ -103,6 +103,7 @@ export function FactoryShoulderTap() {
       const { fresh, seen } = attentionNews(
         seenByEnvironment.get(environmentId),
         status.data.attention,
+        status.data.dismissed,
       );
       seenByEnvironment.set(environmentId, seen);
       if (fresh.length > 0) present(router, tapOf(environmentId, many ? label : null, fresh));

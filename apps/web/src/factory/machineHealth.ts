@@ -1,5 +1,5 @@
 import type { FactoryStatus } from "./api";
-import { signedOutLine, signedOutCause } from "./attentionCauses";
+import { signedOutLine, signedOutCause, stillTrue } from "./attentionCauses";
 import { formatClock } from "./belt";
 
 /** How a gauge reads: fine, near the line where the pass holds, over it, or unread. */
@@ -100,7 +100,7 @@ export function machineHold(status: FactoryStatus): {
       };
     }
   }
-  const repos = signedOutCause(status.attention)?.repos;
+  const repos = signedOutCause(stillTrue(status))?.repos;
   if (repos === undefined) return null;
   return {
     word: "gh signed out",
@@ -129,7 +129,7 @@ export function machineHealthView(status: FactoryStatus): MachineHealthView | nu
   const health = status.health;
   if (health == null) return null;
   const { disk, load, gates } = health;
-  const lowDiskOpen = status.attention.some((item) => item.id === "low-disk");
+  const lowDiskOpen = stillTrue(status).some((item) => item.id === "low-disk");
 
   const diskGauge: HealthGauge =
     "error" in disk
@@ -211,7 +211,7 @@ export function machineHealthView(status: FactoryStatus): MachineHealthView | nu
       detail: `A build waits to install${since(status.deploy_pending.since)}; claims start again once it is installed.`,
     });
   }
-  const signedOut = signedOutCause(status.attention);
+  const signedOut = signedOutCause(stillTrue(status));
   if (signedOut !== null) {
     holds.push({
       key: "signed-out",

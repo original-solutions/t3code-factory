@@ -16,13 +16,14 @@ export interface ShoulderTap {
 /**
  * The items `items` adds to the causes `seen` held: a repo a signed-out gh newly fails is not news
  * once the sign-out was. With no `seen` (the first read) nothing is news: what was there before
- * you looked is already in the bins.
+ * you looked is already in the bins. `dismissed` items count as seen, so one brought back is not news.
  */
 export function attentionNews(
   seen: ReadonlySet<string> | undefined,
   items: ReadonlyArray<FactoryAttentionItem>,
+  dismissed: ReadonlyArray<FactoryAttentionItem> = [],
 ): { readonly fresh: ReadonlyArray<FactoryAttentionItem>; readonly seen: ReadonlySet<string> } {
-  const keys = new Set(items.map(causeKey));
+  const keys = new Set([...items, ...dismissed].map(causeKey));
   return {
     fresh: seen === undefined ? [] : items.filter((item) => !seen.has(causeKey(item))),
     seen: keys,
