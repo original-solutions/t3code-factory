@@ -5,10 +5,12 @@ import type { ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { cn } from "~/lib/utils";
 
 import type { FactoryRunRow } from "./api";
 import { formatClock } from "./belt";
 import { catchUp, catchUpSince, type CatchUpRun } from "./catchUp";
+import { DIAL_CELL, DialButton, DialDetail, useControlFold } from "./ControlFold";
 import { formatAge } from "./format";
 import { dayLabel } from "./runLedger";
 import { runLinkKey, runQueue, type QueueOrigin } from "./runQueue";
@@ -71,16 +73,35 @@ const queueOf = (origin: QueueOrigin | undefined, runs: ReadonlyArray<CatchUpRun
       );
 
 /** One count in the summary line: a tone dot, the number, and what it counts. */
-function Count({ color, value, word }: { color: string; value: number; word: string }) {
+function Count({
+  color,
+  value,
+  word,
+  strong = false,
+}: {
+  color: string;
+  value: number;
+  word: string;
+  /** Wants a person: the word in its tone. */
+  strong?: boolean;
+}) {
   return (
-    <span className="inline-flex items-baseline gap-1.5">
+    <span className="inline-flex items-baseline gap-1">
       <span
         aria-hidden
         className="inline-block size-2 rounded-full"
         style={{ background: color }}
       />
-      <b className="font-mono text-lg font-semibold leading-none">{value}</b>
-      <span className="text-sm text-muted-foreground">{word}</span>
+      <b className="font-mono text-sm font-semibold leading-none">{value}</b>
+      <span
+        className={cn(
+          "whitespace-nowrap text-xs",
+          strong ? "font-medium" : "text-muted-foreground",
+        )}
+        style={strong ? { color } : undefined}
+      >
+        {word}
+      </span>
     </span>
   );
 }
@@ -112,8 +133,8 @@ function IssueLine({
 /**
  * What the factory did since this browser last caught up: what merged and closed, and the runs
  * that stopped for a person, each linking to its run. "Mark caught up" moves the mark to the last
- * read. Static between reads; a pure fold of the recent lists the page already reads. A band of
- * the belt's control bar, between the claims switch and today's strip.
+ * read. Static between reads; a pure fold of the recent lists the page already reads. A dial of the
+ * belt's control bar, its counts on top and the runs one tap below.
  */
 export function CatchUpCard({
   environments,
@@ -131,6 +152,7 @@ export function CatchUpCard({
   showEnvironment: boolean;
 }) {
   const [markMs, setMarkMs] = useLocalStorage(CAUGHT_UP_KEY, null, MarkSchema);
+  const fold = useControlFold("catch-up");
   if (environments.length === 0 || nowMs === 0) return null;
   const sinceMs = catchUpSince(markMs, nowMs);
   const { merged, closed, stopped, claimed } = catchUp(environments, sinceMs);
@@ -142,90 +164,109 @@ export function CatchUpCard({
     return (
       <section
         aria-label="Since you caught up"
-        className="flex flex-wrap items-baseline gap-x-2 border-t px-5 py-2.5 text-sm"
+        className={cn(DIAL_CELL, "flex-col justify-center gap-1 px-5 py-2.5")}
       >
-        <h2 className="font-medium">{heading}</h2>
-        <span className="text-muted-foreground">nothing new: no runs claimed or finished.</span>
+        <h2 className="text-xs text-muted-foreground">{heading}</h2>
+        <span className="text-sm">Nothing new: no runs claimed or finished.</span>
       </section>
     );
   }
 
   return (
-    <section aria-label="Since you caught up" className="flex flex-col gap-3 border-t px-5 py-3.5">
-      <div className="flex flex-wrap items-center gap-x-8 gap-y-2">
-        <div className="flex min-w-0 flex-col">
-          <h2 className="text-sm font-medium">{heading}</h2>
-          <span className="text-xs text-muted-foreground">
-            {markMs === sinceMs
-              ? `${formatAge(sinceMs, nowMs)} ago`
-              : "Mark caught up and your next visit starts from here."}
+    <>
+      <div className={cn(DIAL_CELL, "flex-wrap items-center")}>
+        <DialButton
+          controls={fold.id}
+          label={`${heading}: ${merged.length} merged, ${stopped.length} need you, ${closed.length} closed, ${claimed} claimed`}
+          onToggle={fold.toggle}
+          open={fold.open}
+        >
+          <h2 className="min-w-0 truncate text-xs text-muted-foreground">{heading}</h2>
+          <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <Count color={TONE.merged.color} value={merged.length} word="merged" />
+            <Count
+              color={TONE.stuck.color}
+              strong={stopped.length > 0}
+              value={stopped.length}
+              word="need you"
+            />
+            <Count color={TONE.closed.color} value={closed.length} word="closed" />
+            <Count color="var(--factory-claimed)" value={claimed} word="claimed" />
           </span>
-        </div>
-        <div className="flex flex-wrap items-baseline gap-x-5 gap-y-2">
-          <Count color={TONE.merged.color} value={merged.length} word="merged" />
-          <Count color={TONE.stuck.color} value={stopped.length} word="need you" />
-          <Count color={TONE.closed.color} value={closed.length} word="closed" />
-          <Count color="var(--factory-claimed)" value={claimed} word="claimed" />
-        </div>
-        <div className="ml-auto">
-          <Button onClick={() => setMarkMs(nowMs)} size="sm" variant="outline">
+        </DialButton>
+        <div className="shrink-0 basis-full px-5 pb-2.5 @md:basis-auto @md:pr-3 @md:pb-0 @md:pl-0">
+          <Button onClick={() => setMarkMs(nowMs)} size="xs" variant="outline">
             Mark caught up
           </Button>
         </div>
       </div>
 
-      {stopped.length === 0 ? null : (
-        <ul aria-label="Stopped for you" className="flex flex-col divide-y border-t">
-          {stopped.map((run) => {
-            const tone = TONE[run.outcome];
-            const text =
-              run.outcome === "stuck" ? splitStuckReason(run.reason).cause : run.reason?.trim();
-            return (
-              <li
-                className="flex min-w-0 gap-3 py-2 text-sm last:pb-0"
-                data-outcome={run.outcome}
-                key={run.key}
-              >
-                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <div className="flex flex-wrap items-center gap-x-2">
-                    <span
-                      aria-hidden
-                      className="size-2 shrink-0 rounded-full"
-                      style={{ background: tone.color }}
-                    />
-                    <RunLink queue={stoppedQueue} run={run}>
-                      {run.issue}
-                    </RunLink>
-                    {run.title === null ? null : (
-                      <span className="min-w-0 break-words">{run.title}</span>
-                    )}
-                  </div>
-                  <span className="flex min-w-0 flex-wrap gap-x-1.5 text-xs text-muted-foreground">
-                    <span className="font-medium" style={{ color: tone.color }}>
-                      {tone.word}
-                    </span>
-                    <span>· {formatAge(run.endMs, nowMs)} ago</span>
-                    {run.repo === null ? null : (
-                      <span className="min-w-0 break-all font-mono">· {run.repo}</span>
-                    )}
-                    {showEnvironment ? <span>· {run.label}</span> : null}
-                  </span>
-                  {text ? (
-                    <p className="line-clamp-2 break-words text-xs text-muted-foreground">{text}</p>
-                  ) : null}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-
-      {merged.length + closed.length === 0 ? null : (
-        <div className="flex flex-col gap-1 border-t pt-2">
-          <IssueLine label="Merged" origin={origin} runs={merged} />
-          <IssueLine label="Closed" origin={origin} runs={closed} />
-        </div>
-      )}
-    </section>
+      {fold.open ? (
+        <DialDetail id={fold.id} label="What happened since you caught up">
+          <div className="flex flex-col gap-3 px-5 py-3">
+            <span className="text-xs text-muted-foreground">
+              {markMs === sinceMs
+                ? `${heading} · ${formatAge(sinceMs, nowMs)} ago`
+                : "Mark caught up and your next visit starts from here."}
+            </span>
+            {stopped.length === 0 ? null : (
+              <ul aria-label="Stopped for you" className="flex flex-col divide-y border-t">
+                {stopped.map((run) => {
+                  const tone = TONE[run.outcome];
+                  const text =
+                    run.outcome === "stuck"
+                      ? splitStuckReason(run.reason).cause
+                      : run.reason?.trim();
+                  return (
+                    <li
+                      className="flex min-w-0 gap-3 py-2 text-sm last:pb-0"
+                      data-outcome={run.outcome}
+                      key={run.key}
+                    >
+                      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                        <div className="flex flex-wrap items-center gap-x-2">
+                          <span
+                            aria-hidden
+                            className="size-2 shrink-0 rounded-full"
+                            style={{ background: tone.color }}
+                          />
+                          <RunLink queue={stoppedQueue} run={run}>
+                            {run.issue}
+                          </RunLink>
+                          {run.title === null ? null : (
+                            <span className="min-w-0 break-words">{run.title}</span>
+                          )}
+                        </div>
+                        <span className="flex min-w-0 flex-wrap gap-x-1.5 text-xs text-muted-foreground">
+                          <span className="font-medium" style={{ color: tone.color }}>
+                            {tone.word}
+                          </span>
+                          <span>· {formatAge(run.endMs, nowMs)} ago</span>
+                          {run.repo === null ? null : (
+                            <span className="min-w-0 break-all font-mono">· {run.repo}</span>
+                          )}
+                          {showEnvironment ? <span>· {run.label}</span> : null}
+                        </span>
+                        {text ? (
+                          <p className="line-clamp-2 break-words text-xs text-muted-foreground">
+                            {text}
+                          </p>
+                        ) : null}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {merged.length + closed.length === 0 ? null : (
+              <div className="flex flex-col gap-1 border-t pt-2">
+                <IssueLine label="Merged" origin={origin} runs={merged} />
+                <IssueLine label="Closed" origin={origin} runs={closed} />
+              </div>
+            )}
+          </div>
+        </DialDetail>
+      ) : null}
+    </>
   );
 }

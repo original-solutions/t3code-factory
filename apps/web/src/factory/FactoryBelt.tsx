@@ -4,13 +4,11 @@ import { useState, type CSSProperties, type ReactNode } from "react";
 
 import { Skeleton } from "~/components/ui/skeleton";
 import { Switch } from "~/components/ui/switch";
-import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { cn } from "~/lib/utils";
 
 import { factoryApi, type FactoryRunRow, type FactoryStatus } from "./api";
 import { beltColumns, deriveBelt, nextPassText, type Station } from "./belt";
 import "./belt.css";
-import { BeltDot } from "./BeltDot";
 import { BeltLowerRow, type EnvironmentAttention } from "./BeltLowerRow";
 import { useBeltMotion } from "./beltMotion";
 import { useBeltNews } from "./beltNews";
@@ -18,6 +16,7 @@ import { BeltChanges } from "./BeltChanges";
 import { BeltRail, type ClaimsHeldWhy } from "./BeltRail";
 import { machineHold } from "./machineHealth";
 import { MachineHealthPanel } from "./MachineHealthPanel";
+import { ControlFoldProvider, DIAL_CELL } from "./ControlFold";
 import { MachineRoster, useSecond } from "./MachineRoster";
 import type { QueueOrigin } from "./runQueue";
 import { DeployBanner } from "./DeployBanner";
@@ -94,18 +93,13 @@ function NextPass({ passes }: { passes: FactoryStatus["passes"] | undefined }) {
   const nowMs = useSecond();
   const text = nextPassText(passes, nowMs);
   if (text === null) return null;
-  return (
-    <div className="flex flex-col justify-center gap-1.5 border-l px-5 py-2.5">
-      <span className={LABEL}>Pass loop</span>
-      <b className="text-sm font-semibold">{text}</b>
-    </div>
-  );
+  return <span className={LABEL}>{text}</span>;
 }
 
 /**
- * The claims switch, state and pass line of the one environment, or the roster of every machine
- * when there are several, then what happened since the viewer caught up, then today's strip over
- * every environment. A switch is on while claims run; an environment with no status says nothing
+ * The roster of every machine when there are several, then one row of dials: the claims switch
+ * and pass of the one environment, the machine's health and what happened since the viewer caught
+ * up, each opening its detail below the row; then today's strip over every environment. A switch is on while claims run; an environment with no status says nothing
  * about its claims and cannot be switched.
  */
 function ControlBar({
@@ -130,7 +124,10 @@ function ControlBar({
   const report = selected.status.data;
   const paused = report?.paused_by_hand != null;
   return (
-    <section aria-label="Controls" className="flex flex-col rounded-lg border bg-card">
+    <section
+      aria-label="Controls"
+      className="flex flex-col overflow-hidden rounded-lg border bg-card"
+    >
       {environments.length > 1 ? (
         <MachineRoster
           busy={busy}
@@ -139,43 +136,60 @@ function ControlBar({
           onTogglePause={onTogglePause}
           selectedId={selected.environmentId}
         />
-      ) : (
-        <div className="flex flex-wrap items-stretch">
-          <div className="flex items-center gap-3 px-5 py-2.5">
-            {/* The switch has no coarse-pointer hit area of its own; the label is the 44 px target. */}
-            <label className="inline-flex items-center justify-center pointer-coarse:min-h-11 pointer-coarse:min-w-11">
-              <Switch
-                aria-label={`Claims on ${selected.label}`}
-                checked={report !== null && !paused}
-                disabled={report === null || busy.has(selected.environmentId)}
-                onCheckedChange={() => onTogglePause(selected)}
-              />
-            </label>
-            <div className="flex flex-col gap-1">
-              <span className={LABEL}>Claims</span>
-              <b className="text-sm font-semibold">
-                {report === null
-                  ? "-"
-                  : paused
-                    ? "Paused"
-                    : report.state === "idle"
-                      ? "Idle"
-                      : "Running"}
-              </b>
+      ) : null}
+      {/* One row of dials, the 1px gaps their dividers; an opened dial's detail spans the row below. */}
+      <ControlFoldProvider>
+        <div
+          className={cn("flex flex-wrap gap-px bg-border", environments.length > 1 && "border-t")}
+          data-part="dials"
+        >
+          {environments.length > 1 ? null : (
+            <div className={cn(DIAL_CELL, "basis-auto items-center gap-3 px-5 py-2.5")}>
+              {/* The switch has no coarse-pointer hit area of its own; the label is the 44 px target. */}
+              <label className="inline-flex items-center justify-center pointer-coarse:min-h-11 pointer-coarse:min-w-11">
+                <Switch
+                  aria-label={`Claims on ${selected.label}`}
+                  checked={report !== null && !paused}
+                  disabled={report === null || busy.has(selected.environmentId)}
+                  onCheckedChange={() => onTogglePause(selected)}
+                />
+              </label>
+              <div className="flex min-w-0 flex-col gap-1">
+                <span className={cn(LABEL, "min-w-0 break-words")} data-part="machine">
+                  {selected.label}
+                  {report === null ? null : (
+                    <span className="font-mono"> · {slotsText(report.slots)} slots</span>
+                  )}
+                </span>
+                <span className="flex items-baseline gap-2">
+                  <span className={LABEL}>Claims</span>
+                  <b className="text-sm font-semibold">
+                    {report === null
+                      ? "-"
+                      : paused
+                        ? "Paused"
+                        : report.state === "idle"
+                          ? "Idle"
+                          : "Running"}
+                  </b>
+                </span>
+                {/* A countdown from a read that has since failed would tick on a pass nobody can see. */}
+                <NextPass
+                  passes={selected.status.status === "error" ? undefined : report?.passes}
+                />
+              </div>
             </div>
-          </div>
-          {/* A countdown from a read that has since failed would tick on a pass nobody can see. */}
-          <NextPass passes={selected.status.status === "error" ? undefined : report?.passes} />
+          )}
+          {report === null ? null : (
+            <MachineHealthPanel
+              environmentId={selected.environmentId}
+              label={selected.label}
+              status={report}
+            />
+          )}
+          {digest}
         </div>
-      )}
-      {report === null ? null : (
-        <MachineHealthPanel
-          environmentId={selected.environmentId}
-          label={selected.label}
-          status={report}
-        />
-      )}
-      {digest}
+      </ControlFoldProvider>
       <TodayStrip strip={strip} />
     </section>
   );
@@ -224,16 +238,8 @@ function EnvironmentNote({
   );
 }
 
-/** One environment's slots and the note it may need; several are the control bar's roster instead. */
-function Environments({
-  environments,
-  selectedId,
-  onSelect,
-}: {
-  environments: ReadonlyArray<FactoryEnvironment>;
-  selectedId: EnvironmentId;
-  onSelect: (environmentId: EnvironmentId) => void;
-}) {
+/** The note an environment may need while it loads, fails or idles; its place is the control bar. */
+function Environments({ environments }: { environments: ReadonlyArray<FactoryEnvironment> }) {
   // With several machines the control bar's roster picks one and says which load or idle; only a
   // first read that failed stays here, for its Retry.
   if (environments.length > 1) {
@@ -248,37 +254,12 @@ function Environments({
       </section>
     );
   }
+  // One machine is named, with its slots, in the control bar's claims dial; only its note is here.
   const notes = environments.filter(
     ({ status }) => status.data === null || status.data.state === "idle",
   );
-  return (
+  return notes.length === 0 ? null : (
     <section aria-label="Factories" className="flex flex-col gap-2">
-      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-        <span className={LABEL}>Environment</span>
-        <div className="min-w-0 max-w-full overflow-x-auto">
-          <ToggleGroup
-            aria-label="Environments"
-            onValueChange={(next) => {
-              // Picking the picked one again would leave none picked.
-              const [id] = next;
-              if (id !== undefined) onSelect(id as EnvironmentId);
-            }}
-            value={[selectedId]}
-          >
-            {environments.map(({ environmentId, label, status }) => (
-              <Toggle key={environmentId} value={environmentId}>
-                <BeltDot selected={environmentId === selectedId} />
-                {label}
-                {status.data ? (
-                  <span className="font-mono text-muted-foreground">
-                    {slotsText(status.data.slots)} slots
-                  </span>
-                ) : null}
-              </Toggle>
-            ))}
-          </ToggleGroup>
-        </div>
-      </div>
       {notes.map((environment) => (
         <EnvironmentNote environment={environment} key={environment.environmentId} />
       ))}
@@ -447,11 +428,7 @@ export function FactoryBelt({
         )}
         {...jumpTarget("belt")}
       >
-        <Environments
-          environments={environments}
-          onSelect={setPickedId}
-          selectedId={selected.environmentId}
-        />
+        <Environments environments={environments} />
         {report?.deploy_pending ? (
           <DeployBanner
             // A new build, or another environment, starts with its dialog closed.

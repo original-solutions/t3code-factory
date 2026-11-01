@@ -13,6 +13,7 @@ import {
   type HealthHold,
   type HealthTone,
 } from "./machineHealth";
+import { DIAL_CELL, DialButton, DialDetail, useControlFold } from "./ControlFold";
 import { TouchLink } from "./TouchLink";
 
 const DOT: Record<HealthTone, string> = {
@@ -109,10 +110,31 @@ function Hold({
   );
 }
 
+/** A gauge at dial size: its name, value and a short bar with the hold line. */
+function MiniGauge({ gauge }: { gauge: HealthGauge }) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className="text-xs text-muted-foreground">{gauge.label}</span>
+      <b className={cn("whitespace-nowrap font-mono text-xs font-semibold", TEXT[gauge.tone])}>
+        {gauge.value}
+      </b>
+      {gauge.fill === null ? null : (
+        <span aria-hidden className="relative h-1 w-5 overflow-hidden rounded-full bg-muted">
+          <span
+            className={cn("absolute inset-y-0 left-0 rounded-full", DOT[gauge.tone])}
+            style={{ width: `${Math.max(8, gauge.fill * 100)}%` }}
+          />
+        </span>
+      )}
+    </span>
+  );
+}
+
 /**
- * The machine under the factory, read with each status: a gauge each for the disk, load and gates
- * the pass holds claims on, each with the line it holds at, then every reason nothing is claimed
- * now and what lifts it. Says nothing for a server that sends no health.
+ * The machine under the factory, read with each status: a dial with the verdict and a small gauge
+ * each for the disk, load and gates the pass holds claims on, opening on the full gauges with the
+ * line each holds at and every reason nothing is claimed now and what lifts it. Says nothing for a
+ * server that sends no health.
  */
 export function MachineHealthPanel({
   status,
@@ -124,36 +146,58 @@ export function MachineHealthPanel({
   label: string;
 }) {
   const view = machineHealthView(status);
+  const fold = useControlFold("machine");
   if (view === null) return null;
   return (
-    <section aria-label={`Machine health of ${label}`} className="flex flex-col border-t">
-      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 px-5 pt-2.5">
-        <span aria-hidden className={cn("size-2 shrink-0 rounded-full", DOT[view.verdict.tone])} />
-        <span className="text-xs text-muted-foreground">Machine</span>
-        <b
-          className={cn("min-w-0 break-words text-sm font-semibold", TEXT[view.verdict.tone])}
-          data-part="verdict"
+    <>
+      <div className={DIAL_CELL}>
+        <DialButton
+          controls={fold.id}
+          label={`Machine health of ${label}: ${view.verdict.text}`}
+          onToggle={fold.toggle}
+          open={fold.open}
         >
-          {view.verdict.text}
-        </b>
-      </div>
-      <div className="grid grid-cols-1 @lg:grid-cols-3">
-        {view.gauges.map((gauge) => (
-          <Gauge gauge={gauge} key={gauge.key} />
-        ))}
-      </div>
-      {view.holds.length === 0 ? null : (
-        <ul aria-label="What holds claims" className="mx-5 mb-1 divide-y border-t">
-          {view.holds.map((hold) => (
-            <Hold
-              diskPath={view.diskPath}
-              environmentId={environmentId}
-              hold={hold}
-              key={hold.key}
+          <span className="flex min-w-0 flex-wrap items-center gap-x-2">
+            <span
+              aria-hidden
+              className={cn("size-2 shrink-0 rounded-full", DOT[view.verdict.tone])}
             />
-          ))}
-        </ul>
-      )}
-    </section>
+            <span className="text-xs text-muted-foreground">Machine</span>
+            <b
+              className={cn("min-w-0 break-words text-sm font-semibold", TEXT[view.verdict.tone])}
+              data-part="verdict"
+            >
+              {view.verdict.text}
+            </b>
+          </span>
+          <span className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-0.5">
+            {view.gauges.map((gauge) => (
+              <MiniGauge gauge={gauge} key={gauge.key} />
+            ))}
+          </span>
+        </DialButton>
+      </div>
+      {fold.open ? (
+        <DialDetail id={fold.id} label={`Machine health of ${label}`}>
+          <div className="grid grid-cols-1 @lg:grid-cols-3">
+            {view.gauges.map((gauge) => (
+              <Gauge gauge={gauge} key={gauge.key} />
+            ))}
+          </div>
+          {view.holds.length === 0 ? null : (
+            <ul aria-label="What holds claims" className="mx-5 mb-1 divide-y border-t">
+              {view.holds.map((hold) => (
+                <Hold
+                  diskPath={view.diskPath}
+                  environmentId={environmentId}
+                  hold={hold}
+                  key={hold.key}
+                />
+              ))}
+            </ul>
+          )}
+        </DialDetail>
+      ) : null}
+    </>
   );
 }

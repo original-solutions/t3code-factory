@@ -625,6 +625,47 @@ describe("the control bar", () => {
     expect(controls()).not.toContain("next pass in");
   });
 
+  it("folds the machine's health to one dial that opens its holds, and remembers it open", async () => {
+    using _state = await setup();
+    using _open = {
+      [Symbol.dispose]: () => localStorage.removeItem("t3code:factory:control-open"),
+    };
+    const GIB = 1024 ** 3;
+    const desktop = environment(DESKTOP, "Desktop", [], {
+      paused_by_hand: { since: iso(at(11)), for_ms: NOW - at(11) },
+      health: {
+        disk: {
+          path: "/w",
+          free_bytes: 4 * GIB,
+          total_bytes: 400 * GIB,
+          floor_bytes: 10 * GIB,
+          low: true,
+        },
+        load: { one_minute: 3, cores: 12, limit: 24, high: false },
+        gates: { running: 0, max: 2, oldest_ms: null },
+      },
+    });
+    const belt = props({ environments: [desktop] });
+    const dial = (page: Page) => page.all('button[aria-label^="Machine health of Desktop"]')[0]!;
+    const holds = (page: Page) => page.all('[aria-label="What holds claims"] li');
+    {
+      await using page = await render(createElement(FactoryBelt, belt));
+      expect(dial(page).textContent).toContain("Claims held: paused by hand, low disk");
+      expect(dial(page).getAttribute("aria-expanded")).toBe("false");
+      expect(holds(page)).toHaveLength(0);
+      await page.click(dial(page));
+      expect(dial(page).getAttribute("aria-expanded")).toBe("true");
+      expect(holds(page).map((li) => li.textContent)).toEqual([
+        expect.stringContaining("Paused by hand"),
+        expect.stringContaining("Low disk"),
+      ]);
+    }
+    await using again = await render(createElement(FactoryBelt, belt));
+    expect(holds(again)).toHaveLength(2);
+    await again.click(dial(again));
+    expect(holds(again)).toHaveLength(0);
+  });
+
   it("ticks from a single one-second timer", async () => {
     using _state = await setup();
     using _timers = fakeTimers();

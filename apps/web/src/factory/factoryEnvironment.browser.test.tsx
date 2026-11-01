@@ -521,7 +521,9 @@ describe("the Factory page shows every environment that runs a factory", () => {
     expect(page.text()).not.toContain("Desktop");
     expect(page.all('[role="switch"]')).toHaveLength(1);
     expect(claimsSwitch(page).getAttribute("aria-label")).toBe("Claims on Studio");
-    expect(page.all('[aria-label="Environments"] button')).toHaveLength(1);
+    expect(page.all('[data-part="machine"]').map((node) => node.textContent)).toEqual([
+      "Studio · 0/1 slots",
+    ]);
   });
 
   it("shows the runs of the others while a candidate has not answered, and reads no runs of it yet", async () => {
