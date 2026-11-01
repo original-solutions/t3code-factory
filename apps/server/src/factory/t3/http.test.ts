@@ -1493,6 +1493,7 @@ repos:
                 interruption_resumes: 4,
               },
               autonomy: "pr",
+              owner: null,
             },
             errors: null,
           },

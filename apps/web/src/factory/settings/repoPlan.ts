@@ -30,8 +30,12 @@ export const repoPlan = (factory: FactoryBlock): ReadonlyArray<PlanStep> => {
   return [
     {
       title: "Claim",
-      says: `Takes an issue once ${either(factory.instructors.map((login) => `@${login}`))} labels it factory:ready.`,
-      keys: ["instructors"],
+      says: `Takes an issue once ${either(factory.instructors.map((login) => `@${login}`))} labels it factory:ready${
+        typeof factory.owner === "string"
+          ? `, and only on ${factory.owner}: other machines leave it.`
+          : "."
+      }`,
+      keys: ["instructors", "owner"],
     },
     {
       title: "Build",
@@ -82,6 +86,7 @@ export const factoryBlockYaml = (factory: FactoryBlock) => {
   return [
     "factory:",
     `  instructors: ${sequence(factory.instructors)}`,
+    ...(typeof factory.owner === "string" ? [`  owner: ${scalar(factory.owner)}`] : []),
     `  base: ${scalar(factory.base)}`,
     `  provision: ${sequence(factory.provision)}`,
     `  gate: ${sequence(factory.gate)}`,

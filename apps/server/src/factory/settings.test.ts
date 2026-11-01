@@ -514,12 +514,13 @@ describe("readMachineConfigReport", () => {
           interruptionResumes: 2,
         },
         autonomy: "pr" as const,
-        owner: null,
+        owner: "studio-mac",
       };
       const readings = new Map<string, RepoConfigReading>([["a/b", { kind: "ok", project }]]);
       const { report: r } = yield* report(COMMENTED, of(WATCHED.slice(0, 1)), readings);
       assert.strictEqual(r.repos[0]?.factory?.base, "main");
       assert.deepStrictEqual(r.repos[0]?.factory?.required_checks, ["ci"]);
+      assert.strictEqual(r.repos[0]?.factory?.owner, "studio-mac");
       assert.strictEqual(r.repos[0]?.errors, null);
       assert.isFalse(r.repos[0]?.default_config);
     }),
@@ -566,6 +567,7 @@ describe("readMachineConfigReport", () => {
             required_checks: [],
             limits: { minutes: 180, gate_retries: 2, checks_minutes: 30, interruption_resumes: 2 },
             autonomy: "pr",
+            owner: null,
           },
           errors: null,
         },

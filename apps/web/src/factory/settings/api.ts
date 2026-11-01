@@ -38,6 +38,8 @@ export interface RepoBlock {
       readonly interruption_resumes: number;
     };
     readonly autonomy: "pr";
+    /** The one machine that may claim, null for any. An older server does not send it. */
+    readonly owner?: string | null;
   } | null;
   readonly errors: ReadonlyArray<ConfigError> | null;
 }

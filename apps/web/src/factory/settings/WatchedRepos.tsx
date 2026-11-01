@@ -97,6 +97,9 @@ function RepoPlan({
         {isDefault
           ? "No factory block in .dw/config.yml: this repo runs on default_project from the machine config, with the provision and gate inferred from its default branch. Commit this as .dw/config.yml to pin it, then edit."
           : "With every default written out."}
+        {factory.owner === undefined
+          ? " This server does not report factory.owner: if the repo's block sets one, add it back before committing."
+          : null}
       </p>
       <Snippet text={factoryBlockYaml(factory)} />
     </div>

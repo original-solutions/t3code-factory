@@ -45,6 +45,7 @@ export interface ProjectBlock {
     readonly interruption_resumes: number;
   };
   readonly autonomy: "pr";
+  readonly owner: string | null;
 }
 
 /** The editable part of the machine config, under the YAML field names. */
@@ -147,6 +148,7 @@ const projectBlock = (project: ProjectConfig): ProjectBlock => ({
     interruption_resumes: project.limits.interruptionResumes,
   },
   autonomy: project.autonomy,
+  owner: project.owner,
 });
 
 const scalarOf = (value: unknown): string | number | undefined =>

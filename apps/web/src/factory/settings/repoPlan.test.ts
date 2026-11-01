@@ -11,6 +11,7 @@ const factory: NonNullable<RepoBlock["factory"]> = {
   required_checks: [],
   limits: { minutes: 180, gate_retries: 2, checks_minutes: 30, interruption_resumes: 2 },
   autonomy: "pr",
+  owner: null,
 };
 
 const says = (block: typeof factory) => repoPlan(block).map((step) => step.says);
@@ -42,6 +43,14 @@ describe("repoPlan", () => {
     expect(strict[1]).toContain("for up to 90 minutes. A session T3 itself drops is not resumed.");
     expect(strict[2]).toContain("The first failed gate stops the run.");
     expect(strict[3]).toBe("Waits up to 45 minutes for ci and build to pass on GitHub.");
+  });
+
+  it("names the one machine that may claim when the block sets an owner", () => {
+    const [claim] = repoPlan({ ...factory, owner: "studio-mac" });
+    expect(claim?.says).toBe(
+      "Takes an issue once @alice or @bob labels it factory:ready, and only on studio-mac: other machines leave it.",
+    );
+    expect(claim?.keys).toEqual(["instructors", "owner"]);
   });
 
   it.each([
@@ -81,5 +90,13 @@ describe("factoryBlockYaml", () => {
         "",
       ].join("\n"),
     );
+  });
+
+  it("keeps the owner, so the pinned block claims on the same machine", () => {
+    expect(factoryBlockYaml({ ...factory, owner: "Studio-Mac.local" })).toContain(
+      "\n  instructors: [alice, bob]\n  owner: Studio-Mac.local\n",
+    );
+    expect(factoryBlockYaml({ ...factory, owner: "yes" })).toContain('\n  owner: "yes"\n');
+    expect(factoryBlockYaml(factory)).not.toContain("owner");
   });
 });
