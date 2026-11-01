@@ -17,6 +17,7 @@ import { cn } from "../../lib/utils";
 import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
 import {
   fetchFactoryConfig,
+  fetchMachineNow,
   saveFactoryConfig,
   type ConfigError,
   type MachineConfigReport,
@@ -28,8 +29,11 @@ import {
   FIELD_LABELS,
   feedbackBudget,
   HOURLY_POINTS,
+  limitNow,
   pendingChanges,
   readingOf,
+  type LimitNow,
+  type MachineNow,
   type TuningForm,
   type TuningKey,
 } from "./tuning";
@@ -44,6 +48,8 @@ const EMPTY_FORM: FormState = {
   max_concurrent_runs: "",
   max_concurrent_gates: "",
   feedback_seconds: "",
+  min_free_gib: "",
+  max_load_per_core: "",
 };
 
 const NUMBER_FIELDS: ReadonlyArray<{
@@ -63,6 +69,18 @@ const NUMBER_FIELDS: ReadonlyArray<{
     description: "Gates that may check a branch at once.",
   },
   {
+    key: "min_free_gib",
+    unit: "GiB",
+    description:
+      "Free space below which nothing is claimed and no gate starts, so a build never fills the disk. 0 turns it off.",
+  },
+  {
+    key: "max_load_per_core",
+    unit: "/core",
+    description:
+      "1-minute load per core above which nothing is claimed and a second gate waits. 0 turns it off.",
+  },
+  {
     key: "feedback_seconds",
     unit: "s",
     description:
@@ -70,13 +88,16 @@ const NUMBER_FIELDS: ReadonlyArray<{
   },
 ];
 
+/** Keys an older server neither reports nor takes: the page leaves them to a hand edit there. */
+const NEWER_KEYS = ["min_free_gib", "max_load_per_core"] as const;
+
+const servesKey = (report: MachineConfigReport, key: TuningKey) => key in report.defaults;
+
 /** The keys the page does not edit; `editMachineConfig` keeps them through a save. */
 const HAND_EDITED_KEYS = [
   "default_project",
   "model_fallbacks",
   "notify",
-  "min_free_gib",
-  "max_load_per_core",
   "deploy_wait_minutes",
   "keep_versions",
   "prune_branches_after_days",
@@ -94,18 +115,57 @@ const formOf = (report: MachineConfigReport): FormState => {
     max_concurrent_runs: text(source.max_concurrent_runs),
     max_concurrent_gates: text(source.max_concurrent_gates),
     feedback_seconds: text(source.feedback_seconds),
+    min_free_gib: text(source.min_free_gib),
+    max_load_per_core: text(source.max_load_per_core),
   };
 };
 
 const toNumber = (text: string) => (text.trim() === "" ? null : Number(text));
 
-const valuesOf = (form: FormState): MachineConfigValues => ({
+const valuesOf = (form: FormState, report: MachineConfigReport): MachineConfigValues => ({
   gh_config_dir: form.gh_config_dir,
   poll_seconds: toNumber(form.poll_seconds),
   max_concurrent_runs: toNumber(form.max_concurrent_runs),
   max_concurrent_gates: toNumber(form.max_concurrent_gates),
   feedback_seconds: toNumber(form.feedback_seconds),
+  ...Object.fromEntries(
+    NEWER_KEYS.filter((key) => servesKey(report, key)).map((key) => [key, toNumber(form[key])]),
+  ),
 });
+
+const BAR: Record<LimitNow["tone"], string> = {
+  ok: "bg-success",
+  warn: "bg-warning",
+  bad: "bg-destructive",
+};
+
+/** A limit against the machine now: the bar the Factory page's Machine dial draws, and a sentence. */
+function NowLine({ now }: { readonly now: LimitNow }) {
+  return (
+    <div data-now={now.tone} className="flex max-w-96 flex-col gap-1 pt-0.5">
+      <div aria-hidden className="relative h-1.5 overflow-hidden rounded-full bg-muted">
+        <div
+          className={cn("h-full rounded-full", BAR[now.tone])}
+          style={{ width: `${Math.max(2, now.fill * 100)}%` }}
+        />
+        {now.mark === null ? null : (
+          <div
+            className="absolute inset-y-0 w-0.5 bg-foreground/70"
+            style={{ left: `${now.mark * 100}%` }}
+          />
+        )}
+      </div>
+      <p
+        className={cn(
+          now.tone === "bad" && "text-destructive-foreground",
+          now.tone === "warn" && "text-warning-foreground",
+        )}
+      >
+        {now.text}
+      </p>
+    </div>
+  );
+}
 
 type Load =
   | { readonly status: "loading" }
@@ -218,8 +278,13 @@ function MachineConfigForm({
     });
   };
   // The connection object is replaced when a credential renews; a reload then would drop edits.
-  const fetchOnMount = useEffectEvent(fetchConfig);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the factory config from the server once per mount
+  // What the machine does now, read once so each limit shows against it; a refused read shows none.
+  const [machineNow, setMachineNow] = useState<MachineNow | null>(null);
+  const fetchOnMount = useEffectEvent(() => {
+    fetchConfig();
+    void fetchMachineNow(prepared).then(setMachineNow);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the factory config and status from the server once per mount
   useEffect(() => {
     fetchOnMount();
   }, []);
@@ -243,10 +308,10 @@ function MachineConfigForm({
   };
 
   const save = async () => {
-    if (!canWrite) return;
+    if (!canWrite || load.status !== "ready") return;
     setSaveStatus("saving");
     setSaveFailure(null);
-    const result = await saveFactoryConfig(prepared, valuesOf(form));
+    const result = await saveFactoryConfig(prepared, valuesOf(form, load.report));
     if (result.kind === "ok") {
       show(result.report);
       setSaveStatus("saved");
@@ -345,72 +410,78 @@ function MachineConfigForm({
             </Field>
           }
         />
-        {NUMBER_FIELDS.map(({ key, description, unit }) => {
-          const fallback = text(report.defaults[key]);
-          const reading = readingOf(key, form[key]);
-          const budget = key === "feedback_seconds" ? feedbackBudget(form) : null;
-          return (
-            <SettingsRow
-              key={key}
-              title={FIELD_LABELS[key]}
-              description={description}
-              resetAction={
-                fallback !== "" && form[key].trim() !== fallback ? (
-                  <SettingResetButton
-                    label={FIELD_LABELS[key]}
-                    tooltip={`Reset to the default, ${fallback}`}
-                    onClick={() => edit((current) => ({ ...current, [key]: fallback }))}
-                  />
-                ) : undefined
-              }
-              status={
-                reading === null && budget === null ? undefined : (
-                  <div data-reading={key} className="flex flex-col gap-0.5">
-                    {reading === null ? null : <p className="text-foreground/80">{reading}</p>}
-                    {budget === null ? null : (
-                      <p
-                        data-budget={budget.tight ? "tight" : "ok"}
-                        className={budget.tight ? "text-warning-foreground" : undefined}
-                      >
-                        About {budget.pointsPerPullRequest.toLocaleString()} GraphQL points an hour
-                        per pull request waiting for review, so{" "}
-                        {budget.pullRequestsToSpendAll.toLocaleString()} waiting pull requests would
-                        spend the login's {HOURLY_POINTS.toLocaleString()}.
-                      </p>
-                    )}
-                  </div>
-                )
-              }
-              control={
-                <Field name={key} errors={errors}>
-                  <InputGroup>
-                    <InputGroupInput
-                      size="touch"
-                      type="number"
-                      aria-label={FIELD_LABELS[key]}
-                      value={form[key]}
-                      onChange={setText(key)}
+        {NUMBER_FIELDS.filter(({ key }) => servesKey(report, key)).map(
+          ({ key, description, unit }) => {
+            const fallback = text(report.defaults[key]);
+            const reading = readingOf(key, form[key]);
+            const budget = key === "feedback_seconds" ? feedbackBudget(form) : null;
+            const now = limitNow(key, form, saved, machineNow);
+            return (
+              <SettingsRow
+                key={key}
+                title={FIELD_LABELS[key]}
+                description={description}
+                resetAction={
+                  fallback !== "" && form[key].trim() !== fallback ? (
+                    <SettingResetButton
+                      label={FIELD_LABELS[key]}
+                      tooltip={`Reset to the default, ${fallback}`}
+                      onClick={() => edit((current) => ({ ...current, [key]: fallback }))}
                     />
-                    <InputGroupAddon align="inline-end">
-                      <span className="text-xs text-muted-foreground">{unit}</span>
-                    </InputGroupAddon>
-                  </InputGroup>
-                </Field>
-              }
-            />
-          );
-        })}
+                  ) : undefined
+                }
+                status={
+                  reading === null && budget === null && now === null ? undefined : (
+                    <div data-reading={key} className="flex flex-col gap-0.5">
+                      {reading === null ? null : <p className="text-foreground/80">{reading}</p>}
+                      {now === null ? null : <NowLine now={now} />}
+                      {budget === null ? null : (
+                        <p
+                          data-budget={budget.tight ? "tight" : "ok"}
+                          className={budget.tight ? "text-warning-foreground" : undefined}
+                        >
+                          About {budget.pointsPerPullRequest.toLocaleString()} GraphQL points an
+                          hour per pull request waiting for review, so{" "}
+                          {budget.pullRequestsToSpendAll.toLocaleString()} waiting pull requests
+                          would spend the login's {HOURLY_POINTS.toLocaleString()}.
+                        </p>
+                      )}
+                    </div>
+                  )
+                }
+                control={
+                  <Field name={key} errors={errors}>
+                    <InputGroup>
+                      <InputGroupInput
+                        size="touch"
+                        type="number"
+                        aria-label={FIELD_LABELS[key]}
+                        value={form[key]}
+                        onChange={setText(key)}
+                      />
+                      <InputGroupAddon align="inline-end">
+                        <span className="text-xs text-muted-foreground">{unit}</span>
+                      </InputGroupAddon>
+                    </InputGroup>
+                  </Field>
+                }
+              />
+            );
+          },
+        )}
         <div className="flex flex-col gap-2 px-3 py-3 text-xs text-muted-foreground sm:px-4">
           <p>
             The rest of the file is edited by hand, and a save keeps it as written. The server reads
             the file only at start and on a save, so save here after a hand edit to apply it.
           </p>
           <p data-hand-edited className="flex flex-wrap gap-1">
-            {HAND_EDITED_KEYS.map((key) => (
-              <code key={key} className="rounded bg-muted px-1 py-px font-mono text-2xs">
-                {key}
-              </code>
-            ))}
+            {[...HAND_EDITED_KEYS, ...NEWER_KEYS.filter((key) => !servesKey(report, key))].map(
+              (key) => (
+                <code key={key} className="rounded bg-muted px-1 py-px font-mono text-2xs">
+                  {key}
+                </code>
+              ),
+            )}
           </p>
         </div>
         <SaveBar

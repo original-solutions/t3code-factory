@@ -1486,6 +1486,8 @@ repos:
     max_concurrent_runs: 1,
     max_concurrent_gates: 2,
     feedback_seconds: 600,
+    min_free_gib: 10,
+    max_load_per_core: 1,
   };
   const configFile = (dir: string) => NodePath.join(dir, "config.yml");
   const fileText = (dir: string) => NodeFS.readFileSync(configFile(dir), "utf8");
@@ -1495,6 +1497,8 @@ repos:
     max_concurrent_runs: 2,
     max_concurrent_gates: 2,
     feedback_seconds: 120,
+    min_free_gib: 20,
+    max_load_per_core: 2,
   };
 
   it.effect(
@@ -1535,6 +1539,8 @@ repos:
           max_concurrent_runs: 1,
           max_concurrent_gates: 2,
           feedback_seconds: 600,
+          min_free_gib: 10,
+          max_load_per_core: 1,
         },
         defaults: DEFAULTS,
         errors: [],

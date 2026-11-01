@@ -95,7 +95,7 @@ function Hold({
               </Button>
             )}
             <span className="text-xs text-muted-foreground">
-              The floor is <code className="font-mono">min_free_gib</code> in{" "}
+              Set the disk floor in{" "}
               <TouchLink
                 render={<Link search={{ machine: environmentId }} to="/settings/factory" />}
               >

@@ -2,6 +2,8 @@
  * What the machine config form's numbers mean, and what a save would change, for the settings
  * page. Pure: the page passes the form as typed.
  */
+import type { FactoryHealth } from "../api";
+import { BUSY, formatBytes, NEAR, pressure } from "../machineHealth";
 
 /** The form as typed, under the YAML field names. */
 export interface TuningForm {
@@ -10,6 +12,8 @@ export interface TuningForm {
   readonly max_concurrent_runs: string;
   readonly max_concurrent_gates: string;
   readonly feedback_seconds: string;
+  readonly min_free_gib: string;
+  readonly max_load_per_core: string;
 }
 
 export type TuningKey = keyof TuningForm;
@@ -20,6 +24,8 @@ export const FIELD_LABELS: Readonly<Record<TuningKey, string>> = {
   max_concurrent_runs: "Max concurrent runs",
   max_concurrent_gates: "Max concurrent gates",
   feedback_seconds: "Feedback seconds",
+  min_free_gib: "Disk floor",
+  max_load_per_core: "Load limit",
 };
 
 const KEYS = Object.keys(FIELD_LABELS) as ReadonlyArray<TuningKey>;
@@ -30,6 +36,8 @@ const MINIMUM: Readonly<Record<Exclude<TuningKey, "gh_config_dir">, number>> = {
   max_concurrent_runs: 1,
   max_concurrent_gates: 1,
   feedback_seconds: 0,
+  min_free_gib: 0,
+  max_load_per_core: 0,
 };
 
 /** The typed text as a number the server would take for `key`, else null. */
@@ -66,8 +74,144 @@ export const readingOf = (key: TuningKey, text: string): string | null => {
       return value === 0
         ? "Reads feedback on every pass."
         : `Reads feedback at most every ${spanOf(value)}.`;
+    case "min_free_gib":
+      return value === 0
+        ? "Never waits for disk."
+        : `Claims and gates wait while less than ${value} GiB is free.`;
+    case "max_load_per_core":
+      return value === 0
+        ? "Never waits for load."
+        : `Claims wait while the 1-minute load is above ${value} per core.`;
   }
 };
+
+/** What the machine is doing now, from the factory's status read. */
+export interface MachineNow {
+  readonly slots: { readonly used: number };
+  readonly health?: FactoryHealth | null;
+}
+
+/** A limit set against the machine now: a sentence and a bar, `mark` where the pass holds. */
+export interface LimitNow {
+  readonly tone: "ok" | "warn" | "bad";
+  readonly text: string;
+  readonly fill: number;
+  readonly mark: number | null;
+}
+
+/**
+ * The typed limit against what the machine is doing now, so a person sees whether a value would
+ * hold claims before saving it. "Would" while the typed value is not the saved one. Null for a
+ * key with nothing to measure, a value the server would refuse, or nothing read.
+ */
+export const limitNow = (
+  key: TuningKey,
+  form: TuningForm,
+  saved: TuningForm,
+  now: MachineNow | null,
+): LimitNow | null => {
+  if (now === null || key === "gh_config_dir") return null;
+  const value = accepted(key, form[key]);
+  if (value === null) return null;
+  const held = form[key].trim() === saved[key].trim() ? "are held" : "would be held";
+  const health = now.health ?? null;
+  switch (key) {
+    case "max_concurrent_runs": {
+      const used = now.slots.used;
+      const fill = Math.min(1, used / value);
+      if (used > value) {
+        return {
+          tone: "bad",
+          text: `${used} hold an issue now: nothing new is claimed until ${used - value + 1} end.`,
+          fill,
+          mark: null,
+        };
+      }
+      return used === value
+        ? {
+            tone: "warn",
+            text: `${used} of ${value} in use now: the next ready issue waits for one to end.`,
+            fill,
+            mark: null,
+          }
+        : { tone: "ok", text: `${used} of ${value} in use now.`, fill, mark: null };
+    }
+    case "max_concurrent_gates": {
+      if (health === null) return null;
+      const running = health.gates.running;
+      const fill = Math.min(1, running / value);
+      return running > value
+        ? {
+            tone: "warn",
+            text: `${running} running now: a new gate waits until ${running - value + 1} finish.`,
+            fill,
+            mark: null,
+          }
+        : { tone: "ok", text: `${running} of ${value} running now.`, fill, mark: null };
+    }
+    case "min_free_gib": {
+      if (health === null || "error" in health.disk) return null;
+      const { free_bytes: free, total_bytes: total } = health.disk;
+      if (value === 0) {
+        return {
+          tone: "ok",
+          text: `Off. ${formatBytes(free)} free now.`,
+          fill: total > 0 ? 1 - free / total : 0,
+          mark: null,
+        };
+      }
+      const floor = value * GIB;
+      const fill = pressure(floor * 2 - free, floor);
+      if (free < floor) {
+        return {
+          tone: "bad",
+          text: `${formatBytes(free)} free now, under ${value} GiB: claims ${held}.`,
+          fill,
+          mark: 0.5,
+        };
+      }
+      return {
+        tone: free < floor * NEAR ? "warn" : "ok",
+        text: `${formatBytes(free)} free now, ${formatBytes(free - floor)} above the floor.`,
+        fill,
+        mark: 0.5,
+      };
+    }
+    case "max_load_per_core": {
+      if (health === null) return null;
+      const { one_minute: load, cores } = health.load;
+      const reading = load.toFixed(1);
+      if (value === 0) {
+        return {
+          tone: "ok",
+          text: `Off. Load ${reading} now on ${cores} cores.`,
+          fill: cores > 0 ? Math.min(1, load / cores) : 0,
+          mark: null,
+        };
+      }
+      const limit = value * cores;
+      const fill = pressure(load, limit);
+      if (load > limit) {
+        return {
+          tone: "bad",
+          text: `Load ${reading} now, above ${limit} on ${cores} cores: claims ${held}.`,
+          fill,
+          mark: 0.5,
+        };
+      }
+      return {
+        tone: load > limit * BUSY ? "warn" : "ok",
+        text: `Load ${reading} now; holds above ${limit} on ${cores} cores.`,
+        fill,
+        mark: 0.5,
+      };
+    }
+    default:
+      return null;
+  }
+};
+
+const GIB = 1024 ** 3;
 
 /** GraphQL points a GitHub login has an hour. */
 export const HOURLY_POINTS = 5000;

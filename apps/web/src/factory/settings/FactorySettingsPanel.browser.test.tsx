@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   environmentId: "env-1" as string | null,
   prepared: { httpBaseUrl: "http://t3.test", httpAuthorization: null },
   fetchFactoryConfig: vi.fn(),
+  fetchMachineNow: vi.fn(),
   saveFactoryConfig: vi.fn(),
 }));
 
@@ -39,6 +40,7 @@ vi.mock("../../components/settings/SettingsScopeContext", () => ({
 }));
 vi.mock("./api", () => ({
   fetchFactoryConfig: mocks.fetchFactoryConfig,
+  fetchMachineNow: mocks.fetchMachineNow,
   saveFactoryConfig: mocks.saveFactoryConfig,
 }));
 // A DOM input drops `size="touch"`, which is not a number, so the size is kept where a test can read it.
@@ -176,6 +178,7 @@ describe("FactorySettingsPanel", () => {
     mocks.environmentId = "env-1";
     mocks.fetchFactoryConfig.mockReset();
     mocks.saveFactoryConfig.mockReset();
+    mocks.fetchMachineNow.mockReset().mockResolvedValue(null);
   };
 
   const open = (widthPx = 1280) => renderAt(widthPx, <FactorySettingsPanel />);
@@ -264,6 +267,46 @@ describe("FactorySettingsPanel", () => {
       max_concurrent_runs: 3,
       max_concurrent_gates: 2,
       feedback_seconds: 0,
+    });
+  });
+
+  it("sets the disk floor and load limit against the machine now, and saves them", async () => {
+    resetMocks();
+    const limits = { ...defaultsConfig, min_free_gib: 10, max_load_per_core: 1 };
+    const newer = report({ config: limits, defaults: limits });
+    mocks.fetchFactoryConfig.mockResolvedValue(ok(newer));
+    mocks.saveFactoryConfig.mockResolvedValue(ok(newer));
+    mocks.fetchMachineNow.mockResolvedValue({
+      slots: { used: 1 },
+      health: {
+        disk: {
+          path: "/w",
+          free_bytes: 26 * 1024 ** 3,
+          total_bytes: 460 * 1024 ** 3,
+          floor_bytes: 10 * 1024 ** 3,
+          low: false,
+        },
+        load: { one_minute: 4.2, cores: 12, limit: 12, high: false },
+        gates: { running: 0, max: 2, oldest_ms: null },
+      },
+    });
+    await using panel = await open();
+    const root = panel.container;
+    const now = (key: string) =>
+      root.querySelector<HTMLElement>(`[data-reading="${key}"] [data-now]`)!;
+
+    await vi.waitFor(() => expect(now("min_free_gib")?.dataset.now).toBe("ok"));
+    expect(textOf(now("max_load_per_core"))).toContain("Load 4.2 now; holds above 12 on 12 cores.");
+    expect(textOf(root.querySelector("[data-hand-edited]")!)).not.toContain("min_free_gib");
+
+    await type(input(root, "Disk floor"), "30");
+    expect(now("min_free_gib").dataset.now).toBe("bad");
+    expect(textOf(now("min_free_gib"))).toContain("claims would be held");
+
+    await click(button(root, "Save"));
+    expect(mocks.saveFactoryConfig.mock.calls[0]![1]).toMatchObject({
+      min_free_gib: 30,
+      max_load_per_core: 1,
     });
   });
 

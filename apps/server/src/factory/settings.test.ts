@@ -255,6 +255,16 @@ describe("editMachineConfig", () => {
     );
   });
 
+  it("writes the disk floor and load limit the form sends", () => {
+    const parsed = parseMachineConfig(
+      edited(COMMENTED, { min_free_gib: 25, max_load_per_core: 2 }),
+      FILE,
+    );
+    assert.ok(Result.isSuccess(parsed));
+    assert.strictEqual(parsed.success.config.minFreeGib, 25);
+    assert.strictEqual(parsed.success.config.maxLoadPerCore, 2);
+  });
+
   it("makes a new file from nothing", () => {
     const text = edited(null, {
       gh_config_dir: "/gh",
@@ -280,6 +290,8 @@ const DEFAULTS = {
   max_concurrent_runs: 1,
   max_concurrent_gates: 2,
   feedback_seconds: 600,
+  min_free_gib: 10,
+  max_load_per_core: 1,
 };
 
 describe("readMachineConfigReport", () => {
@@ -434,6 +446,17 @@ describe("readMachineConfigReport", () => {
       assert.strictEqual(without.report.config?.feedback_seconds, 600);
       const set = yield* report(`${COMMENTED}feedback_seconds: 0\n`);
       assert.strictEqual(set.report.config?.feedback_seconds, 0);
+    }),
+  );
+
+  it.effect("reports the disk floor and load limit the pass holds claims at", () =>
+    Effect.gen(function* () {
+      const without = yield* report(COMMENTED);
+      assert.strictEqual(without.report.config?.min_free_gib, 10);
+      assert.strictEqual(without.report.config?.max_load_per_core, 1);
+      const set = yield* report(`${COMMENTED}min_free_gib: 0\nmax_load_per_core: 3\n`);
+      assert.strictEqual(set.report.config?.min_free_gib, 0);
+      assert.strictEqual(set.report.config?.max_load_per_core, 3);
     }),
   );
 

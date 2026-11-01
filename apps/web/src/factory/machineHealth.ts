@@ -44,8 +44,8 @@ export interface MachineHealthView {
 
 const GIB = 1024 ** 3;
 /** A disk within this much of its floor, or a load this near its limit, is worth watching. */
-const NEAR = 1.5;
-const BUSY = 0.8;
+export const NEAR = 1.5;
+export const BUSY = 0.8;
 /** A gate this old has run longer than gates usually do. */
 const LONG_GATE_MS = 45 * 60_000;
 
@@ -53,14 +53,14 @@ const LONG_GATE_MS = 45 * 60_000;
  * A bar that runs to twice the line the pass holds at, so the line is the bar's middle tick and a
  * bar past it holds: `amount` over `2 * line`, kept within the bar.
  */
-const pressure = (amount: number, line: number): number =>
+export const pressure = (amount: number, line: number): number =>
   Math.min(1, Math.max(0, amount / (2 * line)));
 
 /** `/Users/jo/.t3/worktrees` as `~/.t3/worktrees`, for reading; a command takes the whole path. */
 const shortPath = (path: string): string => path.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, "~");
 
 /** `7.8 GiB`, `40 GiB`, `1.8 TiB`. */
-const formatBytes = (bytes: number): string => {
+export const formatBytes = (bytes: number): string => {
   const gib = bytes / GIB;
   if (gib >= 1024) return `${(gib / 1024).toFixed(1)} TiB`;
   return gib < 10 ? `${gib.toFixed(1)} GiB` : `${Math.round(gib)} GiB`;

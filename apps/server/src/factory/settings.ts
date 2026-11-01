@@ -16,6 +16,8 @@ import {
   ambiguousRepos,
   DEFAULT_FEEDBACK_SECONDS,
   DEFAULT_MAX_CONCURRENT_GATES,
+  DEFAULT_MAX_LOAD_PER_CORE,
+  DEFAULT_MIN_FREE_GIB,
   DEFAULT_POLL_SECONDS,
   loadMachineConfig,
   parseMachineConfig,
@@ -55,6 +57,10 @@ export interface MachineConfigFields {
   readonly max_concurrent_runs: number;
   readonly max_concurrent_gates: number;
   readonly feedback_seconds: number;
+  /** Free GiB below which the pass claims nothing; 0 turns the check off. */
+  readonly min_free_gib: number;
+  /** 1-minute load per core above which the pass claims nothing; 0 turns the check off. */
+  readonly max_load_per_core: number;
 }
 
 /** `MachineConfigFields` as a file that does not load holds them: any may be missing. */
@@ -95,6 +101,8 @@ const EDITABLE_KEYS = [
   "max_concurrent_runs",
   "max_concurrent_gates",
   "feedback_seconds",
+  "min_free_gib",
+  "max_load_per_core",
 ] as const;
 
 /**
@@ -106,9 +114,7 @@ const KNOWN_KEYS: ReadonlySet<string> = new Set([
   ...EDITABLE_KEYS,
   "notify",
   "keep_versions",
-  "min_free_gib",
   "deploy_wait_minutes",
-  "max_load_per_core",
   "model_fallbacks",
   "prune_branches_after_days",
   "prune_branches_dry_run",
@@ -125,6 +131,8 @@ const defaults = (): MachineConfigFields => ({
   max_concurrent_runs: FORM_MAX_CONCURRENT_RUNS,
   max_concurrent_gates: DEFAULT_MAX_CONCURRENT_GATES,
   feedback_seconds: DEFAULT_FEEDBACK_SECONDS,
+  min_free_gib: DEFAULT_MIN_FREE_GIB,
+  max_load_per_core: DEFAULT_MAX_LOAD_PER_CORE,
 });
 
 const fieldsOf = (machine: MachineConfig): MachineConfigFields => ({
@@ -133,6 +141,8 @@ const fieldsOf = (machine: MachineConfig): MachineConfigFields => ({
   max_concurrent_runs: machine.maxConcurrentRuns,
   max_concurrent_gates: machine.maxConcurrentGates,
   feedback_seconds: machine.feedbackSeconds,
+  min_free_gib: machine.minFreeGib,
+  max_load_per_core: machine.maxLoadPerCore,
 });
 
 const projectBlock = (project: ProjectConfig): ProjectBlock => ({
