@@ -12,6 +12,7 @@ import {
 
 import { factoryApi } from "./api";
 import type { EnvironmentAttention } from "./BeltLowerRow";
+import { CatchUpCard } from "./CatchUpCard";
 import { FactoryBelt } from "./FactoryBelt";
 import { FactoryFrame } from "./FactoryFrame";
 import { FactoryError, FactoryLoading, FactoryReadFailure } from "./FactoryNotices";
@@ -212,6 +213,18 @@ export function FactoryPage() {
   const attention = allAttention.filter(
     ({ environmentId, item }) => inEnvironment(environmentId) && (!item.repo || inRepo(item.repo)),
   );
+  // The digest follows the page's filters; it reads the recent window, whatever the table shows.
+  const caughtUpRecent = answered
+    .filter(({ environmentId }) => inEnvironment(environmentId))
+    .flatMap(({ environmentId, label }) => {
+      const data = recentById.get(environmentId)?.data;
+      if (!data) return [];
+      const recent = data.runs.filter((run) => {
+        const parsed = parseRunId(run.id);
+        return inRepo(parsed ? `${parsed.owner}/${parsed.repo}` : null);
+      });
+      return [{ environmentId, label, recent }];
+    });
   const scopedRuns = listedRuns.filter(
     ({ environmentId, repo }) => inEnvironment(environmentId) && inRepo(repo),
   );
@@ -280,6 +293,12 @@ export function FactoryPage() {
             verb="refresh"
           />
         ))}
+        <CatchUpCard
+          environments={caughtUpRecent}
+          nowMs={nowMs}
+          origin={{ search, query }}
+          showEnvironment={showEnvironment}
+        />
         <FactoryBelt
           attention={attention}
           busy={busy}
