@@ -95,3 +95,29 @@ export function groupByDay<T>(
   }
   return groups;
 }
+
+/** How many runs the ledger renders before it asks to show more. */
+export const LEDGER_PAGE = 50;
+
+/** The first `shown` items across `days`; a cut day keeps its full count in `total`. */
+export function firstOfDays<T>(
+  days: ReadonlyArray<{ readonly label: string; readonly items: ReadonlyArray<T> }>,
+  shown: number,
+): {
+  readonly days: Array<{
+    readonly label: string;
+    readonly items: Array<T>;
+    readonly total: number;
+  }>;
+  readonly hidden: number;
+} {
+  const out: Array<{ label: string; items: Array<T>; total: number }> = [];
+  let left = shown;
+  let hidden = 0;
+  for (const { label, items } of days) {
+    if (left > 0) out.push({ label, items: items.slice(0, left), total: items.length });
+    hidden += Math.max(0, items.length - left);
+    left = Math.max(0, left - items.length);
+  }
+  return { days: out, hidden };
+}

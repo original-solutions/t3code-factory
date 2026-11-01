@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import type { FactoryRunRow } from "./api";
-import { bucketOf, countBuckets, dayLabel, groupByDay, matchesQuery } from "./runLedger";
+import {
+  bucketOf,
+  countBuckets,
+  dayLabel,
+  firstOfDays,
+  groupByDay,
+  matchesQuery,
+} from "./runLedger";
 
 const row = (over: Partial<FactoryRunRow> = {}): FactoryRunRow => ({
   id: "original-solutions__t3code-factory__20__1",
@@ -71,5 +78,22 @@ describe("dayLabel and groupByDay", () => {
       ["Yesterday", 1],
       [dayLabel(at(14, 1).ms, now), 1],
     ]);
+  });
+
+  it("keeps the first runs across days, each shown day keeping its full count", () => {
+    const days = [
+      { label: "Today", items: [1, 2] },
+      { label: "Yesterday", items: [3, 4, 5] },
+      { label: "Mon", items: [6] },
+    ];
+    expect(firstOfDays(days, 3)).toEqual({
+      days: [
+        { label: "Today", items: [1, 2], total: 2 },
+        { label: "Yesterday", items: [3], total: 3 },
+      ],
+      hidden: 3,
+    });
+    expect(firstOfDays(days, 10).hidden).toBe(0);
+    expect(firstOfDays(days, 10).days.map((day) => day.items.length)).toEqual([2, 3, 1]);
   });
 });

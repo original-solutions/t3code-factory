@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
+import { flushSync } from "react-dom";
 
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { Badge } from "~/components/ui/badge";
@@ -30,7 +31,14 @@ import {
   stateBadgeVariant,
 } from "./format";
 import { Ref } from "./Ref";
-import { RUN_BUCKETS, groupByDay, type BucketCounts, type RunBucketFilter } from "./runLedger";
+import {
+  LEDGER_PAGE,
+  RUN_BUCKETS,
+  firstOfDays,
+  groupByDay,
+  type BucketCounts,
+  type RunBucketFilter,
+} from "./runLedger";
 import { runLinkKey, runQueue, useFactoryKeys, type QueueOrigin, type RunQueue } from "./runQueue";
 
 const startedMs = (run: FactoryRunRow) =>
@@ -190,6 +198,15 @@ function KeyHints() {
   );
 }
 
+/** A day's heading; a day cut short by the page still says how many runs it holds. */
+function DayHeading({ label, total }: { label: string; total: number }) {
+  return (
+    <>
+      {label} <span className="font-normal">· {total}</span>
+    </>
+  );
+}
+
 /** The run links in `root`, in the order shown. */
 const runLinks = (root: HTMLElement | null) =>
   Array.from(root?.querySelectorAll<HTMLElement>("[data-run-link]") ?? []);
@@ -236,6 +253,10 @@ export function RunsTable({
   returnFocus?: string | undefined;
 }) {
   const cards = useMediaQuery("max-sm");
+  // The page size grows with Show more and with j past the last run; a new filter starts over.
+  const listKey = JSON.stringify([origin, partial]);
+  const [paged, setPaged] = useState({ key: listKey, limit: LEDGER_PAGE });
+  const limit = paged.key === listKey ? paged.limit : LEDGER_PAGE;
   const ledger = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const sorted = [...runs].sort(newestFirst);
@@ -248,6 +269,29 @@ export function RunsTable({
     })),
   );
 
+  // A run page coming back to a run past the page renders down to it.
+  const returnAt =
+    returnFocus === undefined
+      ? -1
+      : sorted.findIndex((e) => runLinkKey(e.environmentId, e.run.id) === returnFocus);
+  const shown = Math.max(limit, returnAt + 1);
+  const { days, hidden } = firstOfDays(
+    groupByDay(sorted, (entry) => startedMs(entry.run), nowMs),
+    shown,
+  );
+  const showMore = () => setPaged({ key: listKey, limit: shown + LEDGER_PAGE });
+  const more =
+    hidden > 0 ? (
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <span>
+          Showing {sorted.length - hidden} of {sorted.length}
+        </span>
+        <Button onClick={showMore} size="sm" variant="outline">
+          {`Show ${Math.min(hidden, LEDGER_PAGE)} more`}
+        </Button>
+      </div>
+    ) : null;
+
   useFactoryKeys((key) => {
     if (key === "search") {
       searchRef.current?.focus();
@@ -256,6 +300,10 @@ export function RunsTable({
     if (key === "back") return false;
     const links = runLinks(ledger.current);
     const at = links.indexOf(document.activeElement as HTMLElement);
+    if (key === "next" && at !== -1 && at === links.length - 1 && hidden > 0) {
+      flushSync(showMore);
+      links.splice(0, links.length, ...runLinks(ledger.current));
+    }
     const target = at === -1 ? links[0] : links[key === "next" ? at + 1 : at - 1];
     if (target === undefined) return false;
     target.focus();
@@ -273,7 +321,6 @@ export function RunsTable({
     target?.focus({ preventScroll: true });
     target?.scrollIntoView({ block: "center" });
   }, [returnFocus]);
-  const days = groupByDay(sorted, (entry) => startedMs(entry.run), nowMs);
   const toolbar =
     counts.all > 0 || query !== "" || bucket !== null ? (
       <LedgerToolbar
@@ -295,6 +342,12 @@ export function RunsTable({
       <Button onClick={onShowRecent} size="sm" variant="ghost">
         Show recent runs
       </Button>
+    </div>
+  );
+  const footer = (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      {more}
+      {showAll}
     </div>
   );
   if (runs.length === 0) {
@@ -331,13 +384,13 @@ export function RunsTable({
         {toolbar}
         <KeyHints />
         <ul className="flex flex-col gap-2" data-layout="cards">
-          {days.map(({ label, items }) => [
+          {days.map(({ label, items, total }) => [
             <li
               className="pt-2 text-xs font-medium text-muted-foreground first:pt-0"
               key={`day ${label}`}
               role="presentation"
             >
-              {label}
+              <DayHeading label={label} total={total} />
             </li>,
             ...items.map((entry) => (
               <RunCard
@@ -350,7 +403,7 @@ export function RunsTable({
             )),
           ])}
         </ul>
-        {showAll}
+        {footer}
       </div>
     );
   }
@@ -372,11 +425,11 @@ export function RunsTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {days.map(({ label, items }) => [
+          {days.map(({ label, items, total }) => [
             <TableRow data-day="" key={`day ${label}`}>
               <TableCell colSpan={columns}>
                 <span className="block pt-2 text-xs font-medium text-muted-foreground">
-                  {label}
+                  <DayHeading label={label} total={total} />
                 </span>
               </TableCell>
             </TableRow>,
@@ -414,7 +467,7 @@ export function RunsTable({
           ])}
         </TableBody>
       </Table>
-      {showAll}
+      {footer}
     </div>
   );
 }

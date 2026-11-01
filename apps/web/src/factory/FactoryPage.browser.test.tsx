@@ -1480,4 +1480,38 @@ describe("FactoryPage from the keyboard", () => {
     expect(focused()).toBe("env-2 acme__w__8__1");
     expect(document.activeElement?.closest("[data-ledger]")).not.toBeNull();
   });
+
+  // 120 runs, a minute apart, newest first: acme__w__1__1 down to acme__w__120__1.
+  const MANY = Array.from({ length: 120 }, (_, i) =>
+    runRow({
+      id: `acme__w__${i + 1}__1`,
+      started_ts: new Date(Date.UTC(2026, 9, 17, 10) - i * 60_000).toISOString(),
+      title: `Run ${i + 1}`,
+    }),
+  );
+
+  it("renders the first 50 runs, shows more on request, and j past the last shows the next ones", async () => {
+    using _state = setup();
+    state.runs = resource({ data: { runs: MANY } });
+    await using page = await render(createElement(FactoryPage));
+    expect(ledgerLinks()).toHaveLength(50);
+    // Every run is still in the queue a run page steps through.
+    expect(JSON.parse(ledgerLinks()[0]!.dataset.state!).factoryRunQueue.runs).toHaveLength(120);
+    ledgerLinks()[49]!.focus();
+    await userEvent.keyboard("j");
+    expect(focused()).toBe("env-2 acme__w__51__1");
+    expect(ledgerLinks()).toHaveLength(100);
+    await page.click(page.button("Show 20 more")!);
+    expect(ledgerLinks()).toHaveLength(120);
+    expect(page.button("Show 20 more")).toBeUndefined();
+  });
+
+  it("coming back to a run past the first 50, renders down to it and focuses it", async () => {
+    using _state = setup();
+    state.runs = resource({ data: { runs: MANY } });
+    state.history = { factoryReturn: { query: "", focus: "env-2 acme__w__90__1" } };
+    await using _page = await render(createElement(FactoryPage));
+    expect(ledgerLinks()).toHaveLength(90);
+    expect(focused()).toBe("env-2 acme__w__90__1");
+  });
 });
