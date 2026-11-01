@@ -26,7 +26,7 @@ import type { RunStop } from "./RunActionBar";
 const TILE_PX = 60;
 const TILE_GAP_PX = 6;
 
-const ICON: Readonly<Record<Station, ComponentType<{ className?: string }>>> = {
+export const STATION_ICON: Readonly<Record<Station, ComponentType<{ className?: string }>>> = {
   claimed: InboxIcon,
   building: WrenchIcon,
   gate: ShieldCheckIcon,
@@ -100,7 +100,7 @@ function Post({
   onPick: () => void;
 }) {
   const { name, tag } = STATION_META[station];
-  const Icon = ICON[station];
+  const Icon = STATION_ICON[station];
   return (
     <button
       aria-controls={open ? READOUT_ID : undefined}

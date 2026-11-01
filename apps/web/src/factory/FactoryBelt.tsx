@@ -17,6 +17,8 @@ import type { QueueOrigin } from "./runQueue";
 import { DeployBanner } from "./DeployBanner";
 import { dayStrip, type DayStrip as Strip } from "./dayStrip";
 import { TodayStrip } from "./TodayStrip";
+import type { FirstRun } from "./firstRun";
+import { FirstRunGuide } from "./FirstRunGuide";
 import { FactoryReadFailure } from "./FactoryNotices";
 import { messageOf } from "./format";
 import { repoOfRun } from "./repoHealth";
@@ -265,6 +267,7 @@ export function FactoryBelt({
   origin,
   digest,
   repo = null,
+  firstRun = false,
 }: {
   /** Every factory environment, the primary first. */
   environments: ReadonlyArray<FactoryEnvironment>;
@@ -287,6 +290,11 @@ export function FactoryBelt({
   digest?: ReactNode;
   /** The page's repo filter: the rail, the strip and the bins show only its runs. */
   repo?: string | null;
+  /**
+   * No environment has ever run anything: the steps to a first run stand in for the empty rail.
+   * While that is being checked, a placeholder stands there instead of an empty belt.
+   */
+  firstRun?: FirstRun;
 }) {
   const [pickedId, setPickedId] = useState<EnvironmentId | null>(null);
   // The open post: undefined until the rail first has something to look at, then the user's.
@@ -429,7 +437,18 @@ export function FactoryBelt({
               : null
           }
         />
-        {open !== undefined ? (
+        {firstRun === "checking" ? (
+          <Skeleton aria-label="Loading belt" className="h-40 w-full" role="status" />
+        ) : firstRun ? (
+          <FirstRunGuide
+            busy={busy.has(selected.environmentId)}
+            environmentId={selected.environmentId}
+            // A new environment reads its own config.
+            key={selected.environmentId}
+            onResume={() => onTogglePause(selected)}
+            paused={report?.paused_by_hand != null}
+          />
+        ) : open !== undefined ? (
           <BeltRail
             belt={shown}
             known={known}
@@ -450,17 +469,19 @@ export function FactoryBelt({
           </p>
         ) : null}
       </section>
-      <BeltLowerRow
-        attention={attention}
-        known={known}
-        needsInfo={shown.info}
-        nowMs={nowMs}
-        onDismiss={onDismiss}
-        origin={origin}
-        selectedId={selected.environmentId}
-        showEnvironment={showEnvironment}
-        stuck={shown.stuck}
-      />
+      {firstRun !== false && attention.length === 0 ? null : (
+        <BeltLowerRow
+          attention={attention}
+          known={known}
+          needsInfo={shown.info}
+          nowMs={nowMs}
+          onDismiss={onDismiss}
+          origin={origin}
+          selectedId={selected.environmentId}
+          showEnvironment={showEnvironment}
+          stuck={shown.stuck}
+        />
+      )}
       {/* Where the tiles fly: last, so that it is laid over the rest and set after every tile. */}
       <div aria-hidden className="pointer-events-none absolute inset-0" ref={layerRef} />
     </div>

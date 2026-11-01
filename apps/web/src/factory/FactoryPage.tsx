@@ -17,6 +17,7 @@ import { FactoryBelt } from "./FactoryBelt";
 import { FactoryFrame } from "./FactoryFrame";
 import { FactoryError, FactoryLoading, FactoryReadFailure } from "./FactoryNotices";
 import { messageOf, parseRunId } from "./format";
+import { neverBuilt, type FirstRun } from "./firstRun";
 import { RepoBoard } from "./RepoBoard";
 import { repoBoard } from "./repoHealth";
 import { bucketOf, countBuckets, matchesQuery } from "./runLedger";
@@ -107,6 +108,23 @@ export function FactoryPage() {
   // showing, this is the table's own read.
   const recentOf = useFactoryRunsOf(answeredIds, false);
   const recentById = new Map(answered.map(({ environmentId }, i) => [environmentId, recentOf[i]!]));
+  // A machine whose recent window is empty may never have run anything: only then is every run read,
+  // once, to tell a first run from a quiet week.
+  const quiet =
+    answered.length > 0 &&
+    answered.every(
+      ({ status }, i) => status.data?.runs.length === 0 && recentOf[i]?.data?.runs.length === 0,
+    );
+  const everOf = useFactoryRunsOf(quiet ? answeredIds : [], true);
+  const firstRun: FirstRun =
+    quiet && everOf.some(({ data }) => data === null)
+      ? "checking"
+      : neverBuilt(
+          answered.map(({ status }, i) => ({
+            active: status.data?.runs.length ?? 0,
+            ever: everOf[i]?.data?.runs.length ?? null,
+          })),
+        );
   // The environments with a pause or resume in flight: one environment's control never disables another's.
   const [busy, setBusy] = useState<ReadonlySet<EnvironmentId>>(() => new Set());
   const [note, setNote] = useState<string | null>(null);
@@ -334,13 +352,16 @@ export function FactoryPage() {
           attention={attention}
           busy={busy}
           digest={
-            <CatchUpCard
-              environments={caughtUpRecent}
-              nowMs={nowMs}
-              origin={{ search, query }}
-              showEnvironment={showEnvironment}
-            />
+            firstRun ? null : (
+              <CatchUpCard
+                environments={caughtUpRecent}
+                nowMs={nowMs}
+                origin={{ search, query }}
+                showEnvironment={showEnvironment}
+              />
+            )
           }
+          firstRun={firstRun}
           environments={environments}
           nowMs={nowMs}
           onDismiss={dismiss}
@@ -355,7 +376,7 @@ export function FactoryPage() {
             {note}
           </p>
         ) : null}
-        {(!runsListed || runs.length === 0) && runsPending ? (
+        {firstRun !== false ? null : (!runsListed || runs.length === 0) && runsPending ? (
           <FactoryLoading label="Loading runs" />
         ) : runsListed ? (
           <RunsTable

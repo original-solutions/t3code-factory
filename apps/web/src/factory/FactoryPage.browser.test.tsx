@@ -1,3 +1,4 @@
+import * as Option from "effect/Option";
 import { createElement, useSyncExternalStore, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page as browser, userEvent } from "vite-plus/test/browser";
@@ -22,6 +23,17 @@ const state = vi.hoisted(() => ({
   navigations: [] as Array<{ to: string; search: Record<string, string>; replace?: boolean }>,
   // The history state the page was opened with: a run page coming back sets `factoryReturn`.
   history: {} as Record<string, unknown>,
+  // The machine config the first-run guide reads.
+  config: null as unknown,
+}));
+
+vi.mock("~/state/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/state/session")>()),
+  usePreparedConnection: () => Option.some({}),
+}));
+vi.mock("./settings/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./settings/api")>()),
+  fetchFactoryConfig: () => Promise.resolve(state.config),
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
@@ -180,6 +192,7 @@ function setup(): Disposable {
   state.search = {};
   state.navigations = [];
   state.history = {};
+  state.config = { kind: "ok", report: { repos: [], watch_error: null } };
   return {
     [Symbol.dispose]() {
       __setFactoryApiForTests();
@@ -189,14 +202,71 @@ function setup(): Disposable {
 }
 
 describe("FactoryPage", () => {
-  it("says there are no runs yet when the factory has none", async () => {
+  it("opens on the way to a first run, in place of the empty belt, when nothing has ever run", async () => {
     using _state = setup();
     await using page = await render(createElement(FactoryPage));
-    expect(page.text()).toContain("Factory");
+    await vi.waitFor(() => expect(page.text()).toContain("Step 1 of 4"));
+    expect(page.all('section[aria-label="First run"]')).toHaveLength(1);
+    expect(page.text()).toContain("Watch a repo");
+    // No empty posts, bins, digest or runs list.
+    expect(page.all('section[aria-label="Stuck"]')).toHaveLength(0);
+    expect(page.text()).not.toContain("No runs");
+    expect(page.text()).not.toContain("Nothing at Claimed");
+  });
+
+  it("walks a first run to labelling an issue, turning claims on from the guide", async () => {
+    using _state = setup();
+    state.status = resource({
+      data: statusData({
+        paused_by_hand: { since: "2026-10-17T11:00:00.000Z", for_ms: 3_600_000 },
+      }),
+    });
+    state.config = {
+      kind: "ok",
+      report: {
+        watch_error: null,
+        repos: [
+          {
+            title: "Factory",
+            repo: "acme/factory",
+            path: "/work/factory",
+            errors: null,
+            factory: {
+              instructors: ["tom"],
+              base: "main",
+              provision: [],
+              gate: ["vp test"],
+              required_checks: [],
+              limits: { minutes: 90, gate_retries: 1, checks_minutes: 30, interruption_resumes: 2 },
+              autonomy: "pr",
+            },
+          },
+        ],
+      },
+    };
+    const resumeClaims = vi.fn(async () => ({
+      paused: false as const,
+      already: false,
+      message: "claims resumed",
+    }));
+    __setFactoryApiForTests(api({ resumeClaims }));
+    await using page = await render(createElement(FactoryPage));
+    await vi.waitFor(() => expect(page.text()).toContain("Step 3 of 4"));
+    expect(page.text()).toContain("Ready to build: acme/factory.");
+    expect(page.text()).toContain("vp test must pass");
+    await page.click(page.button("Turn claims on")!);
+    expect(resumeClaims).toHaveBeenCalledWith("env-2");
+  });
+
+  it("keeps the belt for a quiet week on a factory that has run before", async () => {
+    using _state = setup();
+    state.allRuns = resource({
+      data: { runs: [runRow({ started_ts: "2026-09-01T10:00:00.000Z", finished: true })] },
+    });
+    await using page = await render(createElement(FactoryPage));
+    expect(page.all('section[aria-label="First run"]')).toHaveLength(0);
     expect(page.text()).toContain("No runs in the last week");
     expect(page.text()).toContain("Nothing needs a person.");
-    await page.click(page.button("Show all runs")!);
-    expect(page.text()).toContain("No runs yet");
   });
 
   it("shows a loading state while either read is loading", async () => {
@@ -302,6 +372,7 @@ describe("FactoryPage", () => {
 
   it("says when the week holds no runs and still offers every run", async () => {
     using _state = setup();
+    state.allRuns = resource({ data: { runs: [runRow({ finished: true })] } });
     await using page = await render(createElement(FactoryPage));
     expect(page.text()).toContain("No runs in the last week");
     expect(page.button("Show all runs")).toBeDefined();
@@ -487,6 +558,8 @@ describe("FactoryPage", () => {
     state.status = resource({
       data: statusData({ paused_by_hand: { since, for_ms: 3_600_000 } }),
     });
+    // Claimed names the pause on the belt of a factory that has run before.
+    state.allRuns = resource({ data: { runs: [runRow({ finished: true })] } });
     const resumeClaims = vi.fn(async () => ({
       paused: false as const,
       already: false,
@@ -924,6 +997,7 @@ describe("FactoryPage run cards at 375 px", () => {
     expect(page.button("Show all runs")).toBeDefined();
     await page.unmount();
     state.runs = resource({ data: { runs: [] } });
+    state.allRuns = resource({ data: { runs: [runRow({ finished: true })] } });
     await using empty = await renderAt(375, createElement(FactoryPage));
     expect(empty.text()).toContain("No runs in the last week");
     expect(empty.button("Show all runs")).toBeDefined();
@@ -999,6 +1073,8 @@ describe("FactoryPage dismissing attention items", () => {
   it("Dismiss all sends exactly the ids shown, and the section goes", async () => {
     using _state = setup();
     state.status = resource({ data: statusData({ attention: [ATTENTION, CONFIG, PASS] }) });
+    // A factory that has run before: on a first run the bins go with the last item.
+    state.allRuns = resource({ data: { runs: [runRow({ finished: true })] } });
     const dismissAttention = vi.fn(async (_environmentId: string, ids: ReadonlyArray<string>) => ({
       dismissed: ids,
     }));
