@@ -1,10 +1,12 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
+import { ChevronRightIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "~/components/ui/collapsible";
 import {
   Table,
   TableBody,
@@ -35,6 +37,7 @@ import {
   whyStopped,
 } from "./format";
 import { Ref } from "./Ref";
+import { RunTimeline } from "./RunTimeline";
 import { TouchLink } from "./TouchLink";
 import { useFactoryEnvironmentLabel, useFactoryRun } from "./useFactoryData";
 
@@ -122,54 +125,62 @@ function Ledger({
 }) {
   const stacked = useMediaQuery("max-sm");
   return (
-    <section className="flex flex-col gap-2">
-      <h2 className="text-sm font-medium">Ledger</h2>
-      {entries.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No ledger entries</p>
-      ) : stacked ? (
-        <ul className="flex flex-col gap-2" data-layout="list">
-          {keyed(entries, (entry) => `${entry.ts} ${entry.event}`).map(([key, entry]) => (
-            <li
-              className="flex flex-col gap-0.5 rounded-lg border bg-card px-3 py-2 text-sm"
-              key={key}
-            >
-              <span className="flex flex-wrap items-baseline justify-between gap-x-3">
-                <span className="min-w-0 break-words font-medium">{entry.event}</span>
-                <span className="font-mono text-xs text-muted-foreground">{entry.ts}</span>
-              </span>
-              <span className="line-clamp-2 break-all font-mono text-xs">
-                {JSON.stringify(entry.data)}
-              </span>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Time</TableHead>
-              <TableHead>Event</TableHead>
-              <TableHead>Data</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {keyed(entries, (entry) => `${entry.ts} ${entry.event}`).map(([key, entry]) => {
-              const data = JSON.stringify(entry.data);
-              return (
-                <TableRow key={key}>
-                  <TableCell className="whitespace-nowrap">
-                    <span className="font-mono text-xs">{entry.ts}</span>
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap">{entry.event}</TableCell>
-                  <TableCell className="max-w-md">
-                    <span className="block line-clamp-2 break-all font-mono text-xs">{data}</span>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-      )}
+    <Collapsible render={<section />} className="flex flex-col gap-2">
+      <CollapsibleTrigger
+        render={<Button size="sm" variant="ghost-muted" />}
+        className="group/ledger self-start"
+      >
+        <ChevronRightIcon className="transition-transform group-data-panel-open/ledger:rotate-90" />
+        Raw ledger ({entries.length} {entries.length === 1 ? "entry" : "entries"})
+      </CollapsibleTrigger>
+      <CollapsiblePanel animate={false}>
+        {entries.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No ledger entries</p>
+        ) : stacked ? (
+          <ul className="flex flex-col gap-2" data-layout="list">
+            {keyed(entries, (entry) => `${entry.ts} ${entry.event}`).map(([key, entry]) => (
+              <li
+                className="flex flex-col gap-0.5 rounded-lg border bg-card px-3 py-2 text-sm"
+                key={key}
+              >
+                <span className="flex flex-wrap items-baseline justify-between gap-x-3">
+                  <span className="min-w-0 break-words font-medium">{entry.event}</span>
+                  <span className="font-mono text-xs text-muted-foreground">{entry.ts}</span>
+                </span>
+                <span className="line-clamp-2 break-all font-mono text-xs">
+                  {JSON.stringify(entry.data)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Time</TableHead>
+                <TableHead>Event</TableHead>
+                <TableHead>Data</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {keyed(entries, (entry) => `${entry.ts} ${entry.event}`).map(([key, entry]) => {
+                const data = JSON.stringify(entry.data);
+                return (
+                  <TableRow key={key}>
+                    <TableCell className="whitespace-nowrap">
+                      <span className="font-mono text-xs">{entry.ts}</span>
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">{entry.event}</TableCell>
+                    <TableCell className="max-w-md">
+                      <span className="block line-clamp-2 break-all font-mono text-xs">{data}</span>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        )}
+      </CollapsiblePanel>
       {truncated ? (
         <p className="text-xs text-muted-foreground">
           The last line of the ledger was unreadable and was dropped.
@@ -178,7 +189,7 @@ function Ledger({
       {skipped > 0 ? (
         <p className="text-xs text-muted-foreground">{skipped} unreadable lines skipped.</p>
       ) : null}
-    </section>
+    </Collapsible>
   );
 }
 
@@ -196,14 +207,14 @@ export function FactoryRunPage({
 
   const stop = async () => {
     setBusy(true);
-    try {
-      setNote((await factoryApi.stopRun(environmentId, runId)).message);
-    } catch (error) {
-      setNote(messageOf(error));
-    } finally {
-      setBusy(false);
-      run.refresh();
-    }
+    // No try/finally: the React Compiler cannot compile one.
+    const message = await factoryApi.stopRun(environmentId, runId).then(
+      (result) => result.message,
+      (error: unknown) => messageOf(error),
+    );
+    setNote(message);
+    setBusy(false);
+    run.refresh();
   };
 
   const entries = run.data?.entries ?? [];
@@ -272,6 +283,7 @@ export function FactoryRunPage({
             </p>
           </section>
         ) : null}
+        <RunTimeline entries={entries} environmentId={environmentId} />
         <GateOutput entries={entries} />
         <Ledger entries={entries} skipped={run.data.skipped} truncated={run.data.truncated} />
       </>

@@ -88,6 +88,10 @@ const runPage = () =>
   createElement(FactoryRunPage, { environmentId: state.environmentId as never, runId: RUN_ID });
 const mount = () => render(runPage());
 
+type Page = Awaited<ReturnType<typeof render>>;
+const openLedger = (page: Page) =>
+  page.click(page.all("button").find((b) => b.textContent?.startsWith("Raw ledger"))!);
+
 function setup(): Disposable {
   state.environmentId = "env-1";
   state.run = resource({ data: detail() });
@@ -133,6 +137,8 @@ describe("FactoryRunPage", () => {
     await using page = await mount();
     expect(page.text()).toContain("no thread yet");
     expect(page.text()).toContain("No gate has run");
+    expect(page.text()).toContain("Nothing has happened yet");
+    await openLedger(page);
     expect(page.text()).toContain("No ledger entries");
     expect(page.button("Stop")!.disabled).toBe(true);
   });
@@ -156,8 +162,27 @@ describe("FactoryRunPage", () => {
     expect(text).toContain("pnpm lint");
     expect(text).toContain("pnpm test");
     expect(text).toContain("26311");
-    expect(text).toContain("session_launched");
-    expect(text).toContain("thread-9");
+    // The raw ledger opens on demand.
+    expect(text).toContain("Raw ledger (8 entries)");
+    expect(text).not.toContain("session_launched");
+    await openLedger(page);
+    expect(page.text()).toContain("session_launched");
+    expect(page.text()).toContain("thread-9");
+  });
+
+  it("tells the run as a timeline, folding each gate run into one step", async () => {
+    using _state = setup();
+    await using page = await mount();
+    const steps = page.all("li[data-tone]");
+    expect(steps.map((li) => li.getAttribute("data-tone"))).toEqual(["info", "info", "error"]);
+    expect(steps[2]!.textContent).toContain("Gate failed");
+    expect(steps[2]!.textContent).toContain("pnpm testexit 2 · 26s");
+    const thread = steps[1]!.querySelector("a")!;
+    expect(JSON.parse(thread.getAttribute("data-params")!)).toEqual({
+      environmentId: "env-1",
+      threadId: "thread-9",
+    });
+    expect(page.text()).toContain("1 agent session · 1 gate run, 1 failed");
   });
 
   it("links the thread on the factory environment", async () => {
@@ -329,6 +354,7 @@ describe.each([375, 1280])("FactoryRunPage at %i px", (width) => {
   it(narrow ? "lists the gate commands and ledger, not tables" : "keeps the tables", async () => {
     using _state = setup();
     await using page = await mountAt();
+    await openLedger(page);
     expect(page.all("table")).toHaveLength(narrow ? 0 : 2);
     const lists = page.all("ul").filter((ul) => ul.getAttribute("data-layout") === "list");
     expect(lists).toHaveLength(narrow ? 2 : 0);
@@ -344,7 +370,8 @@ describe("FactoryRunPage lists at 375 px", () => {
   it("makes a list item of each gate command and each ledger entry", async () => {
     using _state = setup();
     await using page = await renderAt(375, runPage());
-    const items = page.all("li");
+    await openLedger(page);
+    const items = page.all('ul[data-layout="list"] > li');
     // 2 gate commands, then one item per ledger entry.
     expect(items).toHaveLength(2 + BUILDING.length);
     expect(items[0]!.querySelectorAll("*").length).toBeGreaterThan(0);
@@ -359,6 +386,7 @@ describe.each([
   it(narrow ? "lists just below 640" : "keeps the tables from 640", async () => {
     using _state = setup();
     await using page = await renderAt(width, runPage());
+    await openLedger(page);
     expect(page.all("table")).toHaveLength(narrow ? 0 : 2);
     const lists = page.all("ul").filter((ul) => ul.getAttribute("data-layout") === "list");
     expect(lists).toHaveLength(narrow ? 2 : 0);

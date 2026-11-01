@@ -654,7 +654,9 @@ describe("the run page follows its environment", () => {
     expect(calls.runRead.length).toBeGreaterThan(0);
     expect(calls.runRead.every(([env, id]) => env === ENV_2 && id === RUN_2)).toBe(true);
     expect(page.text()).toContain("Studio");
+    // The header's thread link and the timeline's session link.
     expect(linksTo(page, "/$environmentId/$threadId")).toEqual([
+      { environmentId: ENV_2, threadId: "thread-9" },
       { environmentId: ENV_2, threadId: "thread-9" },
     ]);
     await page.click(page.button("Stop")!);
