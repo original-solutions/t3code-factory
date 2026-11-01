@@ -279,7 +279,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               onClick={handlePullRequestsClick}
             />
           ) : null}
-          <FactorySidebarUtilityItem Item={SidebarUtilityItem} onNavigate={closeMobileSidebar} />
+          <FactorySidebarUtilityItem onNavigate={closeMobileSidebar} />
           <SidebarUtilityItem
             icon={<ChartNoAxesColumnIcon />}
             label="Usage"

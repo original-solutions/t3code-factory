@@ -5,7 +5,11 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { act, fakeTimers } from "../../test/render";
 import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
 import { render, setDocumentVisible } from "./testing";
-import { __resetFactoryStoresForTests, useFactorySupported } from "./useFactoryData";
+import {
+  __resetFactoryStoresForTests,
+  useFactoryAttentionCount,
+  useFactorySupported,
+} from "./useFactoryData";
 
 // The real hooks and pages over a fake API with one world per environment: which environments the
 // pages read, show and call is the behavior under test.
@@ -293,7 +297,8 @@ describe("the Factory page shows every environment that runs a factory", () => {
         attentionItem("c", "three", "2026-10-17T10:40:00.000Z"),
       ],
     });
-    const badge = await show(createElement(FactoryNavIcon));
+    const Badge = () => createElement(FactoryNavIcon, { attention: useFactoryAttentionCount() });
+    const badge = await show(createElement(Badge));
     expect(badge.text()).toBe("3");
   });
 

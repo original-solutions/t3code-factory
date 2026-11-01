@@ -17,6 +17,7 @@ import { render } from "./testing";
 const state = vi.hoisted(() => ({ count: 0 }));
 vi.mock("./useFactoryData", () => ({
   useFactoryAttentionCount: () => state.count,
+  useFactoryEnvironments: () => [],
   useFactorySupported: () => true,
 }));
 vi.mock("~/state/environments", async (importOriginal) => ({
@@ -47,7 +48,7 @@ function Footer({ active = false }: { active?: boolean }) {
         </SidebarMenuItem>
         <SidebarMenuItem className="shrink-0">
           <SidebarMenuButton aria-label="Factory" isActive={active} size="icon">
-            <FactoryNavIcon />
+            <FactoryNavIcon attention={state.count} />
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>
@@ -73,14 +74,12 @@ async function renderFooter(element = createElement(UtilityMenu)) {
 
 describe("FactoryNavIcon", () => {
   it("shows no badge at zero", async () => {
-    state.count = 0;
-    await using icon = await render(createElement(FactoryNavIcon));
+    await using icon = await render(createElement(FactoryNavIcon, { attention: 0 }));
     expect(icon.text()).toBe("");
   });
 
   it("shows the number of open attention items", async () => {
-    state.count = 3;
-    await using icon = await render(createElement(FactoryNavIcon));
+    await using icon = await render(createElement(FactoryNavIcon, { attention: 3 }));
     expect(icon.text()).toBe("3");
   });
 
@@ -140,7 +139,7 @@ describe("FactoryNavIcon", () => {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton aria-label="Factory">
-              <FactoryNavIcon />
+              <FactoryNavIcon attention={state.count} />
               <span>Factory</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
