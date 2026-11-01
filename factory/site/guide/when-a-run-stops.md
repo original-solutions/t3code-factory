@@ -9,7 +9,7 @@ Most runs end at `factory:pr-open`. The rest end in one of two labels, each with
 
 The session decided the issue can't be built as written: the outcome is unclear, two readings would give different code, or the issue holds two separate pieces of work. It ends with its questions, and the factory posts them as a comment, sets `factory:needs-info` and unassigns the issue.
 
-Answer in a comment or edit the issue so it settles every question, then an instructor sets `factory:ready`. The factory doesn't read the answer by itself: the label starts a new run, which reads the issue from the top.
+Answer in a comment or edit the issue so it settles every question, then an instructor sets `factory:ready`. The run's page lists the questions with a box under each: **Copy the reply** copies each answered question, quoted, above its answer, ready to paste into the comment. Drafts stay in that browser. The factory doesn't read the answer by itself: the label starts a new run, which reads the issue from the top.
 
 ## stuck
 

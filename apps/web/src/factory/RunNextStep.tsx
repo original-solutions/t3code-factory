@@ -8,6 +8,8 @@ import { Button } from "~/components/ui/button";
 import { FactoryCard, FactoryCardHeader } from "./FactoryCard";
 import type { LinkRef } from "./format";
 import type { NextStep } from "./nextStep";
+import { splitQuestions } from "./questions";
+import { RunAnswers } from "./RunAnswers";
 import { formatSpan } from "./runStory";
 
 export const GATE_OUTPUT_ID = "factory-gate-output";
@@ -45,14 +47,18 @@ export function RunNextStep({
   threadId,
   issue,
   prUrl,
+  runKey,
 }: {
   step: NextStep;
+  /** Names the run's answer drafts: its environment and id. */
+  runKey: string;
   environmentId: EnvironmentId;
   threadId: string | null;
   issue: LinkRef | null;
   prUrl: string | null;
 }) {
   const stuck = step.kind === "stuck";
+  const questions = stuck ? [] : splitQuestions(step.detail ?? "");
   let action: ReactNode = null;
   if (step.focus === "thread" && threadId !== null) {
     action = (
@@ -76,13 +82,6 @@ export function RunNextStep({
         Show the gate output
       </Button>
     );
-  } else if (!stuck && issue?.href) {
-    action = (
-      <Button render={external(issue.href)} size="sm" variant="outline">
-        <ExternalLinkIcon />
-        Answer on {issue.text}
-      </Button>
-    );
   } else if (step.focus === "checks" && prUrl !== null) {
     action = (
       <Button render={external(`${prUrl}/checks`)} size="sm" variant="outline">
@@ -102,7 +101,17 @@ export function RunNextStep({
         <FactoryCardHeader eyebrow="What to do next" title={step.cause} />
       </div>
       <ol className="flex flex-col px-4 pb-4">
-        <Step n={1} title={step.fix}>
+        <Step
+          n={1}
+          title={
+            questions.length === 0
+              ? step.fix
+              : `Answer ${questions.length === 1 ? "its question" : `its ${questions.length} questions`} here, then paste the reply into a comment on ${issue?.text ?? "the issue"}.`
+          }
+        >
+          {stuck ? null : (
+            <RunAnswers issue={issue} key={runKey} questions={questions} runKey={runKey} />
+          )}
           {step.failedGate.length > 0 ? (
             <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
               <span>Last gate failed on</span>
@@ -137,7 +146,16 @@ export function RunNextStep({
           ) : null}
         </Step>
       </ol>
-      {step.detail ? (
+      {step.detail && questions.length > 0 ? (
+        <details className="border-t bg-muted/30 px-4 py-3">
+          <summary className="cursor-pointer text-xs font-medium text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+            The session's whole comment on the issue
+          </summary>
+          <p className="mt-1.5 max-h-80 overflow-auto whitespace-pre-wrap break-words text-sm">
+            {step.detail}
+          </p>
+        </details>
+      ) : step.detail ? (
         <div className="flex flex-col gap-1.5 border-t bg-muted/30 px-4 py-3">
           <p className="text-xs font-medium text-muted-foreground">
             {stuck ? "What the factory and the session said" : "Questions on the issue"}

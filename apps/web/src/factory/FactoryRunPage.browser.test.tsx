@@ -429,6 +429,39 @@ describe("FactoryRunPage", () => {
     );
   });
 
+  it("gives each of a needs-info run's questions an answer box, keeps the drafts and copies the reply", async () => {
+    using _state = setup();
+    const draft = `factory.answers.env-1/${RUN_ID}`;
+    using _draft = { [Symbol.dispose]: () => localStorage.removeItem(draft) };
+    state.run = resource({
+      data: detail([
+        ...BUILDING,
+        entry("questions_posted", {
+          questions: "Stopped.\n\n**Questions**\n\n1. Which page?\n2. Which colour?",
+        }),
+        entry("state_changed", { from: "building", to: "needs-info" }),
+      ]),
+    });
+    {
+      await using page = await mount();
+      const card = page.all('section[aria-label="Next step"]')[0]!;
+      expect(card.textContent).toContain("Answer its 2 questions here");
+      const copy = page.button("Copy the reply")!;
+      expect(copy.disabled).toBe(true);
+      await userEvent.type(page.all('[aria-label="Your answer to question 2"]')[0]!, "Blue");
+      expect(card.textContent).toContain("1 of 2 answered");
+    }
+    await using page = await mount();
+    const box = page.all('[aria-label="Your answer to question 2"]')[0] as HTMLTextAreaElement;
+    expect(box.value).toBe("Blue");
+    using writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    await page.click(page.button("Copy the reply")!);
+    await vi.waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith("> **2.** Which colour?\n\nBlue\n"),
+    );
+    expect(page.text()).toContain("Paste it into a comment on #20.");
+  });
+
   it("shows how a finished run's pull request ended, with no step left to name", async () => {
     using _state = setup();
     state.run = resource({

@@ -331,6 +331,7 @@ export function FactoryRunPage({
             environmentId={environmentId}
             issue={issue}
             prUrl={prUrlOf(entries)}
+            runKey={`${environmentId}/${runId}`}
             step={next}
             threadId={threadId}
           />
