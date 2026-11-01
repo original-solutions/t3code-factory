@@ -6,12 +6,10 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 
 import type { FactoryEntry } from "./api";
-import { type GateCommand, lastGateOutput } from "./format";
+import { type GateCommand, lastGateOutput, plural } from "./format";
 import { type ExcerptItem, type GateLine, gateFailureText, readGateFailure } from "./gateLog";
 import { GATE_OUTPUT_ID } from "./RunNextStep";
 import { formatSpan } from "./runStory";
-
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /** A gate's commands as chips: a dot for how each ended, its exit code when not 0, its time. */
 export function GateCommandChips({ commands }: { commands: ReadonlyArray<GateCommand> }) {

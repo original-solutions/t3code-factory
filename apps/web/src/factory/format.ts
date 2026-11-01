@@ -1,6 +1,10 @@
 import { formatElapsedDurationLabel } from "../timestampFormat";
 import type { FactoryEntry } from "./api";
 
+/** `1 file`, `3 files`; `many` for a plural that is not `one` plus `s`. */
+export const plural = (n: number, one: string, many = `${one}s`): string =>
+  `${n} ${n === 1 ? one : many}`;
+
 export interface ParsedRunId {
   readonly owner: string;
   readonly repo: string;

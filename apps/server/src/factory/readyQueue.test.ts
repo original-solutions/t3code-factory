@@ -131,6 +131,36 @@ describe("readReadyQueue", () => {
     expect(queue.checked_at).toBe(formatTs(NOW - 3 * HOUR + 2));
   });
 
+  it("carries a repo or an issue the pass could not read from the pass before, and ignores a late pass", () => {
+    const dir = logOf(
+      pass(NOW - 4 * HOUR, [
+        ["acme/app", 7, "blocked"],
+        ["acme/web", 3, "limit"],
+        ["acme/web", 4, "limit"],
+      ]) +
+        // acme/app's list failed and acme/web#4's blocker read failed; acme/web#3 was claimed.
+        pass(NOW - 3 * HOUR, [
+          ["acme/app", null, "list-failed"],
+          ["acme/web", 4, "read-failed"],
+        ]) +
+        // The project's model could not be read during a cooldown.
+        pass(NOW - 2 * HOUR, [
+          ["acme/app", null, "model-unread"],
+          ["acme/web", 4, "limit"],
+        ]) +
+        pass(NOW - HOUR, ["late"]),
+    );
+    const queue = readReadyQueue(dir, NOW);
+    expect(queue.checked_at).toBe(formatTs(NOW - 2 * HOUR + 2));
+    expect(
+      queue.waiting.map(({ repo, issue, reason, passes }) => [repo, issue, reason, passes]),
+    ).toEqual([
+      ["acme/app", "7", "blocked", 1],
+      ["acme/web", "4", "limit", 2],
+    ]);
+    expect(queue.waiting[0]!.since).toBe(formatTs(NOW - 4 * HOUR + 1));
+  });
+
   it("counts a pass from before the marker that skipped an issue as one that read the list", () => {
     const dir = logOf(
       pass(NOW - 2 * HOUR, [["acme/app", 7, "blocked"]], false) +

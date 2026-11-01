@@ -9,8 +9,7 @@ import type { FactoryEntry } from "./api";
 import { GateCommandChips } from "./GateOutput";
 import { Ref } from "./Ref";
 import { formatSpan, runStory } from "./runStory";
-
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+import { plural } from "./format";
 
 const when = (ts: string) =>
   new Date(ts).toLocaleString(undefined, {

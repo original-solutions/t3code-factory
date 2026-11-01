@@ -1,4 +1,5 @@
 import type { RepoBlock } from "./api";
+import { plural } from "../format";
 
 type FactoryBlock = NonNullable<RepoBlock["factory"]>;
 
@@ -8,8 +9,6 @@ export interface PlanStep {
   readonly says: string;
   readonly keys: ReadonlyArray<string>;
 }
-
-const plural = (count: number, one: string) => `${count} ${one}${count === 1 ? "" : "s"}`;
 
 export const duration = (minutes: number) =>
   minutes >= 60 && minutes % 60 === 0 ? plural(minutes / 60, "hour") : plural(minutes, "minute");

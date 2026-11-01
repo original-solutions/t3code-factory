@@ -1,33 +1,17 @@
 import { CheckIcon, CopyIcon, ExternalLinkIcon } from "lucide-react";
+import * as Schema from "effect/Schema";
 import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Textarea } from "~/components/ui/textarea";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
 
 import type { LinkRef } from "./format";
 import { composeReply } from "./questions";
 
-const draftKey = (runKey: string) => `factory.answers.${runKey}`;
-
-function readDraft(runKey: string): Array<string> {
-  try {
-    const stored: unknown = JSON.parse(localStorage.getItem(draftKey(runKey)) ?? "[]");
-    return Array.isArray(stored) ? stored.map((answer) => String(answer ?? "")) : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeDraft(runKey: string, answers: ReadonlyArray<string>) {
-  try {
-    if (answers.some((answer) => answer.trim() !== ""))
-      localStorage.setItem(draftKey(runKey), JSON.stringify(answers));
-    else localStorage.removeItem(draftKey(runKey));
-  } catch {
-    // A full or blocked storage only costs the draft surviving a reload.
-  }
-}
+const draftKey = (runKey: string) => `t3code:factory:answers:${runKey}`;
+const DraftSchema = Schema.NullOr(Schema.Array(Schema.String));
 
 /**
  * A box under each of the session's questions, and the reply they make: each answered question
@@ -44,7 +28,8 @@ export function RunAnswers({
   questions: ReadonlyArray<string>;
   issue: LinkRef | null;
 }) {
-  const [answers, setAnswers] = useState<ReadonlyArray<string>>(() => readDraft(runKey));
+  const [draft, setDraft] = useLocalStorage(draftKey(runKey), null, DraftSchema);
+  const answers = draft ?? [];
   const [copied, setCopied] = useState<"copied" | "failed" | null>(null);
   const reply = composeReply(questions, answers);
   const items =
@@ -60,9 +45,8 @@ export function RunAnswers({
     const next = Array.from({ length: asked }, (_, at) =>
       at === index ? value : (answers[at] ?? ""),
     );
-    setAnswers(next);
+    setDraft(next.some((text) => text.trim() !== "") ? next : null);
     setCopied(null);
-    writeDraft(runKey, next);
   };
   const copy = () => {
     void writeTextToClipboard(reply, "reply").then(

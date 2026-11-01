@@ -411,3 +411,9 @@ export function formatClock(ms: number): string {
   const date = new Date(ms);
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
+
+/** An ISO time as {@link formatClock} shows it; null for none or one that does not parse. */
+export const clockOfIso = (iso: string | null): string | null => {
+  const ms = iso === null ? Number.NaN : Date.parse(iso);
+  return Number.isNaN(ms) ? null : formatClock(ms);
+};

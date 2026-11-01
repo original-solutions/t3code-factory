@@ -344,31 +344,27 @@ function AttentionSection({
         </ul>
       )}
       {dismissedRows.length === 0 ? null : (
-        <div className="flex flex-col gap-2 border-t pt-2" data-dismissed="">
-          <button
-            aria-expanded={showDismissed}
-            className="group/dismissed flex min-h-9 w-full items-center gap-2 rounded-sm text-left text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11"
-            data-open={showDismissed ? "" : undefined}
-            onClick={() => setShowDismissed(!showDismissed)}
-            type="button"
-          >
-            <ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-data-open/dismissed:rotate-90" />
-            <span className="font-medium">Dismissed ({dismissedRows.length})</span>
-            {stillTrueCount === 0 ? null : (
-              <span className="ml-auto text-(--factory-info)">{stillTrueCount} still true</span>
-            )}
-          </button>
-          {showDismissed ? (
-            <ul className="flex max-h-72 flex-col divide-y overflow-y-auto">
-              <AttentionRows
-                dismissed
-                items={dismissed}
-                nowMs={nowMs}
-                onMove={onRestore}
-                showEnvironment={showEnvironment}
-              />
-            </ul>
-          ) : null}
+        <div className="border-t pt-2" data-dismissed="">
+          <Collapsible onOpenChange={setShowDismissed} open={showDismissed}>
+            <CollapsibleTrigger className="group/dismissed flex min-h-9 w-full items-center gap-2 rounded-sm text-left text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11">
+              <ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-data-panel-open/dismissed:rotate-90" />
+              <span className="font-medium">Dismissed ({dismissedRows.length})</span>
+              {stillTrueCount === 0 ? null : (
+                <span className="ml-auto text-(--factory-info)">{stillTrueCount} still true</span>
+              )}
+            </CollapsibleTrigger>
+            <CollapsiblePanel animate={false}>
+              <ul className="mt-2 flex max-h-72 flex-col divide-y overflow-y-auto">
+                <AttentionRows
+                  dismissed
+                  items={dismissed}
+                  nowMs={nowMs}
+                  onMove={onRestore}
+                  showEnvironment={showEnvironment}
+                />
+              </ul>
+            </CollapsiblePanel>
+          </Collapsible>
         </div>
       )}
     </FactoryCard>

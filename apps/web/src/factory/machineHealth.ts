@@ -1,6 +1,6 @@
 import type { FactoryStatus } from "./api";
 import { causeKey, signedOutLine, signedOutCause, stillTrue } from "./attentionCauses";
-import { formatClock } from "./belt";
+import { clockOfIso } from "./belt";
 
 /** How a gauge reads: fine, near the line where the pass holds, over it, or unread. */
 export type HealthTone = "ok" | "warn" | "bad" | "off";
@@ -73,8 +73,8 @@ const minutes = (ms: number): string => {
 };
 
 const since = (iso: string): string => {
-  const ms = Date.parse(iso);
-  return Number.isNaN(ms) ? "" : ` since ${formatClock(ms)}`;
+  const clock = clockOfIso(iso);
+  return clock === null ? "" : ` since ${clock}`;
 };
 
 /** The `pass-errors` item, open or quieted, when it is not the signed-out gh said on its own. */

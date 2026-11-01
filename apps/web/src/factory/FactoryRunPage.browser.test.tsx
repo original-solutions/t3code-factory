@@ -436,7 +436,7 @@ describe("FactoryRunPage", () => {
 
   it("gives each of a needs-info run's questions an answer box, keeps the drafts and copies the reply", async () => {
     using _state = setup();
-    const draft = `factory.answers.env-1/${RUN_ID}`;
+    const draft = `t3code:factory:answers:env-1/${RUN_ID}`;
     using _draft = { [Symbol.dispose]: () => localStorage.removeItem(draft) };
     state.run = resource({
       data: detail([

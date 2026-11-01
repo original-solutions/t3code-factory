@@ -795,6 +795,10 @@ const claimSkipped = (issue: number, reason: string, repo = REPO): MachineEvent 
   data: { repo, issue: String(issue), reason },
 });
 
+/** The machine events the Queue reads: skips and the claim step's `ready_listed`. */
+const queueEvents = (fake: Fake) =>
+  fake.events.filter((e) => e.event === "claim_skipped" || e.event === "ready_listed");
+
 const errorEvents = (fake: Fake) => fake.events.filter((e) => e.event === "error");
 const recordedErrorKinds = (fake: Fake): Array<ErrorKind> =>
   errorEvents(fake).map((e) => (e.data as { kind: ErrorKind }).kind);
@@ -942,6 +946,22 @@ describe("claiming new issues", () => {
         lines.join("\n"),
       );
       assert.deepEqual(recordedErrorKinds(fake), ["tracker"]);
+      // The Queue keeps that repo's waits from before, and counts the pass as one that listed.
+      assert.deepEqual(queueEvents(fake), [
+        { event: "claim_skipped", data: { repo: REPO, reason: "list-failed" } },
+        { event: "ready_listed", data: { repos: 1 } },
+      ]);
+    }),
+  );
+
+  it.effect("a pass that lists no repo's ready issues writes no ready_listed", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = "error";
+      yield* pass(fake, [REPO], 3);
+      assert.deepEqual(queueEvents(fake), [
+        { event: "claim_skipped", data: { repo: REPO, reason: "list-failed" } },
+      ]);
     }),
   );
 
@@ -2543,7 +2563,10 @@ describe("issues blocked by an open issue", () => {
         ),
         lines.join("\n"),
       );
-      assert.ok(!fake.events.some((e) => e.event === "claim_skipped"));
+      assert.deepEqual(
+        fake.events.filter((e) => e.event === "claim_skipped"),
+        [{ event: "claim_skipped", data: { repo: REPO, issue: "14", reason: "read-failed" } }],
+      );
     }),
   );
 
@@ -2643,6 +2666,10 @@ describe("issues whose Depends on text names an open issue", () => {
         lines.join("\n"),
       );
       assert.deepEqual(recordedErrorKinds(fake), ["tracker"]);
+      assert.deepEqual(
+        fake.events.filter((e) => e.event === "claim_skipped"),
+        [{ event: "claim_skipped", data: { repo: REPO, issue: "14", reason: "read-failed" } }],
+      );
     }),
   );
 
@@ -2851,6 +2878,9 @@ describe("draining for a deploy", () => {
         fake.events.filter((e) => e.event === "claim_skipped"),
         [{ event: "claim_skipped", data: { reason: "deploy-pending" } }],
       );
+      assert.deepEqual(queueEvents(fake), [
+        { event: "claim_skipped", data: { reason: "deploy-pending" } },
+      ]);
       assert.deepEqual(waitingItems(fake), []);
       assert.deepEqual([report.claimed, report.attention], [0, 0]);
     }),
@@ -3085,6 +3115,9 @@ describe("low disk space", () => {
           fake.events.filter((e) => e.event === "claim_skipped"),
           [{ event: "claim_skipped", data: { reason: "low-disk" } }],
         );
+        assert.deepEqual(queueEvents(fake), [
+          { event: "claim_skipped", data: { reason: "low-disk" } },
+        ]);
         assert.equal(report.attention, 1);
         assert.equal(report.errors, 0);
       }),
@@ -3272,6 +3305,9 @@ describe("high load", () => {
           fake.events.filter((e) => e.event === "claim_skipped"),
           [{ event: "claim_skipped", data: { reason: "high-load" } }],
         );
+        assert.deepEqual(queueEvents(fake), [
+          { event: "claim_skipped", data: { reason: "high-load" } },
+        ]);
         assert.deepEqual(fake.items, []);
         assert.equal(report.attention, 0);
         assert.equal(report.errors, 0);
@@ -6223,6 +6259,10 @@ describe("a provider rate limit", () => {
       assert.ok(
         lines.includes("error: rawphp/softfac: cannot read the T3 project's model: store down"),
         lines.join("\n"),
+      );
+      assert.deepEqual(
+        fake.events.filter((e) => e.event === "claim_skipped"),
+        [{ event: "claim_skipped", data: { repo: REPO, reason: "model-unread" } }],
       );
     }),
   );

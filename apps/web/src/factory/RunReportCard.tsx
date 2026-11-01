@@ -4,7 +4,7 @@ import { cn } from "~/lib/utils";
 
 import type { FactoryEntry } from "./api";
 import { FactoryCard, FactoryCardHeader } from "./FactoryCard";
-import { prRef, prUrlOf } from "./format";
+import { plural, prRef, prUrlOf } from "./format";
 import { Ref } from "./Ref";
 import { runReport, type ReportMarkKind, type ReportStage } from "./runReport";
 import { formatSpan } from "./runStory";
@@ -21,8 +21,6 @@ const MARK: Record<ReportMarkKind, string> = {
   feedback: "bg-warning",
   "base-moved": "bg-muted-foreground/60",
 };
-
-const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 const percent = (part: number, whole: number) => (whole > 0 ? (part / whole) * 100 : 0);
 

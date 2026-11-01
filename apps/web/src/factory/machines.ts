@@ -1,5 +1,5 @@
 import type { FactoryStatus } from "./api";
-import { formatClock } from "./belt";
+import { clockOfIso } from "./belt";
 import { machineHold } from "./machineHealth";
 
 export type MachineTone = "loading" | "down" | "running" | "paused" | "idle" | "held";
@@ -13,8 +13,8 @@ export interface MachineLine {
 }
 
 const since = (iso: string): string | null => {
-  const ms = Date.parse(iso);
-  return Number.isNaN(ms) ? null : `since ${formatClock(ms)}`;
+  const clock = clockOfIso(iso);
+  return clock === null ? null : `since ${clock}`;
 };
 
 /**

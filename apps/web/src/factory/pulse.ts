@@ -3,7 +3,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import type { FactoryStatus } from "./api";
 import { causeCount } from "./attentionCauses";
 import { issueOf, stationOf, STATIONS, type Station } from "./belt";
-import { parseRunId } from "./format";
+import { parseRunId, plural } from "./format";
 import { machineHold } from "./machineHealth";
 
 /** Why an environment takes no new issue now; the order is the one a person reads first. */
@@ -68,8 +68,6 @@ const holdOf = (status: FactoryStatus): PulseHold | null =>
 /** Nearest to done first, then the longest at it. */
 const order = (a: PulseRun, b: PulseRun): number =>
   STATIONS.indexOf(b.station) - STATIONS.indexOf(a.station) || (b.forMs ?? 0) - (a.forMs ?? 0);
-
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /**
  * The factory at a glance over every environment that answered, for the sidebar's Factory item;

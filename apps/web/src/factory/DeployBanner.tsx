@@ -16,15 +16,10 @@ import {
 import { Button } from "~/components/ui/button";
 
 import type { FactoryStatus } from "./api";
-import { formatClock, STATION_META } from "./belt";
+import { clockOfIso, formatClock, STATION_META } from "./belt";
 import { formatAge } from "./format";
 import { runsInProgress } from "./updateInterrupts";
 import { updateWait, type UpdateBlocker } from "./updateWait";
-
-const clockOf = (iso: string | null) => {
-  const ms = iso === null ? Number.NaN : Date.parse(iso);
-  return Number.isNaN(ms) ? null : formatClock(ms);
-};
 
 /**
  * The selected environment's waiting update: which build, how it holds claims, and Snooze 1 hour
@@ -70,8 +65,8 @@ export function DeployBanner({
   // that sends no count asks only for runs.
   const threads = status.threads === undefined ? 0 : status.threads.running;
   const build = pending.commit ? `Build ${pending.commit.slice(0, 7)}` : "A new build";
-  const snoozedUntil = clockOf(pending.snoozed_until);
-  const deployBy = clockOf(pending.deploy_by);
+  const snoozedUntil = clockOfIso(pending.snoozed_until);
+  const deployBy = clockOfIso(pending.deploy_by);
   const title = snoozedUntil !== null ? `Update snoozed until ${snoozedUntil}.` : "Update waiting.";
   const wait = snoozedUntil === null ? updateWait(status, nowMs) : null;
   // The track names the latest install time; without one, the sentence does.

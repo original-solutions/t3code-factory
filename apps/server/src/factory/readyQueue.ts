@@ -15,7 +15,15 @@ const READS_NO_ISSUE = new Set([
   "high-load",
   "deploy-pending",
   "cooling-down",
+  // Stopped before every issue was tried, so what it did not reach says nothing.
+  "late",
 ]);
+
+/** A repo whose ready list or model a pass could not read: its waits carry over from before. */
+const REPO_UNREAD = new Set(["list-failed", "model-unread"]);
+
+/** An issue whose blockers a pass could not read: its wait carries over from before. */
+const ISSUE_UNREAD = "read-failed";
 
 /** How far back the log is read at most: a factory held for longer shows no queue. */
 const WINDOW_MS = 14 * 86_400_000;
@@ -59,6 +67,9 @@ interface Pass {
   readonly holds: Array<string>;
   /** The claim step read the ready lists (`ready_listed`). */
   listed: boolean;
+  /** Repos and `repo#issue` keys it could not read, so it says nothing of them. */
+  readonly unreadRepos: Set<string>;
+  readonly unreadIssues: Set<string>;
   /** `repo#issue` to its skip, newest line first as read. */
   readonly issues: Map<string, { repo: string; issue: string; reason: string; ms: number }>;
   readonly repos: Map<string, string>;
@@ -72,6 +83,10 @@ export const readReadyQueue = (dataDir: string, nowMs: number): ReadyQueue => {
   let newest: Pass | null = null;
   let checked: Pass | null = null;
   const streaks = new Map<string, { since: number; passes: number; open: boolean }>();
+  // The newest listing pass's waits, and those carried from older passes for what it could not read.
+  const waiting = new Map<string, { repo: string; issue: string; reason: string; ms: number }>();
+  let carryRepos = new Set<string>();
+  let carryIssues = new Set<string>();
   const turnedAway: Array<ReadyQueue["turned_away"][number]> = [];
   const turnedAwaySeen = new Set<string>();
   // The pass being read, newest line first: opened by its end, closed by its start.
@@ -82,21 +97,33 @@ export const readReadyQueue = (dataDir: string, nowMs: number): ReadyQueue => {
     if (pass.holds.some((hold) => READS_NO_ISSUE.has(hold))) return;
     // A log from before `ready_listed` shows a read list only by an issue it skipped.
     if (!pass.listed && pass.issues.size === 0) return;
+    const unread = (key: string, repo: string) =>
+      pass.unreadRepos.has(repo) || pass.unreadIssues.has(key);
     if (checked === null) {
       checked = pass;
-      for (const [key, skip] of pass.issues)
+      for (const [key, skip] of pass.issues) {
+        waiting.set(key, skip);
         streaks.set(key, { since: skip.ms, passes: 1, open: true });
+      }
+      carryRepos = new Set(pass.unreadRepos);
+      carryIssues = new Set(pass.unreadIssues);
       return;
     }
     for (const [key, streak] of streaks) {
       if (!streak.open) continue;
       const skip = pass.issues.get(key);
-      if (skip === undefined) streak.open = false;
-      else {
+      if (skip !== undefined) {
         streak.since = skip.ms;
         streak.passes += 1;
-      }
+      } else if (!unread(key, waiting.get(key)!.repo)) streak.open = false;
     }
+    for (const [key, skip] of pass.issues) {
+      if (streaks.has(key) || !(carryRepos.has(skip.repo) || carryIssues.has(key))) continue;
+      waiting.set(key, skip);
+      streaks.set(key, { since: skip.ms, passes: 1, open: true });
+    }
+    carryRepos = new Set([...carryRepos].filter((repo) => pass.unreadRepos.has(repo)));
+    carryIssues = new Set([...carryIssues].filter((key) => pass.unreadIssues.has(key)));
   };
 
   let lines = 0;
@@ -127,6 +154,8 @@ export const readReadyQueue = (dataDir: string, nowMs: number): ReadyQueue => {
         endMs: entry.ms,
         holds: entry.event === "preflight_failed" ? ["preflight"] : [],
         listed: false,
+        unreadRepos: new Set(),
+        unreadIssues: new Set(),
         issues: new Map(),
         repos: new Map(),
       };
@@ -142,7 +171,10 @@ export const readReadyQueue = (dataDir: string, nowMs: number): ReadyQueue => {
       if (reason === null) return "continue";
       if (repo === null) {
         if (!current.holds.includes(reason)) current.holds.unshift(reason);
-      } else if (issue === null) current.repos.set(repo, reason);
+      } else if (issue === null) {
+        current.repos.set(repo, reason);
+        if (REPO_UNREAD.has(reason)) current.unreadRepos.add(repo);
+      } else if (reason === ISSUE_UNREAD) current.unreadIssues.add(`${repo}#${issue}`);
       else if (reason !== "unapproved" && !current.issues.has(`${repo}#${issue}`)) {
         current.issues.set(`${repo}#${issue}`, { repo, issue, reason, ms: entry.ms });
       }
@@ -151,7 +183,11 @@ export const readReadyQueue = (dataDir: string, nowMs: number): ReadyQueue => {
       const reason = text(field(entry.data, "reason"));
       if (repo !== null && reason !== null) current.repos.set(repo, reason);
     }
-    const settled = checked !== null && [...streaks.values()].every((streak) => !streak.open);
+    const settled =
+      checked !== null &&
+      carryRepos.size === 0 &&
+      carryIssues.size === 0 &&
+      [...streaks.values()].every((streak) => !streak.open);
     return settled && entry.ms < nowMs - TURNED_AWAY_MS ? "stop" : "continue";
   });
 
@@ -164,7 +200,7 @@ export const readReadyQueue = (dataDir: string, nowMs: number): ReadyQueue => {
     waiting:
       read === null
         ? []
-        : [...read.issues]
+        : [...waiting]
             .map(([key, { repo, issue, reason }]) => {
               const streak = streaks.get(key)!;
               return {

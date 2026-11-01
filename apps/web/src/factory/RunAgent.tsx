@@ -5,7 +5,7 @@ import { cn } from "~/lib/utils";
 import { useQuietThreadShell, useThreadShell } from "~/state/entities";
 
 import { agentPulse, type AgentPulse, type AgentTone } from "./agentPulse";
-import { formatClock } from "./belt";
+import { clockOfIso } from "./belt";
 import type { BeltColour } from "./runTrack";
 
 /** The agent's state in the belt's colours: working is Building, waiting on a person Needs info. */
@@ -14,11 +14,6 @@ export const AGENT_STATION: Record<AgentTone, BeltColour | null> = {
   waiting: "info",
   failed: "stuck",
   ended: null,
-};
-
-const clockOf = (iso: string | null): string | null => {
-  const ms = iso === null ? Number.NaN : Date.parse(iso);
-  return Number.isNaN(ms) ? null : formatClock(ms);
 };
 
 /** A static dot in the agent's tone; it never animates, so a list of them costs no paint. */
@@ -60,8 +55,8 @@ export function RunAgentLine({
   // The live shell, so the item count climbs as the agent works; one row on a page.
   const pulse = agentPulse(useThreadShell(scopeThreadRef(environmentId, threadId as ThreadId)));
   if (pulse === null) return null;
-  const since = clockOf(pulse.since);
-  const lastAt = clockOf(pulse.lastActivity);
+  const since = clockOfIso(pulse.since);
+  const lastAt = clockOfIso(pulse.lastActivity);
   return (
     <div
       aria-label="Agent"

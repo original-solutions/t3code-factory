@@ -20,6 +20,7 @@ import "./belt.css";
 import { FactoryCard, FactoryCardHeader } from "./FactoryCard";
 import { parseRunId } from "./format";
 import { runLinkKey, runQueue, type QueueOrigin } from "./runQueue";
+import { formatSpanMinutes } from "./runStory";
 import {
   causesInWeek,
   factoryTrends,
@@ -56,15 +57,7 @@ const STACK: ReadonlyArray<{ outcome: TrendOutcome; color: string; word: string 
 ];
 
 const percent = (rate: number | null) => (rate === null ? "-" : `${Math.round(rate * 100)}%`);
-/** Minutes are as fine as a week's trend needs: `<1m`, `42m`, `1h 52m`, `2d 3h`. */
-const formatSpan = (ms: number) => {
-  const m = Math.floor(ms / 60_000);
-  if (m < 1) return "<1m";
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  return h < 24 ? `${h}h ${m % 60}m` : `${Math.floor(h / 24)}d ${h % 24}h`;
-};
-const span = (ms: number | null) => (ms === null ? "-" : formatSpan(ms));
+const span = (ms: number | null) => (ms === null ? "-" : formatSpanMinutes(ms));
 
 const weekLabel = (week: TrendWeek, last: boolean) =>
   last
@@ -153,7 +146,7 @@ function Figures({ now, before }: { now: TrendFigures; before: TrendFigures | nu
           before?.mergeMs ?? null,
           true,
           0.1 * (before?.mergeMs ?? 0),
-          formatSpan,
+          formatSpanMinutes,
         )}
         label="Claim to merge"
         note={before === null ? first : "nothing merged yet"}

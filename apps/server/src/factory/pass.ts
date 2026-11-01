@@ -2241,6 +2241,7 @@ const claim = Effect.fn("Pass.claim")(function* (
         null,
         passError("tracker", `${name}: cannot list the ready issues: `, listing.failure.message),
       );
+      yield* pass.record({ event: "claim_skipped", data: { repo: name, reason: "list-failed" } });
       continue;
     }
     pass.sayIfCut(name, "ready", listing.success.cut);
@@ -2265,6 +2266,10 @@ const claim = Effect.fn("Pass.claim")(function* (
         const what = `${queue.repo.watched.repo}: cannot read the T3 project's model: `;
         yield* pass.fail(null, passError(read.failure.kind, what, read.failure.message));
         queue.issues.length = 0;
+        yield* pass.record({
+          event: "claim_skipped",
+          data: { repo: queue.repo.watched.repo, reason: "model-unread" },
+        });
       } else if (
         read.success !== null &&
         launchModel(world.cooldowns, pass.fallbacks, read.success, now) === null
@@ -2334,8 +2339,13 @@ const claim = Effect.fn("Pass.claim")(function* (
       }
       continue;
     }
-    // A blocked issue takes no slot. Nothing is written for it, and a read that fails holds it
-    // back too. The `## Depends on` text is read only when no linked blocker is open.
+    // A blocked issue takes no slot, and a read that fails holds it back too, written as
+    // `read-failed` so the Queue keeps its wait. `## Depends on` is read only with no linked blocker open.
+    const unread = () =>
+      pass.record({
+        event: "claim_skipped",
+        data: { repo: name, issue: String(issue), reason: "read-failed" },
+      });
     const linked = yield* Effect.result(world.openBlockers(repo, issue));
     if (linked._tag === "Failure") {
       pass.trouble(
@@ -2345,6 +2355,7 @@ const claim = Effect.fn("Pass.claim")(function* (
         linked.failure.message,
       );
       yield* pass.flush(notes, null);
+      yield* unread();
       continue;
     }
     let blocked: string | null = null;
@@ -2360,6 +2371,7 @@ const claim = Effect.fn("Pass.claim")(function* (
           text.failure.message,
         );
         yield* pass.flush(notes, null);
+        yield* unread();
         continue;
       }
       if (text.success.length > 0) blocked = blockedBy(name, text.success, FROM_TEXT);

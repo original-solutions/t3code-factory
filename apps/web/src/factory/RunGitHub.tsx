@@ -12,6 +12,7 @@ import { FactoryCard, FactoryCardHeader } from "./FactoryCard";
 import type { LinkRef } from "./format";
 import { gitHubView, isLongText, splitPath, topFiles } from "./gitHubView";
 import { useFactoryRunGitHub } from "./useFactoryData";
+import { plural } from "./format";
 
 type Ok<P> = Extract<NonNullable<P>, { kind: "ok" }>;
 type IssueOk = Ok<FactoryRunGitHub["issue"]>;
@@ -27,8 +28,6 @@ const REVIEW: Record<string, { word: string; variant: "success" | "warning" | "s
   changes_requested: { word: "Changes requested", variant: "warning" },
   review_required: { word: "Review required", variant: "secondary" },
 };
-
-const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 function OpenOnGitHub({ link }: { link: LinkRef | null }) {
   if (link?.href == null) return null;

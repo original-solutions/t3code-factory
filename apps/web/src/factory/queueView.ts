@@ -107,6 +107,8 @@ const REPO_WORDS: Readonly<Record<string, string>> = {
   "config-not-loaded": "its .dw/config.yml could not be read",
   "ambiguous-project": "more than one T3 project points at it",
   "not-owner": "factory.owner names another machine",
+  "list-failed": "its factory:ready issues could not be listed; the waits shown are from before",
+  "model-unread": "its T3 project's model could not be read; the waits shown are from before",
 };
 
 const sameRepo = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();

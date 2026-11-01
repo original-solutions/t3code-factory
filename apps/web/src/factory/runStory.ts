@@ -30,6 +30,15 @@ export interface RunStory {
   readonly tookMs: number | null;
 }
 
+/** A span to the minute, as fine as a week's trend needs: `<1m`, `42m`, `1h 52m`, `2d 3h`. */
+export function formatSpanMinutes(ms: number): string {
+  const m = Math.floor(ms / 60_000);
+  if (m < 1) return "<1m";
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return h < 24 ? `${h}h ${m % 60}m` : `${Math.floor(h / 24)}d ${h % 24}h`;
+}
+
 /** A span of time as `0.4s`, `26s`, `9m 14s`, `2h 48m` or `3d 5h`. */
 export function formatSpan(ms: number): string {
   if (ms < 10_000) return `${Number((ms / 1000).toFixed(1))}s`;

@@ -1,9 +1,10 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { ArrowDownIcon, ExternalLinkIcon, MessageSquareIcon } from "lucide-react";
+import { ArrowDownIcon, ChevronRightIcon, ExternalLinkIcon, MessageSquareIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "~/components/ui/collapsible";
 
 import { FactoryCard, FactoryCardHeader } from "./FactoryCard";
 import type { LinkRef } from "./format";
@@ -146,14 +147,19 @@ export function RunNextStep({
         </Step>
       </ol>
       {step.detail && questions.length > 0 ? (
-        <details className="border-t bg-muted/30 px-4 py-3">
-          <summary className="cursor-pointer text-xs font-medium text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-            The session's whole comment on the issue
-          </summary>
-          <p className="mt-1.5 max-h-80 overflow-auto whitespace-pre-wrap break-words text-sm">
-            {step.detail}
-          </p>
-        </details>
+        <div className="border-t bg-muted/30 px-4 py-3">
+          <Collapsible>
+            <CollapsibleTrigger className="group/comment flex items-center gap-1.5 rounded-sm text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+              <ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-data-panel-open/comment:rotate-90" />
+              The session's whole comment on the issue
+            </CollapsibleTrigger>
+            <CollapsiblePanel animate={false}>
+              <p className="mt-1.5 max-h-80 overflow-auto whitespace-pre-wrap break-words text-sm">
+                {step.detail}
+              </p>
+            </CollapsiblePanel>
+          </Collapsible>
+        </div>
       ) : step.detail ? (
         <div className="flex flex-col gap-1.5 border-t bg-muted/30 px-4 py-3">
           <p className="text-xs font-medium text-muted-foreground">
