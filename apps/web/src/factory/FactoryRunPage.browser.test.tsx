@@ -678,6 +678,8 @@ describe("FactoryRunPage opened from a list", () => {
         },
       },
     });
+    // The body renders through a lazy ChatMarkdown; load it first so its import never races the wait.
+    await import("~/components/ChatMarkdown");
     await using page = await mount();
     await showPart(page, "github");
     const issue = page.all('[aria-label="The issue"]')[0]!;
