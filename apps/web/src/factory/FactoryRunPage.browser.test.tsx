@@ -183,12 +183,12 @@ describe("FactoryRunPage", () => {
     using _state = setup();
     state.run = resource({ data: detail([]) });
     await using page = await mount();
-    expect(page.text()).toContain("no thread yet");
+    expect(page.all("a").some((a) => a.textContent === "Thread")).toBe(false);
     expect(page.text()).toContain("No gate has run");
     expect(page.text()).toContain("Nothing has happened yet");
     await openLedger(page);
     expect(page.text()).toContain("No ledger entries");
-    expect(page.button("Stop")!.disabled).toBe(true);
+    expect(page.button("Stop")).toBeUndefined();
   });
 
   it("shows the run, its state and step, its thread link, gate output and ledger", async () => {
@@ -400,13 +400,13 @@ describe("FactoryRunPage", () => {
     expect(page.text()).not.toContain("Step: pr-watching");
   });
 
-  it("disables Stop for a run that is not building, and drops it once the run is finished", async () => {
+  it("shows Stop only while the run is building and not finished", async () => {
     using _state = setup();
     state.run = resource({
       data: detail([...BUILDING, entry("state_changed", { from: "building", to: "pr-open" })]),
     });
     await using prOpen = await mount();
-    expect(prOpen.button("Stop")!.disabled).toBe(true);
+    expect(prOpen.button("Stop")).toBeUndefined();
     state.run = resource({ data: detail([...BUILDING, entry("finished", { outcome: "stuck" })]) });
     await using finished = await mount();
     expect(finished.button("Stop")).toBeUndefined();

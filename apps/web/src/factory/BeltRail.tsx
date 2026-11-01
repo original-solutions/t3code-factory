@@ -20,6 +20,7 @@ import {
 import { BeltDot } from "./BeltDot";
 import { BeltReadout, READOUT_ID } from "./BeltReadout";
 import { formatAge } from "./format";
+import type { RunStop } from "./RunActionBar";
 
 /** A tile is this wide and the gap between tiles this wide, in px: they set how many a lane fits. */
 const TILE_PX = 60;
@@ -321,8 +322,7 @@ export function BeltRail({
   nowMs,
   open,
   onOpenChange,
-  stopping,
-  onStop,
+  stopOf,
   tileRef,
 }: {
   belt: Belt;
@@ -334,9 +334,7 @@ export function BeltRail({
   nowMs: number;
   open: Station | null;
   onOpenChange: (station: Station | null) => void;
-  /** The runs with a stop in flight, by key. */
-  stopping: ReadonlySet<string>;
-  onStop: (run: BeltRun) => void;
+  stopOf: (run: BeltRun) => RunStop;
   /** On every tile: how the belt's motion finds the element of a run. */
   tileRef: RefCallback<HTMLElement>;
 }) {
@@ -378,11 +376,10 @@ export function BeltRail({
             <BeltReadout
               column={PLACEMENT[station].column}
               nowMs={nowMs}
-              onStop={onStop}
               runs={belt.runs[station]}
               selectedId={selectedId}
               station={station}
-              stopping={stopping}
+              stopOf={stopOf}
             />
           ) : null}
         </Fragment>

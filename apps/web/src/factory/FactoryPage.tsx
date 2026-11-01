@@ -18,7 +18,9 @@ import { FactoryFrame } from "./FactoryFrame";
 import { FactoryError, FactoryLoading, FactoryReadFailure } from "./FactoryNotices";
 import { messageOf, parseRunId } from "./format";
 import { bucketOf, countBuckets, matchesQuery } from "./runLedger";
+import { runLinkKey } from "./runQueue";
 import { RunsTable } from "./RunsTable";
+import { useRunStop } from "./RunActionBar";
 import type { FactorySearch } from "./search";
 import {
   STATUS_POLL_MS,
@@ -112,6 +114,13 @@ export function FactoryPage() {
   const returned = useRouterState({ select: ({ location }) => location.state.factoryReturn });
   // Typed on this page only: the runs chip is in the URL, a half-typed search is not.
   const [query, setQuery] = useState(() => returned?.query ?? "");
+  const stopOf = useRunStop(({ environmentId, label, message }) => {
+    setNote(`${label}: ${message}`);
+    environments
+      .find((environment) => environment.environmentId === environmentId)
+      ?.status.refresh();
+    runsById.get(environmentId)?.refresh();
+  });
 
   const togglePause = async ({ environmentId, status }: FactoryEnvironment) => {
     const paused = status.data?.paused_by_hand != null;
@@ -180,6 +189,14 @@ export function FactoryPage() {
     ...recentOf.map(({ readAt }) => readAt),
   );
   const showEnvironment = environments.length > 1;
+  // The status report names the thread of each unfinished run; the runs list does not.
+  const threads = new Map(
+    environments.flatMap(({ environmentId, status }) =>
+      (status.data?.runs ?? []).flatMap((run) =>
+        run.thread_id ? [[runLinkKey(environmentId, run.id), run.thread_id] as const] : [],
+      ),
+    ),
+  );
   const listedRuns = answered.flatMap(({ environmentId, label }, i) =>
     (runsOf[i]?.data?.runs ?? []).map((run) => {
       const parsed = parseRunId(run.id);
@@ -342,6 +359,10 @@ export function FactoryPage() {
             partial={!allRuns}
             runs={runs}
             showEnvironment={showEnvironment}
+            stopOf={stopOf}
+            threadOf={(environmentId, runId) =>
+              threads.get(runLinkKey(environmentId, runId)) ?? null
+            }
           />
         ) : null}
       </>

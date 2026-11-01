@@ -1074,8 +1074,7 @@ describe("FactoryPage filters", () => {
   // The runs table's links only; an attention item's View run links to the same route.
   const runLinks = (page: Awaited<ReturnType<typeof render>>) =>
     page
-      .all("table a")
-      .filter((a) => a.getAttribute("data-to") === "/factory/$environmentId/$runId")
+      .all("table a[data-run-link]")
       .map((a) => JSON.parse(a.getAttribute("data-params")!).runId as string);
   const pick = async (select: string, option: string) => {
     await userEvent.click(browser.getByRole("combobox", { name: select }));

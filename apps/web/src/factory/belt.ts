@@ -89,8 +89,9 @@ export interface BeltRun {
   readonly prUrl: string | null;
   /** For the bins: why a run is stuck, or the questions it posted. */
   readonly reason: string | null;
-  /** Whether the run page would enable its Stop: a building run that is not finished. */
-  readonly stoppable: boolean;
+  readonly finished: boolean;
+  /** The session's thread, which the status report names for a run that is not finished. */
+  readonly threadId: string | null;
 }
 
 export interface Belt {
@@ -182,7 +183,8 @@ export function deriveBelt(environments: ReadonlyArray<BeltEnvironment>, nowMs: 
       forMs: null,
       prUrl: row?.pr_url ?? null,
       reason: null,
-      stoppable: false,
+      finished: row?.finished ?? false,
+      threadId: null,
       ...rest,
     });
 
@@ -198,7 +200,8 @@ export function deriveBelt(environments: ReadonlyArray<BeltEnvironment>, nowMs: 
         step: row?.step ?? run.state,
         forMs: run.for_ms,
         prUrl: run.pr_url ?? row?.pr_url ?? null,
-        stoppable: run.state === "building",
+        finished: false,
+        threadId: run.thread_id,
       });
       lanes[station].push(made);
       ranked.push({ station, startedMs: made.startedMs });
@@ -212,6 +215,7 @@ export function deriveBelt(environments: ReadonlyArray<BeltEnvironment>, nowMs: 
           run: beltRun(row.id, row, {
             step: shownState(row.state, row.pr_end),
             forMs: row.total_ms,
+            finished: true,
           }),
           finishedMs,
         });

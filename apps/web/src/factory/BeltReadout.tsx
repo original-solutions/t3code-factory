@@ -2,7 +2,6 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 
 import { Badge } from "~/components/ui/badge";
-import { Button } from "~/components/ui/button";
 import {
   Table,
   TableBody,
@@ -15,8 +14,9 @@ import { cn } from "~/lib/utils";
 
 import { STATION_META, type BeltRun, type Station } from "./belt";
 import { BeltDot } from "./BeltDot";
-import { formatAge, prRef } from "./format";
-import { Ref } from "./Ref";
+import { formatAge } from "./format";
+import { RunActions, type RunStop } from "./RunActionBar";
+import { runActions } from "./runActions";
 
 /** The id of the one open readout, which the picked post names in `aria-controls`. */
 export const READOUT_ID = "factory-readout";
@@ -26,8 +26,8 @@ const WIDE_ONLY = "hidden @3xl:table-cell";
 
 /**
  * The open post's runs as a table under the rail, with a notch in the post's own column. A row
- * links to its run, stretched over the row; Stop (enabled as the run page enables it, answered by
- * the belt) and the PR link sit above it. Narrow, env, step and PR stack under the title.
+ * links to its run, stretched over the row; the run's actions (thread, PR, Stop where they can work,
+ * as everywhere a run is shown) sit above it. Narrow, env and step stack under the title.
  */
 export function BeltReadout({
   station,
@@ -35,8 +35,7 @@ export function BeltReadout({
   selectedId,
   nowMs,
   column,
-  stopping,
-  onStop,
+  stopOf,
 }: {
   station: Station;
   runs: ReadonlyArray<BeltRun>;
@@ -44,9 +43,8 @@ export function BeltReadout({
   nowMs: number;
   /** The wide belt's column class of the picked post, which the notch takes. */
   column: string;
-  /** The runs with a stop in flight, by key: one row's Stop never disables another's. */
-  stopping: ReadonlySet<string>;
-  onStop: (run: BeltRun) => void;
+  /** How a row's Stop stops its run; a row shows Stop only when {@link runActions} offers it. */
+  stopOf: (run: BeltRun) => RunStop;
 }) {
   const { name, tag } = STATION_META[station];
 
@@ -89,15 +87,14 @@ export function BeltReadout({
               <TableHead className={WIDE_ONLY}>Env</TableHead>
               <TableHead className={WIDE_ONLY}>Step</TableHead>
               <TableHead>Elapsed</TableHead>
-              <TableHead className={WIDE_ONLY}>PR</TableHead>
               <TableHead>
-                <span className="sr-only">Stop</span>
+                <span className="sr-only">Actions</span>
               </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {runs.map((run) => {
-              const pr = prRef(run.prUrl);
+              const actions = runActions(run).filter((action) => action.kind !== "issue");
               return (
                 <TableRow className="relative" key={run.key}>
                   <TableCell>
@@ -117,11 +114,6 @@ export function BeltReadout({
                         {run.label}
                       </span>
                       <span className="font-mono">{run.step ?? "-"}</span>
-                      {pr ? (
-                        <span className="relative z-10">
-                          <Ref {...pr} />
-                        </span>
-                      ) : null}
                     </span>
                   </TableCell>
                   <TableCell className={WIDE_ONLY}>
@@ -138,26 +130,16 @@ export function BeltReadout({
                       {run.forMs === null ? "-" : formatAge(nowMs - run.forMs, nowMs)}
                     </span>
                   </TableCell>
-                  <TableCell className={WIDE_ONLY}>
-                    {pr ? (
-                      <span className="relative z-10">
-                        <Ref {...pr} />
-                      </span>
-                    ) : (
-                      "-"
-                    )}
-                  </TableCell>
                   <TableCell className="text-right">
                     <span className="relative z-10">
-                      <Button
-                        aria-label={`Stop ${run.issue}`}
-                        disabled={!run.stoppable || stopping.has(run.key)}
-                        onClick={() => onStop(run)}
-                        size="sm"
-                        variant="destructive-outline"
-                      >
-                        Stop
-                      </Button>
+                      <RunActions
+                        actions={actions}
+                        className="justify-end @3xl:flex-nowrap"
+                        environmentId={run.environmentId}
+                        label={run.issue}
+                        runId={run.id}
+                        stop={stopOf(run)}
+                      />
                     </span>
                   </TableCell>
                 </TableRow>

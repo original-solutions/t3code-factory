@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { flushSync } from "react-dom";
 
 import { useMediaQuery } from "~/hooks/useMediaQuery";
@@ -30,7 +30,10 @@ import {
   shownState,
   stateBadgeVariant,
 } from "./format";
+import { issueOf, newestAttempts } from "./belt";
 import { Ref } from "./Ref";
+import { RunActions, type RunStop } from "./RunActionBar";
+import { runActions, type RunActionKind } from "./runActions";
 import {
   LEDGER_PAGE,
   RUN_BUCKETS,
@@ -74,15 +77,15 @@ function RunCard({
   showEnvironment,
   nowMs,
   queue,
+  actionsOf,
 }: {
   entry: EnvironmentRun;
   showEnvironment: boolean;
   nowMs: number;
   queue: RunQueue;
+  actionsOf: RunActionsOf;
 }) {
   const parsed = parseRunId(run.id);
-  const issue = parsed ? issueRef(`${parsed.owner}/${parsed.repo}`, parsed.issue) : null;
-  const pr = prRef(run.pr_url);
   return (
     <li className="flex flex-col rounded-lg border bg-card text-sm">
       <Link
@@ -107,15 +110,23 @@ function RunCard({
           {showEnvironment ? <span className="min-w-0 break-words">{label}</span> : null}
         </span>
       </Link>
-      {issue || pr ? (
-        <span className="flex flex-wrap items-center gap-x-4 px-3 text-xs text-muted-foreground">
-          {issue ? <Ref {...issue} touch /> : null}
-          {pr ? <Ref {...pr} touch /> : null}
-        </span>
-      ) : null}
+      <span className="flex px-3 text-xs text-muted-foreground empty:hidden">
+        {actionsOf(environmentId, run, { touch: true })}
+      </span>
     </li>
   );
 }
+
+/** A run's actions as the list shows them, or null when none can work. */
+type RunActionsOf = (
+  environmentId: EnvironmentId,
+  run: FactoryRunRow,
+  options?: {
+    readonly touch?: boolean;
+    readonly omit?: ReadonlyArray<RunActionKind>;
+    readonly className?: string;
+  },
+) => ReactNode;
 
 /** The ledger's filter row: a state chip per bucket with its count, and a search box. */
 function LedgerToolbar({
@@ -231,6 +242,8 @@ export function RunsTable({
   onQuery,
   origin,
   returnFocus,
+  threadOf,
+  stopOf,
 }: {
   runs: ReadonlyArray<EnvironmentRun>;
   /** Whether several environments are listed, so a run says which one it is from. */
@@ -251,7 +264,44 @@ export function RunsTable({
   origin: QueueOrigin;
   /** The run a run page came back from (`runLinkKey`): it takes the focus once, on mount. */
   returnFocus?: string | undefined;
+  /** The session thread the status report names for an unfinished run; null where it names none. */
+  threadOf: (environmentId: EnvironmentId, runId: string) => string | null;
+  /** How a row's Stop stops its run; a row shows Stop only when {@link runActions} offers it. */
+  stopOf: (environmentId: EnvironmentId, runId: string, label: string) => RunStop;
 }) {
+  // Of each environment's runs listed, the newest attempt of each issue; an older attempt's next
+  // step is already taken.
+  const latest = new Set(
+    [...new Set(runs.map(({ environmentId }) => environmentId))].flatMap((environmentId) =>
+      newestAttempts(
+        runs.filter((entry) => entry.environmentId === environmentId).map(({ run }) => run),
+      ).map(({ id }) => runLinkKey(environmentId, id)),
+    ),
+  );
+  const actionsOf: RunActionsOf = (environmentId, run, options = {}) => {
+    const { touch = false, omit = [], className } = options;
+    if (run.unreadable) return null;
+    const actions = runActions({
+      id: run.id,
+      state: run.state,
+      finished: run.finished,
+      prUrl: run.pr_url,
+      threadId: run.finished ? null : threadOf(environmentId, run.id),
+      superseded: !latest.has(runLinkKey(environmentId, run.id)),
+    }).filter((action) => !omit.includes(action.kind));
+    const label = issueOf(run.id);
+    return (
+      <RunActions
+        actions={actions}
+        className={className}
+        environmentId={environmentId}
+        label={label}
+        runId={run.id}
+        stop={stopOf(environmentId, run.id, label)}
+        touch={touch}
+      />
+    );
+  };
   const cards = useMediaQuery("max-sm");
   // The page size grows with Show more and with j past the last run; a new filter starts over.
   const listKey = JSON.stringify([origin, partial]);
@@ -399,6 +449,7 @@ export function RunsTable({
                 nowMs={nowMs}
                 queue={queue}
                 showEnvironment={showEnvironment}
+                actionsOf={actionsOf}
               />
             )),
           ])}
@@ -407,7 +458,7 @@ export function RunsTable({
       </div>
     );
   }
-  const columns = showEnvironment ? 7 : 6;
+  const columns = showEnvironment ? 8 : 7;
   return (
     <div className="contents" data-ledger="" ref={ledger}>
       {toolbar}
@@ -422,6 +473,9 @@ export function RunsTable({
             <TableHead>Step</TableHead>
             <TableHead>Age</TableHead>
             <TableHead>Pull request</TableHead>
+            <TableHead>
+              <span className="sr-only">Actions</span>
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -461,6 +515,12 @@ export function RunsTable({
                   <TableCell>{run.step ?? run.last_event ?? "-"}</TableCell>
                   <TableCell>{formatAge(startedMs(run), nowMs)}</TableCell>
                   <TableCell>{pr ? <Ref {...pr} /> : "-"}</TableCell>
+                  <TableCell className="text-right">
+                    {actionsOf(environmentId, run, {
+                      omit: ["issue", "pr"],
+                      className: "flex-nowrap",
+                    })}
+                  </TableCell>
                 </TableRow>
               );
             }),

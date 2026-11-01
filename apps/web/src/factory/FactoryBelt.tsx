@@ -7,7 +7,7 @@ import { Switch } from "~/components/ui/switch";
 import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 
 import { factoryApi, type FactoryRunRow, type FactoryStatus } from "./api";
-import { beltColumns, deriveBelt, nextPassText, type BeltRun, type Station } from "./belt";
+import { beltColumns, deriveBelt, nextPassText, type Station } from "./belt";
 import "./belt.css";
 import { BeltDot } from "./BeltDot";
 import { BeltLowerRow, type EnvironmentAttention } from "./BeltLowerRow";
@@ -19,6 +19,7 @@ import { dayStrip, type DayStrip as Strip } from "./dayStrip";
 import { TodayStrip } from "./TodayStrip";
 import { FactoryReadFailure } from "./FactoryNotices";
 import { messageOf } from "./format";
+import { useRunStop } from "./RunActionBar";
 import { TouchLink } from "./TouchLink";
 import type { FactoryEnvironment, FactoryResource } from "./useFactoryData";
 
@@ -286,10 +287,14 @@ export function FactoryBelt({
   const [pickedId, setPickedId] = useState<EnvironmentId | null>(null);
   // The open post: undefined until the rail first has something to look at, then the user's.
   const [open, setOpen] = useState<Station | null | undefined>(undefined);
-  // The runs with a stop in flight, and the answer of the latest stop, which names its run: they
-  // outlive the readout.
-  const [stopping, setStopping] = useState<ReadonlySet<string>>(() => new Set());
+  // The answer of the latest stop, which names its run: it outlives the readout.
   const [stopNote, setStopNote] = useState<string | null>(null);
+  const stopRun = useRunStop(({ environmentId, label, message }) => {
+    setStopNote(`${label}: ${message}`);
+    environments
+      .find((environment) => environment.environmentId === environmentId)
+      ?.status.refresh();
+  });
   // The environments with a snooze or Update now in flight, the accepted Update nows, and each
   // environment's answer to its latest one that failed.
   const [deployBusy, setDeployBusy] = useState<ReadonlySet<EnvironmentId>>(() => new Set());
@@ -324,27 +329,6 @@ export function FactoryBelt({
   if (settled !== updating) setUpdating(settled);
   if (selected === undefined) return null;
 
-  const stop = async ({ key, environmentId, id, issue }: BeltRun) => {
-    const mark = (member: boolean) =>
-      setStopping((current) => {
-        const next = new Set(current);
-        if (member) next.add(key);
-        else next.delete(key);
-        return next;
-      });
-    mark(true);
-    let answer: string;
-    try {
-      answer = (await factoryApi.stopRun(environmentId, id)).message;
-    } catch (error) {
-      answer = messageOf(error);
-    }
-    setStopNote(`${issue}: ${answer}`);
-    mark(false);
-    environments
-      .find((environment) => environment.environmentId === environmentId)
-      ?.status.refresh();
-  };
   const deploy = async ({ environmentId, status }: FactoryEnvironment, now: boolean) => {
     const shown = status.data?.deploy_pending?.commit ?? null;
     setDeployBusy((current) => withMember(current, environmentId, true));
@@ -443,11 +427,10 @@ export function FactoryBelt({
             known={known}
             nowMs={nowMs}
             onOpenChange={setOpen}
-            onStop={(run) => void stop(run)}
             open={open}
             claimsHeld={held !== null && !Number.isNaN(held.since) ? held : null}
             selectedId={selected.environmentId}
-            stopping={stopping}
+            stopOf={(run) => stopRun(run.environmentId, run.id, run.issue)}
             tileRef={tileRef}
           />
         ) : (

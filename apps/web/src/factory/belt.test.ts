@@ -17,6 +17,7 @@ import {
   type BeltEnvironment,
   type Place,
 } from "./belt";
+import { runActions } from "./runActions";
 
 const ENV_A = "env-a" as EnvironmentId;
 const ENV_B = "env-b" as EnvironmentId;
@@ -320,26 +321,29 @@ describe("deriveBelt rail", () => {
     expect(byId(2)).toMatchObject({ title: "From status", prUrl: "https://s/2" });
   });
 
-  it("can stop exactly the runs the run page can: building and not finished", () => {
+  it("offers Stop exactly where the run page does: building and not finished, never on Done", () => {
     const belt = deriveBelt(
       [
         environment(ENV_A, {
           active: [
-            active({ id: id(1), state: "building" }),
+            active({ id: id(1), state: "building", thread_id: "t-1" }),
             active({ id: id(2), state: "building", last_event: "gate_command" }),
             active({ id: id(3), state: "pr-open" }),
             active({ id: id(4), state: "triage" }),
           ],
+          recent: [finished(5, "merged", at(10), 3_600_000)],
         }),
       ],
       NOW,
     );
-    const stoppable = Object.values(belt.runs)
-      .flat()
-      .filter((run) => run.stoppable)
+    const all = Object.values(belt.runs).flat();
+    expect(all.map((run) => run.id)).toContain(id(5));
+    const stoppable = all
+      .filter((run) => runActions(run).some((action) => action.kind === "stop"))
       .map((run) => run.id)
       .toSorted();
     expect(stoppable).toEqual([id(1), id(2)]);
+    expect(all.find((run) => run.id === id(1))?.threadId).toBe("t-1");
   });
 });
 

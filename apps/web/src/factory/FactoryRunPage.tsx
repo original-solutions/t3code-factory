@@ -18,7 +18,7 @@ import {
   TableRow,
 } from "~/components/ui/table";
 
-import { FactoryApiError, factoryApi, type FactoryEntry } from "./api";
+import { FactoryApiError, type FactoryEntry } from "./api";
 import { FactoryFrame } from "./FactoryFrame";
 import { FactoryError, FactoryLoading, FactoryReadFailure } from "./FactoryNotices";
 import {
@@ -26,10 +26,8 @@ import {
   issueRef,
   labelForState,
   lastGateOutput,
-  messageOf,
   parseRunId,
   prEndOf,
-  prRef,
   prUrlOf,
   runIsFinished,
   runState,
@@ -37,7 +35,6 @@ import {
   stateBadgeVariant,
   threadIdOf,
 } from "./format";
-import { Ref } from "./Ref";
 import {
   runLinkKey,
   stepInQueue,
@@ -48,6 +45,8 @@ import {
 import { nextStep } from "./nextStep";
 import { GATE_OUTPUT_ID, RunNextStep } from "./RunNextStep";
 import { RunTimeline } from "./RunTimeline";
+import { RunActions, useRunStop } from "./RunActionBar";
+import { runActions } from "./runActions";
 import { TouchLink } from "./TouchLink";
 import { useFactoryEnvironmentLabel, useFactoryRun } from "./useFactoryData";
 
@@ -248,8 +247,11 @@ export function FactoryRunPage({
 }) {
   const run = useFactoryRun(environmentId, runId);
   const label = useFactoryEnvironmentLabel(environmentId);
-  const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const stopOf = useRunStop(({ message }) => {
+    setNote(message);
+    run.refresh();
+  });
   const navigate = useNavigate();
   // The list this run was opened from, if any: the header steps through it and goes back to it.
   const queue = useRouterState({ select: ({ location }) => location.state.factoryRunQueue });
@@ -277,29 +279,23 @@ export function FactoryRunPage({
     return true;
   });
 
-  const stop = async () => {
-    setBusy(true);
-    // No try/finally: the React Compiler cannot compile one.
-    const message = await factoryApi.stopRun(environmentId, runId).then(
-      (result) => result.message,
-      (error: unknown) => messageOf(error),
-    );
-    setNote(message);
-    setBusy(false);
-    run.refresh();
-  };
-
   const entries = run.data?.entries ?? [];
   const state = runState(entries);
   const shown = shownState(state, prEndOf(entries));
-  const canStop = run.data !== null && state === "building" && !runIsFinished(entries);
   // A finished run's last step is over; the runs list says finished too.
   const step = runIsFinished(entries) ? "finished" : currentStep(entries);
   const threadId = threadIdOf(entries);
   const parsed = parseRunId(runId);
   const issue = parsed ? issueRef(`${parsed.owner}/${parsed.repo}`, parsed.issue) : null;
-  const pr = prRef(prUrlOf(entries));
   const next = nextStep(entries);
+  // The Next step card is this page's own; every other action shows as it does on the belt and list.
+  const actions = runActions({
+    id: runId,
+    state,
+    finished: runIsFinished(entries),
+    prUrl: prUrlOf(entries),
+    threadId,
+  }).filter((action) => action.kind !== "next");
 
   let body;
   if (run.status === "error" && run.data === null) {
@@ -335,28 +331,16 @@ export function FactoryRunPage({
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
           <Badge variant={stateBadgeVariant(shown)}>{labelForState(shown)}</Badge>
           <span className="min-w-0 break-words text-muted-foreground">Step: {step ?? "-"}</span>
-          {threadId ? (
-            <TouchLink
-              render={<Link params={{ environmentId, threadId }} to="/$environmentId/$threadId" />}
-            >
-              Thread
-            </TouchLink>
-          ) : (
-            <span className="text-muted-foreground">no thread yet</span>
-          )}
-          {issue ? <Ref {...issue} touch /> : null}
-          {pr ? <Ref {...pr} touch /> : null}
-          {runIsFinished(entries) ? null : (
-            <Button
-              className="ml-auto"
-              disabled={!canStop || busy}
-              onClick={() => void stop()}
-              size="sm"
-              variant="destructive-outline"
-            >
-              Stop
-            </Button>
-          )}
+          <span className="ml-auto">
+            <RunActions
+              actions={actions}
+              environmentId={environmentId}
+              label={issue?.text ?? runId}
+              runId={runId}
+              stop={stopOf(environmentId, runId, issue?.text ?? runId)}
+              touch
+            />
+          </span>
         </div>
         {note ? (
           <p className="break-words text-sm text-muted-foreground" role="status">

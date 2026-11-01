@@ -496,15 +496,13 @@ describe("the readout", () => {
 });
 
 describe("stopping a run from the readout", () => {
-  it("enables Stop exactly for a building run, as the run page does", async () => {
+  it("shows Stop exactly on a building run, as the run page does, and none on a done run", async () => {
     using _state = await setup();
     await using page = await render(createElement(FactoryBelt, twoEnvironments()));
     const stops = async (name: string) => {
       await openStation(page, name);
-      return rowsOf(page).map(
-        (row) =>
-          !Array.from(row.querySelectorAll("button")).find((b) => b.textContent === "Stop")!
-            .disabled,
+      return rowsOf(page).map((row) =>
+        Array.from(row.querySelectorAll("button")).some((b) => b.textContent === "Stop"),
       );
     };
     expect(await stops("claimed")).toEqual([false]);
