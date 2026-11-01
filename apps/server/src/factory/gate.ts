@@ -197,12 +197,12 @@ const FETCH_ATTEMPTS = 3;
 const FETCH_RETRY_DELAYS_MS = [5_000, 15_000] as const;
 /**
  * What git's stderr says when the network dropped the fetch: HTTP/2 stream error, TLS handshake
- * timeout, unresolved name, failed or timed-out connection, or a cut-off pack. Anything else
+ * timeout, unresolved name, failed or timed-out connection, or a cut-off pack or answer. Anything else
  * (missing ref, refused login) returns at once. `RPC failed` counts only with a curl code right
  * after it; `RPC failed; HTTP 403 curl 22` means the server answered and refused.
  */
 const TRANSIENT_FETCH =
-  /Error in the HTTP2 framing layer|TLS handshake timeout|Could not resolve host|Failed to connect|Connection timed out|SSL_ERROR_SYSCALL|early EOF|RPC failed; curl \d+/;
+  /Error in the HTTP2 framing layer|TLS handshake timeout|Could not resolve host|Failed to connect|Connection timed out|SSL_ERROR_SYSCALL|early EOF|unexpected EOF|RPC failed; curl \d+/;
 
 export interface GateOptions {
   /** Where repositories are fetched from: `<remoteBase>/<owner>/<name>.git`. Default `https://github.com`; tests pass `file:///…`. */
