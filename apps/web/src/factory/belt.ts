@@ -127,7 +127,7 @@ export function summariseDone(doneRuns: ReadonlyArray<BeltRun>): Belt["done"] {
 const startedOf = (row: FactoryRunRow | undefined): number =>
   row?.started_ts ? Date.parse(row.started_ts) : Number.NaN;
 
-const issueOf = (id: string): string => {
+export const issueOf = (id: string): string => {
   const issue = parseRunId(id)?.issue;
   if (issue === undefined) return id;
   return /^[0-9]+$/.test(issue) ? `#${issue}` : issue;
@@ -140,7 +140,7 @@ const newestFirst = (a: number, b: number): number => {
 };
 
 /** The viewer's today as `[start, next start)` in epoch ms, around `nowMs`. */
-const localDay = (nowMs: number): readonly [number, number] => {
+export const localDay = (nowMs: number): readonly [number, number] => {
   const start = new Date(nowMs);
   start.setHours(0, 0, 0, 0);
   const end = new Date(start);
@@ -411,7 +411,7 @@ export function nextPassText(
   const at = Date.parse(passes.at);
   if (Number.isNaN(at)) return null;
   const seconds = Math.max(0, Math.ceil((at + passes.poll_seconds * 1000 - nowMs) / 1000));
-  return `next pass in ${seconds}s`;
+  return `next pass in ${seconds < 60 ? "" : `${Math.floor(seconds / 60)}m `}${seconds % 60}s`;
 }
 
 /** `HH:MM` in the viewer's time. */

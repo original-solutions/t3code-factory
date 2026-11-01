@@ -181,6 +181,11 @@ describe("nextPassText", () => {
     expect(nextPassText(passes(), NOW + 30_000)).toBe("next pass in 18s");
   });
 
+  it("counts minutes and seconds once a minute or more is left", () => {
+    expect(nextPassText(passes({ poll_seconds: 600 }), NOW)).toBe("next pass in 9m 48s");
+    expect(nextPassText(passes({ poll_seconds: 72 }), NOW)).toBe("next pass in 1m 0s");
+  });
+
   it("stops at 0 once the pass is due", () => {
     expect(nextPassText(passes(), NOW + 48_000)).toBe("next pass in 0s");
     expect(nextPassText(passes(), NOW + 600_000)).toBe("next pass in 0s");

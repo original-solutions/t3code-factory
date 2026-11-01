@@ -15,6 +15,8 @@ import { useBeltMotion } from "./beltMotion";
 import { BeltRail } from "./BeltRail";
 import type { QueueOrigin } from "./runQueue";
 import { DeployBanner } from "./DeployBanner";
+import { dayStrip, type DayStrip as Strip } from "./dayStrip";
+import { TodayStrip } from "./TodayStrip";
 import { FactoryReadFailure } from "./FactoryNotices";
 import { messageOf } from "./format";
 import { TouchLink } from "./TouchLink";
@@ -107,7 +109,7 @@ function Stat({ label, value }: { label: string; value: string | number }) {
 
 /**
  * The claims switch of the selected environment and its state, the pass line, the environment's
- * slots, and the counters over every environment (`-` while a recent runs list they come from has
+ * slots, the counters and today's strip over every environment (`-` while a recent runs list they come from has
  * not answered). The switch is on while claims run; an environment with no status says nothing
  * about its claims and cannot be switched.
  */
@@ -115,10 +117,13 @@ function ControlBar({
   selected,
   busy,
   counters,
+  strip,
   onTogglePause,
 }: {
   selected: FactoryEnvironment;
   busy: boolean;
+  /** Today's runs on the clock, once the recent runs lists are known. */
+  strip: Strip | null;
   counters: {
     readonly runsToday: number | string;
     readonly mergedToday: number | string;
@@ -163,6 +168,7 @@ function ControlBar({
         <Stat label="Merged today" value={counters.mergedToday} />
         <Stat label="Stuck" value={counters.stuck} />
       </dl>
+      <TodayStrip strip={strip} />
     </section>
   );
 }
@@ -430,6 +436,19 @@ export function FactoryBelt({
           counters={known ? belt.counters : { runsToday: "-", mergedToday: "-", stuck: "-" }}
           onTogglePause={onTogglePause}
           selected={selected}
+          strip={
+            known
+              ? dayStrip(
+                  environments.map(({ environmentId, label }) => ({
+                    environmentId,
+                    label,
+                    recent: recent.get(environmentId)?.data?.runs ?? [],
+                  })),
+                  nowMs,
+                  held?.since ?? null,
+                )
+              : null
+          }
         />
         {open !== undefined ? (
           <BeltRail

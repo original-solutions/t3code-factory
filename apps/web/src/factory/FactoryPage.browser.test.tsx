@@ -252,8 +252,15 @@ describe("FactoryPage", () => {
     state.runs = resource({ data: { runs: [runRow()] } });
     state.allRuns = resource({ data: { runs: [runRow(), old] } });
     await using page = await render(createElement(FactoryPage));
+    // The ledger's links, not the Today strip's.
     const runLinks = () =>
-      page.all("a").filter((a) => a.getAttribute("data-to") === "/factory/$environmentId/$runId");
+      page
+        .all("a")
+        .filter(
+          (a) =>
+            a.getAttribute("data-to") === "/factory/$environmentId/$runId" &&
+            !a.closest('[aria-label="Today"]'),
+        );
     expect(runLinks()).toHaveLength(1);
     await page.click(page.button("Show all runs")!);
     expect(runLinks()).toHaveLength(2);
@@ -810,7 +817,8 @@ describe("FactoryPage run cards at 375 px", () => {
       .find(
         (a) =>
           a.getAttribute("data-to") === "/factory/$environmentId/$runId" &&
-          a.getAttribute("data-params")!.includes(RUN_ID),
+          a.getAttribute("data-params")!.includes(RUN_ID) &&
+          !a.closest('[aria-label="Today"]'),
       );
     expect(link).toBeDefined();
     const text = link!.textContent ?? "";
