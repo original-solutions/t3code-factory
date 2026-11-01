@@ -573,8 +573,9 @@ describe("FactorySettingsPanel", () => {
     expect(text).toContain("added as T3 projects");
     expect(text).not.toContain("No T3 project on this environment has one yet");
     expect(root.querySelectorAll("input")).toHaveLength(5);
-    // The errors sit in a paragraph: they are spans, never a list.
-    expect(root.querySelectorAll("ul, li")).toHaveLength(0);
+    // The errors sit in a paragraph: they are spans, never a list. Only a plan's steps are one.
+    const lists = Array.from(root.querySelectorAll("ul, li"));
+    expect(lists.filter((node) => node.closest("[data-repo-plan]") === null)).toHaveLength(0);
   });
 
   it("marks a repo running on the machine's default and shows the block it resolved to", async () => {
@@ -615,10 +616,19 @@ describe("FactorySettingsPanel", () => {
     const text = textOf(root);
     expect(repoRows(root)[0]!.getAttribute("data-health")).toBe("default");
     expect(text).toContain("Defaults");
-    expect(text).toContain("Default config");
-    expect(text).toContain("npm run build, npm run test, npm run format:check");
-    expect(text).toContain("npm ci");
-    expect(text).toContain("tomkaczocha, rawphp");
+    expect(text).toContain("runs on default_project from the machine config");
+    expect(text).toContain("@tomkaczocha or @rawphp labels it factory:ready");
+    const commands = Array.from(root.querySelectorAll("[data-gate-commands] li"), textOf);
+    expect(commands.map((line) => line.replace(/\s+/g, " ").trim())).toEqual([
+      "$ npm ci provision",
+      "$ npm run build gate",
+      "$ npm run test gate",
+      "$ npm run format:check gate",
+    ]);
+    // The block it resolved to, ready to commit as the repo's own.
+    expect(root.querySelector("pre")?.textContent).toContain(
+      'gate: ["npm run build", "npm run test", "npm run format:check"]',
+    );
     // There is no .dw/config.yml to link to.
     expect(text).not.toContain("View .dw/config.yml on GitHub");
   });

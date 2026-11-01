@@ -5,26 +5,101 @@ import { SettingsRow, SettingsSection } from "../../components/settings/settings
 import { Badge } from "../../components/ui/badge";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../../components/ui/collapsible";
 import type { RepoBlock } from "./api";
+import { factoryBlockYaml, repoPlan } from "./repoPlan";
 import { repoRoster, type RepoHealth } from "./repoRoster";
+import { Snippet } from "../FirstRunSteps";
 import { TouchLink } from "../TouchLink";
 
-const list = (items: ReadonlyArray<string>) => (items.length === 0 ? "None" : items.join(", "));
-
-function ProjectConfigRows({ factory }: { readonly factory: NonNullable<RepoBlock["factory"]> }) {
-  const { limits } = factory;
+function Commands({ factory }: { readonly factory: NonNullable<RepoBlock["factory"]> }) {
+  const seen = new Map<string, number>();
+  // A command may repeat, so its key counts the copies before it.
+  const commands = [
+    ...factory.provision.map((command) => ({ command, kind: "provision" })),
+    ...factory.gate.map((command) => ({ command, kind: "gate" })),
+  ].map((line) => {
+    const name = `${line.kind} ${line.command}`;
+    const copy = seen.get(name) ?? 0;
+    seen.set(name, copy + 1);
+    return { ...line, key: `${name} ${copy}` };
+  });
   return (
-    <>
-      <SettingsRow title="Instructors" description={list(factory.instructors)} />
-      <SettingsRow title="Base branch" description={factory.base} />
-      <SettingsRow title="Provision" description={list(factory.provision)} />
-      <SettingsRow title="Gate" description={list(factory.gate)} />
-      <SettingsRow title="Required checks" description={list(factory.required_checks)} />
-      <SettingsRow
-        title="Limits"
-        description={`${limits.minutes} minutes, ${limits.gate_retries} gate retries, ${limits.checks_minutes} check minutes, ${limits.interruption_resumes} interruption resumes`}
-      />
-      <SettingsRow title="Autonomy" description={factory.autonomy} />
-    </>
+    <ol
+      data-gate-commands
+      className="mt-2 divide-y divide-border/50 overflow-hidden rounded-lg border border-border bg-muted/50 font-mono text-xs"
+    >
+      {commands.map(({ command, kind, key }) => (
+        <li key={key} className="flex min-w-0 items-baseline gap-2 px-3 py-1.5">
+          <span className="shrink-0 text-muted-foreground/70 select-none">$</span>
+          <span className="min-w-0 flex-1 break-all">{command}</span>
+          <span className="shrink-0 font-sans text-2xs text-muted-foreground">{kind}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/**
+ * What the factory will do with a ready issue on this repo, step by step, each step naming the
+ * config keys behind it, then the block itself to copy.
+ */
+function RepoPlan({
+  factory,
+  isDefault,
+}: {
+  readonly factory: NonNullable<RepoBlock["factory"]>;
+  readonly isDefault: boolean;
+}) {
+  return (
+    <div data-repo-plan className="px-3 py-3 sm:px-4">
+      <p className="text-sm font-medium text-foreground">
+        What the factory does with a ready issue
+      </p>
+      <ol className="relative mt-3">
+        {repoPlan(factory).map((step, index, steps) => (
+          <li
+            key={step.title}
+            data-plan-step={step.title}
+            className="relative flex gap-3 pb-4 last:pb-0"
+          >
+            {index < steps.length - 1 ? (
+              <span aria-hidden className="absolute top-6 bottom-0 left-2.75 w-px bg-border" />
+            ) : null}
+            <span
+              aria-hidden
+              className="relative flex size-6 shrink-0 items-center justify-center rounded-full border border-border bg-background text-2xs font-medium text-muted-foreground tabular-nums"
+            >
+              {index + 1}
+            </span>
+            <div className="min-w-0 flex-1 pt-0.5">
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                <span className="text-sm font-medium text-foreground">{step.title}</span>
+                <span className="flex flex-wrap gap-1">
+                  {step.keys.map((key) => (
+                    <code
+                      key={key}
+                      className="rounded bg-muted px-1 py-px font-mono text-2xs text-muted-foreground"
+                    >
+                      {key}
+                    </code>
+                  ))}
+                </span>
+              </div>
+              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{step.says}</p>
+              {step.title === "Gate" ? <Commands factory={factory} /> : null}
+            </div>
+          </li>
+        ))}
+      </ol>
+      <p className="mt-4 text-sm font-medium text-foreground">
+        {isDefault ? "The block it resolved to" : "The block as the factory read it"}
+      </p>
+      <p className="mt-0.5 mb-2 text-xs text-muted-foreground">
+        {isDefault
+          ? "No factory block in .dw/config.yml: this repo runs on default_project from the machine config, with the provision and gate inferred from its default branch. Commit this as .dw/config.yml to pin it, then edit."
+          : "With every default written out."}
+      </p>
+      <Snippet text={factoryBlockYaml(factory)} />
+    </div>
   );
 }
 
@@ -35,12 +110,6 @@ function RepoDetails({ block }: { readonly block: RepoBlock }) {
         title="Workspace root"
         description={<code className="break-all">{block.path}</code>}
       />
-      {block.default_config === true ? (
-        <SettingsRow
-          title="Default config"
-          description="No factory block in .dw/config.yml: this repo runs on default_project from the machine config, with the provision and gate inferred from its default branch. Add a factory block to override it."
-        />
-      ) : null}
       {block.errors !== null ? (
         <SettingsRow
           title="Errors"
@@ -52,7 +121,9 @@ function RepoDetails({ block }: { readonly block: RepoBlock }) {
           ))}
         />
       ) : null}
-      {block.factory !== null ? <ProjectConfigRows factory={block.factory} /> : null}
+      {block.factory !== null ? (
+        <RepoPlan factory={block.factory} isDefault={block.default_config === true} />
+      ) : null}
       {block.factory === null && block.errors === null ? (
         <SettingsRow
           title="Project config"

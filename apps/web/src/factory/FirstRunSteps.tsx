@@ -17,7 +17,7 @@ const FACTORY_BLOCK = `factory:
   autonomy: pr
 `;
 
-function Snippet({ text }: { readonly text: string }) {
+export function Snippet({ text }: { readonly text: string }) {
   const { copyToClipboard, isCopied } = useCopyToClipboard({ timeout: 1500 });
   return (
     <div className="relative min-w-0 rounded-lg border border-border bg-muted/50">
