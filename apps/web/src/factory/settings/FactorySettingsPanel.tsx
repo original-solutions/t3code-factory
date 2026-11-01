@@ -19,6 +19,7 @@ import {
   type MachineConfigReport,
   type MachineConfigValues,
 } from "./api";
+import { FactorySetup } from "./FactorySetup";
 import { WatchedRepos } from "./WatchedRepos";
 
 /** The form keeps numbers as typed, so an empty or half-typed field is not coerced under the cursor. */
@@ -267,6 +268,8 @@ function MachineConfigForm({
           </p>
         ) : null}
       </div>
+
+      <FactorySetup file={report.file} repos={report.repos} watchError={report.watch_error} />
 
       <SettingsSection title="Machine config">
         <SettingsRow

@@ -19,6 +19,14 @@ const mocks = vi.hoisted(() => ({
   saveFactoryConfig: vi.fn(),
 }));
 
+vi.mock("@tanstack/react-router", async (importOriginal) => {
+  const { createElement } = await import("react");
+  return {
+    ...(await importOriginal<typeof import("@tanstack/react-router")>()),
+    Link: ({ to, children, ...rest }: { to: string; children?: ReactNode }) =>
+      createElement("a", { ...rest, "data-to": to }, children),
+  };
+});
 vi.mock("~/state/session", () => ({
   useEnvironmentScope: (_id: EnvironmentId | null, scope: AuthEnvironmentScope) =>
     scope === AuthSettingsWriteScope && mocks.canWrite,
@@ -448,7 +456,7 @@ describe("FactorySettingsPanel", () => {
         "acme/alpha",
       ]);
       expect(text).toContain("Alpha copy");
-      expect(text.split(message)).toHaveLength(3);
+      expect(repoRows(root).map((row) => textOf(row).split(message).length)).toEqual([2, 2]);
       const duplicateKey = consoleError.mock.calls.filter((call) =>
         String(call[0]).includes("same key"),
       );
@@ -577,7 +585,8 @@ describe("FactorySettingsPanel", () => {
     expect(text).toContain("/work/slow");
     expect(text).toContain("Nothing is dropped for them");
     expect(text).not.toContain("No T3 project on this environment has one yet");
-    expect(root.querySelectorAll("ul, li")).toHaveLength(0);
+    const lists = Array.from(root.querySelectorAll("ul, li"));
+    expect(lists.filter((node) => node.closest("[data-factory-setup]") === null)).toHaveLength(0);
   });
 
   it("shows why the T3 projects could not be listed instead of saying none is watched", async () => {
@@ -656,8 +665,8 @@ describe("FactorySettingsPanel", () => {
           (child) => child.nodeType === Node.TEXT_NODE && child.textContent === long,
         ),
       );
-      expect(holder).toHaveLength(1);
-      expect(holder[0]!.className).toContain("break-all");
+      expect(holder.length).toBeGreaterThan(0);
+      for (const node of holder) expect(node.className).toContain("break-all");
     });
 
     it("asks for touch-sized inputs, with Save present", async () => {
