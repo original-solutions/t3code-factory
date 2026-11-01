@@ -183,22 +183,6 @@ export function runIsFinished(entries: ReadonlyArray<FactoryEntry>): boolean {
   return entries.some((entry) => entry.event === "finished");
 }
 
-/** What a stuck or needs-info run waits on a person for: untrusted text, show it as text only. */
-export function whyStopped(
-  entries: ReadonlyArray<FactoryEntry>,
-): { readonly title: string; readonly text: string } | null {
-  const state = runState(entries);
-  const [event, key, title] =
-    state === "stuck"
-      ? ["stuck", "reason", "Why it is stuck"]
-      : state === "needs-info"
-        ? ["questions_posted", "questions", "Questions on the issue"]
-        : [null, null, null];
-  if (event === null) return null;
-  const text = textField(entries.findLast((entry) => entry.event === event)?.data, key);
-  return text === null ? null : { title, text };
-}
-
 /** A reference to show: a link when it has a target, else plain text. */
 export interface LinkRef {
   readonly text: string;

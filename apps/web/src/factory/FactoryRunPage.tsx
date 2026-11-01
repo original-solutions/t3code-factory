@@ -36,7 +36,6 @@ import {
   shownState,
   stateBadgeVariant,
   threadIdOf,
-  whyStopped,
 } from "./format";
 import { Ref } from "./Ref";
 import {
@@ -46,6 +45,8 @@ import {
   type QueuedRun,
   type QueueStep,
 } from "./runQueue";
+import { nextStep } from "./nextStep";
+import { GATE_OUTPUT_ID, RunNextStep } from "./RunNextStep";
 import { RunTimeline } from "./RunTimeline";
 import { TouchLink } from "./TouchLink";
 import { useFactoryEnvironmentLabel, useFactoryRun } from "./useFactoryData";
@@ -66,7 +67,7 @@ function GateOutput({ entries }: { entries: ReadonlyArray<FactoryEntry> }) {
   const gate = lastGateOutput(entries);
   const empty = gate.commands.length === 0 && gate.message === null;
   return (
-    <section className="flex flex-col gap-2">
+    <section className="flex scroll-mt-4 flex-col gap-2" id={GATE_OUTPUT_ID}>
       <h2 className="text-sm font-medium">Last gate output</h2>
       {empty ? <p className="text-sm text-muted-foreground">No gate has run</p> : null}
       {gate.commands.length > 0 && stacked ? (
@@ -298,7 +299,7 @@ export function FactoryRunPage({
   const parsed = parseRunId(runId);
   const issue = parsed ? issueRef(`${parsed.owner}/${parsed.repo}`, parsed.issue) : null;
   const pr = prRef(prUrlOf(entries));
-  const why = whyStopped(entries);
+  const next = nextStep(entries);
 
   let body;
   if (run.status === "error" && run.data === null) {
@@ -345,29 +346,31 @@ export function FactoryRunPage({
           )}
           {issue ? <Ref {...issue} touch /> : null}
           {pr ? <Ref {...pr} touch /> : null}
-          <Button
-            className="ml-auto"
-            disabled={!canStop || busy}
-            onClick={() => void stop()}
-            size="sm"
-            variant="destructive-outline"
-          >
-            Stop
-          </Button>
+          {runIsFinished(entries) ? null : (
+            <Button
+              className="ml-auto"
+              disabled={!canStop || busy}
+              onClick={() => void stop()}
+              size="sm"
+              variant="destructive-outline"
+            >
+              Stop
+            </Button>
+          )}
         </div>
         {note ? (
           <p className="break-words text-sm text-muted-foreground" role="status">
             {note}
           </p>
         ) : null}
-        {why ? (
-          <section className="flex flex-col gap-2">
-            <h2 className="text-sm font-medium">{why.title}</h2>
-            {/* The session's own words: plain text, never markdown or HTML. */}
-            <p className="whitespace-pre-wrap break-words rounded-lg border bg-card p-3 text-sm">
-              {why.text}
-            </p>
-          </section>
+        {next ? (
+          <RunNextStep
+            environmentId={environmentId}
+            issue={issue}
+            prUrl={prUrlOf(entries)}
+            step={next}
+            threadId={threadId}
+          />
         ) : null}
         <RunTimeline entries={entries} environmentId={environmentId} />
         <GateOutput entries={entries} />

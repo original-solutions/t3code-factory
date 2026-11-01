@@ -16,7 +16,6 @@ import {
   shownState,
   stateBadgeVariant,
   threadIdOf,
-  whyStopped,
 } from "./format";
 
 let tick = 0;
@@ -223,39 +222,6 @@ describe("shownState and prEndOf", () => {
     expect(prEndOf(finished(null))).toBeNull();
     expect(prEndOf(finished("reopened"))).toBeNull();
     expect(prEndOf([entry("state_changed", { from: "building", to: "pr-open" })])).toBeNull();
-  });
-});
-
-describe("whyStopped", () => {
-  it("gives a stuck run's whole reason, whatever it names", () => {
-    const reason = "the session stopped and said it was stuck\n\nThe machine is out of disk.";
-    expect(
-      whyStopped([
-        entry("stuck", { reason: "an earlier reason" }),
-        entry("stuck", { reason }),
-        entry("state_changed", { from: "building", to: "stuck" }),
-        entry("finished", { outcome: "stuck" }),
-      ]),
-    ).toEqual({ title: "Why it is stuck", text: reason });
-  });
-
-  it("gives the questions a needs-info run posted", () => {
-    expect(
-      whyStopped([
-        entry("questions_posted", { questions: "Which page?" }),
-        entry("state_changed", { from: "building", to: "needs-info" }),
-      ]),
-    ).toEqual({ title: "Questions on the issue", text: "Which page?" });
-  });
-
-  it("has nothing for a run in any other state, or with no reason recorded", () => {
-    expect(
-      whyStopped([
-        entry("stuck", { reason: "old" }),
-        entry("state_changed", { from: "stuck", to: "building" }),
-      ]),
-    ).toBeNull();
-    expect(whyStopped([entry("state_changed", { from: "building", to: "stuck" })])).toBeNull();
   });
 });
 
