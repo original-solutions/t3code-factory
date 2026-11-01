@@ -6,7 +6,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { T0, useTempDirs } from "./ledger/testSupport.ts";
 import { formatTs } from "./ledger/time.ts";
-import { readReadyQueue } from "./readyQueue.ts";
+import { MAX_LINES, readReadyQueue } from "./readyQueue.ts";
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -19,9 +19,13 @@ const line = (ms: number, event: string, data: unknown) =>
 
 type Skip = readonly [repo: string, issue: number | string | null, reason: string];
 
-/** A finished pass at `ms` whose claim step skipped `skips`; `[null, null, reason]` holds the machine. */
-const pass = (ms: number, skips: ReadonlyArray<Skip | string> = []) =>
+/**
+ * A finished pass at `ms` whose claim step skipped `skips`; `[null, null, reason]` holds the machine.
+ * `listed` writes the marker of a claim step that read the ready lists.
+ */
+const pass = (ms: number, skips: ReadonlyArray<Skip | string> = [], listed = true) =>
   line(ms, "pass_started", {}) +
+  (listed ? line(ms + 1, "ready_listed", { repos: 1 }) : "") +
   skips
     .map((skip) =>
       typeof skip === "string"
@@ -82,6 +86,7 @@ describe("readReadyQueue", () => {
         reason: "blocked",
         since: formatTs(NOW - 4 * HOUR + 1),
         passes: 3,
+        since_cut: false,
       },
       {
         repo: "acme/app",
@@ -89,6 +94,7 @@ describe("readReadyQueue", () => {
         reason: "postponed",
         since: formatTs(NOW - 3 * HOUR + 1),
         passes: 2,
+        since_cut: false,
       },
       {
         repo: "acme/web",
@@ -96,6 +102,7 @@ describe("readReadyQueue", () => {
         reason: "limit",
         since: formatTs(NOW - HOUR + 1),
         passes: 1,
+        since_cut: false,
       },
     ]);
   });
@@ -107,6 +114,40 @@ describe("readReadyQueue", () => {
         pass(NOW - HOUR, [["acme/app", 7, "blocked"]]),
     );
     expect(readReadyQueue(dir, NOW).waiting[0]?.since).toBe(formatTs(NOW - HOUR + 1));
+  });
+
+  it("keeps the queue over a pass that never read the ready lists", () => {
+    const dir = logOf(
+      pass(NOW - 3 * HOUR, [["acme/app", 7, "blocked"]]) +
+        // A model cooling down with no fallback empties every queue before any issue is read.
+        pass(NOW - 2 * HOUR, ["cooling-down"]) +
+        // The runs ledger or every repo failed to load: no claim step, no marker.
+        pass(NOW - HOUR, [], false),
+    );
+    const queue = readReadyQueue(dir, NOW);
+    expect(queue.waiting).toEqual([
+      expect.objectContaining({ issue: "7", passes: 1, since: formatTs(NOW - 3 * HOUR + 1) }),
+    ]);
+    expect(queue.checked_at).toBe(formatTs(NOW - 3 * HOUR + 2));
+  });
+
+  it("counts a pass from before the marker that skipped an issue as one that read the list", () => {
+    const dir = logOf(
+      pass(NOW - 2 * HOUR, [["acme/app", 7, "blocked"]], false) +
+        pass(NOW - HOUR, [["acme/app", 7, "blocked"]]),
+    );
+    expect(readReadyQueue(dir, NOW).waiting[0]?.passes).toBe(2);
+  });
+
+  it("reads at most MAX_LINES lines, and marks a streak still open there as cut", () => {
+    const passes = Math.ceil(MAX_LINES / 4) + 10;
+    let log = "";
+    for (let at = passes; at >= 1; at -= 1)
+      log += pass(NOW - at * MIN, [["acme/app", 7, "blocked"]]);
+    const queue = readReadyQueue(logOf(log), NOW);
+    expect(queue.waiting).toHaveLength(1);
+    expect(queue.waiting[0]!.since_cut).toBe(true);
+    expect(queue.waiting[0]!.passes).toBeLessThan(passes);
   });
 
   it("is empty when the newest pass that read the list held nothing back", () => {

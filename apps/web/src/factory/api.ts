@@ -200,6 +200,8 @@ export interface FactoryReadyQueue {
     readonly reason: string;
     readonly since: string;
     readonly passes: number;
+    /** The server read only part of the log, so the wait began before `since`; absent on older servers. */
+    readonly since_cut?: boolean;
   }>;
   readonly turned_away: ReadonlyArray<{
     readonly repo: string;

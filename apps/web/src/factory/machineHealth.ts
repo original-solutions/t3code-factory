@@ -1,5 +1,5 @@
 import type { FactoryStatus } from "./api";
-import { signedOutLine, signedOutCause, stillTrue } from "./attentionCauses";
+import { causeKey, signedOutLine, signedOutCause, stillTrue } from "./attentionCauses";
 import { formatClock } from "./belt";
 
 /** How a gauge reads: fine, near the line where the pass holds, over it, or unread. */
@@ -23,6 +23,7 @@ export type HoldKey =
   | "signed-out"
   | "low-disk"
   | "high-load"
+  | "pass-errors"
   | "pass-overdue";
 
 /** One reason the machine claims nothing now; `ok` for one that has lifted but not yet been seen by a pass. */
@@ -76,12 +77,17 @@ const since = (iso: string): string => {
   return Number.isNaN(ms) ? "" : ` since ${formatClock(ms)}`;
 };
 
+/** The `pass-errors` item, open or quieted, when it is not the signed-out gh said on its own. */
+const failingPasses = (status: FactoryStatus) =>
+  stillTrue(status).find((item) => item.id === "pass-errors" && causeKey(item) === item.id) ?? null;
+
 /**
  * The hold the machine itself puts on claims, with its figures: a low disk before a high load, as
- * the pass checks them, then a signed-out gh that fails every repo read. Null when none holds.
+ * the pass checks them, then a signed-out gh that fails every repo read, then passes that keep
+ * failing. Null when none holds.
  */
 export function machineHold(status: FactoryStatus): {
-  readonly word: "low disk" | "high load" | "gh signed out";
+  readonly word: "low disk" | "high load" | "gh signed out" | "passes failing";
   readonly detail: string;
 } | null {
   const health = status.health;
@@ -101,7 +107,10 @@ export function machineHold(status: FactoryStatus): {
     }
   }
   const repos = signedOutCause(stillTrue(status))?.repos;
-  if (repos === undefined) return null;
+  if (repos === undefined) {
+    const failing = failingPasses(status);
+    return failing === null ? null : { word: "passes failing", detail: failing.message };
+  }
   return {
     word: "gh signed out",
     detail:
@@ -117,6 +126,7 @@ const HOLD_WORD: Readonly<Record<HoldKey, string>> = {
   "signed-out": "gh signed out",
   "low-disk": "low disk",
   "high-load": "high load",
+  "pass-errors": "passes failing",
   "pass-overdue": "pass overdue",
 };
 
@@ -243,6 +253,15 @@ export function machineHealthView(status: FactoryStatus): MachineHealthView | nu
       tone: "bad",
       title: "High load",
       detail: `The 1-minute load is ${load.one_minute.toFixed(1)}, above ${load.limit}. Nothing is claimed and a second gate waits until it drops; it needs no one.`,
+    });
+  }
+  const failing = failingPasses(status);
+  if (failing !== null) {
+    holds.push({
+      key: "pass-errors",
+      tone: "bad",
+      title: "Passes failing",
+      detail: `${failing.message.charAt(0).toUpperCase()}${failing.message.slice(1)}.`,
     });
   }
   if (status.passes.stale === true) {

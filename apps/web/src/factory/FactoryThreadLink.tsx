@@ -16,10 +16,12 @@ import { useFactoryResource } from "./useFactoryData";
 
 /**
  * Finished runs found per thread, kept for the session: a finished run does not change. A key is
- * in `found` from the moment its read starts (undefined until it answers), so it is read once.
+ * in `found` from the moment its read starts (undefined until it answers), so it is read once; a
+ * failed read drops the key after {@link RETRY_MS}, and a header still showing asks again.
  */
 const found = new Map<string, ThreadRun | null | undefined>();
 const listeners = new Set<() => void>();
+const RETRY_MS = 30_000;
 const subscribe = (listener: () => void) => {
   listeners.add(listener);
   return () => listeners.delete(listener);
@@ -28,10 +30,17 @@ const subscribe = (listener: () => void) => {
 const lookUp = (environmentId: EnvironmentId, threadId: string, prefix: string, key: string) => {
   if (found.has(key)) return;
   found.set(key, undefined);
-  void findThreadRun((id) => factoryApi.run(environmentId, id), prefix, threadId).then((run) => {
-    found.set(key, run);
-    listeners.forEach((listener) => listener());
-  });
+  findThreadRun((id) => factoryApi.run(environmentId, id), prefix, threadId).then(
+    (run) => {
+      found.set(key, run);
+      listeners.forEach((listener) => listener());
+    },
+    () =>
+      setTimeout(() => {
+        found.delete(key);
+        listeners.forEach((listener) => listener());
+      }, RETRY_MS),
+  );
 };
 
 /**
@@ -55,10 +64,11 @@ export function FactoryThreadLink({
   const key = `${environmentId} ${threadId}`;
   const finished = status.data !== null && live === null ? prefix : null;
   const looked = useSyncExternalStore(subscribe, () => found.get(key));
+  const asked = useSyncExternalStore(subscribe, () => found.has(key));
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the factory ledger over HTTP, once per thread, for a run that is not in flight
   useEffect(() => {
-    if (finished !== null) lookUp(environmentId, threadId, finished, key);
-  }, [environmentId, finished, key, threadId]);
+    if (finished !== null && !asked) lookUp(environmentId, threadId, finished, key);
+  }, [asked, environmentId, finished, key, threadId]);
   const run = live ?? (finished !== null ? (looked ?? null) : null);
   if (run === null) return null;
   return <ThreadRunMark environmentId={environmentId} run={run} />;

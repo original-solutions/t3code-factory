@@ -183,6 +183,35 @@ describe("machineHealthView", () => {
     expect(machineHold(quieted)?.word).toBe("gh signed out");
   });
 
+  it("a pass failing in a row is a bad verdict, open or quieted, unless it is the sign-out", () => {
+    const failing = {
+      id: "pass-errors",
+      kind: "pass-errors",
+      repo: null,
+      issue: null,
+      run: null,
+      message: "the pass has failed 3 times in a row, last: cannot read the runs ledger",
+      first_seen: "2026-11-01T13:00:00Z",
+    };
+    const view = machineHealthView(status({ attention: [failing] }))!;
+    expect(view.holds).toEqual([
+      {
+        key: "pass-errors",
+        tone: "bad",
+        title: "Passes failing",
+        detail: "The pass has failed 3 times in a row, last: cannot read the runs ledger.",
+      },
+    ]);
+    expect(view.verdict).toEqual({ tone: "bad", text: "Claims held: passes failing" });
+    const quieted = status({ dismissed: [failing] });
+    expect(machineHealthView(quieted)!.holds).toEqual(view.holds);
+    expect(machineHold(quieted)?.word).toBe("passes failing");
+
+    const signedOut = { ...failing, message: `${failing.message}; please run: gh auth login` };
+    const both = status({ attention: [signedOutItem("acme/web"), signedOut] });
+    expect(machineHealthView(both)!.holds.map((hold) => hold.key)).toEqual(["signed-out"]);
+  });
+
   it("lists every hold in the order a person lifts them: pause, update, sign-in, disk, load, overdue pass", () => {
     const view = machineHealthView(
       status({

@@ -1056,6 +1056,7 @@ describe("GET /api/factory/queue", () => {
             reason: "blocked",
             since: formatTs(T0 + 1),
             passes: 1,
+            since_cut: false,
           },
         ]);
       });

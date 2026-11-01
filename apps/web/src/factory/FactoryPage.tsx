@@ -16,7 +16,7 @@ import { FactoryQueue } from "./FactoryQueue";
 import { FactoryScope } from "./FactoryScope";
 import { FactoryTrends } from "./FactoryTrends";
 import { messageOf, parseRunId } from "./format";
-import { neverBuilt, type FirstRun } from "./firstRun";
+import { firstRunOf, type FirstRun } from "./firstRun";
 import { machineLine } from "./machines";
 import { TONE_DOT } from "./MachineRoster";
 import { REPO_TONE, RepoBoard, repoHeadline } from "./RepoBoard";
@@ -107,15 +107,14 @@ export function FactoryPage() {
       ({ status }, i) => status.data?.runs.length === 0 && recentOf[i]?.data?.runs.length === 0,
     );
   const everOf = useFactoryRunsOf(quiet ? answeredIds : [], true);
-  const firstRun: FirstRun =
-    quiet && everOf.some(({ data }) => data === null)
-      ? "checking"
-      : neverBuilt(
-          answered.map(({ status }, i) => ({
-            active: status.data?.runs.length ?? 0,
-            ever: everOf[i]?.data?.runs.length ?? null,
-          })),
-        );
+  const firstRun: FirstRun = firstRunOf(
+    quiet,
+    answered.map(({ status }, i) => ({
+      active: status.data?.runs.length ?? 0,
+      ever: everOf[i]?.data?.runs.length ?? null,
+      loading: everOf[i]?.status === "loading",
+    })),
+  );
   // The environments with a pause or resume in flight: one environment's control never disables another's.
   const [busy, setBusy] = useState<ReadonlySet<EnvironmentId>>(() => new Set());
   const [note, setNote] = useState<string | null>(null);

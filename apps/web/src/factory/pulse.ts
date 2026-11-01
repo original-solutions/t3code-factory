@@ -13,6 +13,7 @@ export type PulseHold =
   | "low disk"
   | "high load"
   | "gh signed out"
+  | "passes failing"
   | "pass overdue";
 
 export interface PulseRun {

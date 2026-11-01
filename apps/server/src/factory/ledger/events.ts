@@ -454,6 +454,11 @@ export type MachineEvent =
         | { reason: string };
     }
   | {
+      /** The claim step read the ready lists of `repos` repos, so its skips are the whole queue. */
+      readonly event: "ready_listed";
+      readonly data: { repos: number };
+    }
+  | {
       readonly event: "claim_repaired";
       readonly data: { repo: string; issue: string; outcome: ClaimRepair };
     }
@@ -528,7 +533,7 @@ type MachineDataKeys<N extends MachineEventName> = KeysOfEach<
 >;
 
 /**
- * The 20 event types the machine log can hold, each with the names of its `data` fields in the
+ * The 21 event types the machine log can hold, each with the names of its `data` fields in the
  * order they are written. A type with more than one shape lists the fields of all of them: the
  * ones that are absent are left out, and the shapes share no field that is ordered differently.
  */
@@ -539,6 +544,7 @@ export const MACHINE_EVENT_FIELDS = {
   repo_skipped: ["repo", "reason", "message"],
   repo_config_stale: ["repo", "what", "message"],
   claim_skipped: ["repo", "issue", "reason"],
+  ready_listed: ["repos"],
   claim_repaired: ["repo", "issue", "outcome"],
   attention: [
     "run",

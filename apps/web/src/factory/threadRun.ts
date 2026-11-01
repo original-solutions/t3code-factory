@@ -1,4 +1,4 @@
-import type { FactoryRunDetail, FactoryStatus } from "./api";
+import { FactoryApiError, type FactoryRunDetail, type FactoryStatus } from "./api";
 import { type Place, stationOf } from "./belt";
 import { prEndOf, prUrlOf, runIsFinished, runState, shownState, textField } from "./format";
 
@@ -66,7 +66,7 @@ export function threadRunOfStatus(
 
 /**
  * Reads the issue's attempts from the first until one launched `threadId`, and stops at the first
- * attempt that does not exist. Null when none did, or a read fails.
+ * attempt that does not exist. Null when none did; any other failed read rejects.
  */
 export async function findThreadRun(
   read: (id: string) => Promise<FactoryRunDetail>,
@@ -78,9 +78,9 @@ export async function findThreadRun(
     let detail: FactoryRunDetail;
     try {
       detail = await read(id);
-    } catch {
-      // A missing attempt (404) ends the issue's runs; any other failure leaves the thread unlinked.
-      return null;
+    } catch (error) {
+      if (error instanceof FactoryApiError && error.status === 404) return null;
+      throw error;
     }
     const launch = detail.entries.find(
       (entry) =>

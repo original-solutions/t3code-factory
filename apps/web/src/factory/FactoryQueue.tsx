@@ -107,7 +107,8 @@ function WaitGroup({
                   {wait.title ?? <span className="break-all font-mono text-xs">{wait.repo}</span>}
                 </span>
                 <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
-                  held {formatAge(wait.sinceMs, wait.checkedMs)}
+                  held {wait.sinceCut ? "over " : ""}
+                  {formatAge(wait.sinceMs, wait.checkedMs)}
                 </span>
               </div>
               <span className="flex min-w-0 flex-wrap gap-x-1.5 text-xs text-muted-foreground">
@@ -116,7 +117,8 @@ function WaitGroup({
                 )}
                 {wait.title === null ? null : <span aria-hidden>·</span>}
                 <span>
-                  {wait.passes} {wait.passes === 1 ? "pass" : "passes"} in a row since{" "}
+                  {wait.passes}
+                  {wait.sinceCut ? "+" : ""} {wait.passes === 1 ? "pass" : "passes"} in a row since{" "}
                   {when(wait.sinceMs, nowMs)}
                 </span>
                 {showEnvironment ? <span>· {wait.label}</span> : null}

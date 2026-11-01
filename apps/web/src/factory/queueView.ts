@@ -24,6 +24,8 @@ export interface QueueIssue {
   /** When the pass that last held it back read the list: the wait is known up to then. */
   readonly checkedMs: number;
   readonly passes: number;
+  /** The wait began before `sinceMs`: the server stopped reading the log there. */
+  readonly sinceCut: boolean;
   /** The title the issue's newest run launched with: only an issue that ran before has one. */
   readonly title: string | null;
   /** The issue's newest run, when it ran before and was put back to ready. */
@@ -179,6 +181,7 @@ export function queueView(sources: ReadonlyArray<QueueSource>, repo: string | nu
         sinceMs,
         checkedMs: checked ?? sinceMs,
         passes: wait.passes,
+        sinceCut: wait.since_cut === true,
         title: lastRun?.title ?? null,
         lastRun,
       });

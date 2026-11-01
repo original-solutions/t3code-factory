@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { firstRunSteps, neverBuilt, type FirstRunConfig } from "./firstRun";
+import { firstRunOf, firstRunSteps, neverBuilt, type FirstRunConfig } from "./firstRun";
 import type { RepoBlock } from "./settings/api";
 
 const factory: NonNullable<RepoBlock["factory"]> = {
@@ -46,6 +46,28 @@ describe("neverBuilt", () => {
     ["a list is still loading", [{ active: 0, ever: null }], false],
   ] as const)("is %s → %s", (_, environments, expected) => {
     expect(neverBuilt(environments)).toBe(expected);
+  });
+});
+
+describe("firstRunOf", () => {
+  it.each([
+    ["not quiet", false, [{ active: 1, ever: null, loading: false }], false],
+    [
+      "quiet, every run still loading",
+      true,
+      [{ active: 0, ever: null, loading: true }],
+      "checking",
+    ],
+    ["quiet, never ran anything", true, [{ active: 0, ever: 0, loading: false }], true],
+    // A failed read of every run shows the belt rather than a skeleton that never resolves.
+    [
+      "quiet, the read of every run failed",
+      true,
+      [{ active: 0, ever: null, loading: false }],
+      false,
+    ],
+  ] as const)("is %s → %s", (_, quiet, environments, expected) => {
+    expect(firstRunOf(quiet, environments)).toBe(expected);
   });
 });
 

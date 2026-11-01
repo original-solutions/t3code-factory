@@ -5,6 +5,14 @@ import { useState } from "react";
 
 import { Button, InlineButton } from "~/components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "~/components/ui/collapsible";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "~/components/ui/table";
 import { cn } from "~/lib/utils";
 
 import type { FactoryRunRow } from "./api";
@@ -236,46 +244,43 @@ function WeekTable({ weeks, pick }: { weeks: ReadonlyArray<TrendWeek>; pick: Wee
     i,
     label: weekLabel(week, i === weeks.length - 1),
   }));
+  const wide = "hidden sm:table-cell";
   return (
-    <table className="w-full self-start text-sm">
-      <thead className="text-xs text-muted-foreground">
-        <tr className="border-b">
-          <th className="py-1.5 pr-2 text-left font-normal">Week of</th>
-          <th className="hidden px-2 py-1.5 text-right font-normal sm:table-cell">Runs</th>
-          <th className="px-2 py-1.5 text-right font-normal">Merged</th>
-          <th className="px-2 py-1.5 text-right font-normal">Stuck</th>
-          <th className="px-2 py-1.5 text-right font-normal">Needs info</th>
-          <th className="py-1.5 pl-2 text-right font-normal">To merge</th>
-        </tr>
-      </thead>
-      <tbody className="whitespace-nowrap font-mono">
-        {rows.toReversed().map(({ week, i, label }) => (
-          <tr
-            className={cn(
-              "border-b last:border-b-0",
-              pick.week === i && "bg-muted/60 font-semibold",
-            )}
-            key={week.startMs}
-          >
-            <td className="py-0.5 pr-2 font-sans">
-              <button
-                aria-pressed={pick.week === i}
-                className="-mx-1 min-h-8 rounded-sm px-1 text-left underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11"
-                onClick={() => toggle(pick, i)}
-                type="button"
-              >
-                {label}
-              </button>
-            </td>
-            <td className="hidden px-2 py-1.5 text-right sm:table-cell">{week.total}</td>
-            <td className="px-2 py-1.5 text-right">{week.counts.merged}</td>
-            <td className="px-2 py-1.5 text-right">{percent(week.stuckRate)}</td>
-            <td className="px-2 py-1.5 text-right">{percent(week.infoRate)}</td>
-            <td className="py-1.5 pl-2 text-right">{span(week.mergeMs)}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <div className="self-start tabular-nums">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Week of</TableHead>
+            <TableHead className={cn(wide, "text-right")}>Runs</TableHead>
+            <TableHead className="text-right">Merged</TableHead>
+            <TableHead className="text-right">Stuck</TableHead>
+            <TableHead className="text-right">Needs info</TableHead>
+            <TableHead className="text-right">To merge</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.toReversed().map(({ week, i, label }) => (
+            <TableRow data-state={pick.week === i ? "selected" : undefined} key={week.startMs}>
+              <TableCell>
+                <button
+                  aria-pressed={pick.week === i}
+                  className="-mx-1 min-h-8 rounded-sm px-1 text-left underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-pressed:font-semibold pointer-coarse:min-h-11"
+                  onClick={() => toggle(pick, i)}
+                  type="button"
+                >
+                  {label}
+                </button>
+              </TableCell>
+              <TableCell className={cn(wide, "text-right")}>{week.total}</TableCell>
+              <TableCell className="text-right">{week.counts.merged}</TableCell>
+              <TableCell className="text-right">{percent(week.stuckRate)}</TableCell>
+              <TableCell className="text-right">{percent(week.infoRate)}</TableCell>
+              <TableCell className="text-right">{span(week.mergeMs)}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
   );
 }
 

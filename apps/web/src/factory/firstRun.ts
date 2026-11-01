@@ -14,6 +14,22 @@ export const neverBuilt = (
 /** Whether the page shows the way to a first run, or is still reading every run to know. */
 export type FirstRun = boolean | "checking";
 
+/**
+ * For a page that is `quiet` (nothing in flight or recent anywhere): checking while a read of
+ * every run is still loading. A read that failed counts as no answer, so the belt shows.
+ */
+export const firstRunOf = (
+  quiet: boolean,
+  environments: ReadonlyArray<{
+    readonly active: number;
+    readonly ever: number | null;
+    readonly loading: boolean;
+  }>,
+): FirstRun =>
+  quiet && environments.some(({ ever, loading }) => ever === null && loading)
+    ? "checking"
+    : neverBuilt(environments);
+
 export type FirstRunConfig =
   | { readonly kind: "loading" }
   | { readonly kind: "failed"; readonly message: string }

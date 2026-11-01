@@ -1,12 +1,10 @@
 /**
  * The machine's health as the status report carries it: the free space, load and gates the pass
  * holds claims on, with the limits it holds them at. Read by the status route on each status read,
- * by the same rules as `Pass.lowDisk` and `Pass.highLoad`, so the page shows what the pass decides.
+ * with the predicates `Pass.lowDisk` and `Pass.highLoad` use, so the page shows what the pass decides.
  */
-import type { FreeSpace } from "./disk.ts";
-import type { Load } from "./load.ts";
-
-const GIB = 1024 ** 3;
+import { diskFloor, isLowDisk, type FreeSpace } from "./disk.ts";
+import { isOverloaded, loadLimit, type Load } from "./load.ts";
 
 export interface MachineHealth {
   readonly disk:
@@ -48,8 +46,8 @@ export const machineHealth = (input: {
   readonly nowMs: number;
 }): MachineHealth => {
   const { space, load, gates } = input;
-  const floor = input.minFreeGib === 0 ? null : input.minFreeGib * GIB;
-  const limit = input.maxLoadPerCore === 0 ? null : input.maxLoadPerCore * load.cores;
+  const floor = diskFloor(input.minFreeGib);
+  const limit = loadLimit(input.maxLoadPerCore, load.cores);
   const oldest = gates.startedMs.length === 0 ? null : Math.min(...gates.startedMs);
   return {
     disk:
@@ -60,13 +58,13 @@ export const machineHealth = (input: {
             free_bytes: space.freeBytes,
             total_bytes: space.totalBytes,
             floor_bytes: floor,
-            low: floor !== null && space.freeBytes < floor,
+            low: isLowDisk(space.freeBytes, input.minFreeGib),
           },
     load: {
       one_minute: load.oneMinute,
       cores: load.cores,
       limit,
-      high: limit !== null && load.oneMinute > limit,
+      high: isOverloaded(load.oneMinute, limit),
     },
     gates: {
       running: gates.startedMs.length,

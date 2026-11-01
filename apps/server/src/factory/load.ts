@@ -23,6 +23,14 @@ export interface Overload {
   readonly limit: number;
 }
 
+/** `max_load_per_core` times the cores; null when 0 turns the check off. */
+export const loadLimit = (maxLoadPerCore: number, cores: number): number | null =>
+  maxLoadPerCore === 0 ? null : maxLoadPerCore * cores;
+
+/** Above the limit: the pass claims nothing and a second gate waits. */
+export const isOverloaded = (oneMinute: number, limit: number | null): boolean =>
+  limit !== null && oneMinute > limit;
+
 /**
  * The load when it is above `maxLoadPerCore` times the cores; null under it or at it. 0 turns the
  * check off, and `read` is not called.
@@ -30,6 +38,6 @@ export interface Overload {
 export const overload = (maxLoadPerCore: number, read: () => Load): Overload | null => {
   if (maxLoadPerCore === 0) return null;
   const { oneMinute, cores } = read();
-  const limit = maxLoadPerCore * cores;
-  return oneMinute > limit ? { oneMinute, cores, limit } : null;
+  const limit = loadLimit(maxLoadPerCore, cores);
+  return limit !== null && isOverloaded(oneMinute, limit) ? { oneMinute, cores, limit } : null;
 };

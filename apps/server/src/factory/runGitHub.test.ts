@@ -1,7 +1,14 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { KEEP_MS, ledgerPullRequest, makeRunGitHubReader, TEXT_LIMIT } from "./runGitHub.ts";
+import {
+  FRESH_RUNS_PER_WINDOW,
+  FRESH_WINDOW_MS,
+  KEEP_MS,
+  ledgerPullRequest,
+  makeRunGitHubReader,
+  TEXT_LIMIT,
+} from "./runGitHub.ts";
 import { GitHubFailed, type IssueDetail, type PullRequestSummary } from "./tracker/github.ts";
 
 const ISSUE: IssueDetail = {
@@ -120,6 +127,33 @@ it.effect("a signed-out gh is told apart from other failures", () =>
       kind: "failed",
       message: "HTTP 502: Bad Gateway",
     });
+  }),
+);
+
+it.effect("a failed or signed-out answer is not kept, so Try again asks GitHub again", () =>
+  Effect.gen(function* () {
+    const t = reader({ issue: () => Effect.fail(signedOut) });
+    yield* t.read({ id: RUN, entries: [] });
+    yield* t.read({ id: RUN, entries: [] });
+    assert.strictEqual(t.calls.filter((call) => call.startsWith("issue")).length, 2);
+  }),
+);
+
+it.effect("past the fresh-read budget a run is refused without asking GitHub", () =>
+  Effect.gen(function* () {
+    const t = reader();
+    const runAt = (n: number) => ({ id: `original-solutions__watchalong__${n}__1`, entries: [] });
+    for (let n = 1; n <= FRESH_RUNS_PER_WINDOW; n += 1) yield* t.read(runAt(n));
+    const asked = t.calls.filter((call) => call.startsWith("issue")).length;
+    assert.strictEqual(asked, FRESH_RUNS_PER_WINDOW);
+
+    const refused = yield* t.read(runAt(999));
+    assert.strictEqual(refused.issue?.kind, "failed");
+    assert.strictEqual(t.calls.filter((call) => call.startsWith("issue")).length, asked);
+    assert.strictEqual((yield* t.read(runAt(1))).issue?.kind, "ok");
+
+    t.clock.now = FRESH_WINDOW_MS;
+    assert.strictEqual((yield* t.read(runAt(999))).issue?.kind, "ok");
   }),
 );
 

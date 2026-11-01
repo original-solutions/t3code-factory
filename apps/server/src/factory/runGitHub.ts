@@ -1,7 +1,8 @@
 /**
  * What the run page shows of a run's issue and pull request, read through the factory's own `gh`.
  * Read only when a page asks, and kept a short while, so a person stepping through runs costs
- * GitHub at most two reads per run per {@link KEEP_MS}. Nothing here writes to GitHub.
+ * GitHub at most two reads per run per {@link KEEP_MS}. Fresh reads share one budget across all
+ * callers, as the passes spend the same `gh` login. Nothing here writes to GitHub.
  */
 import * as Effect from "effect/Effect";
 
@@ -11,6 +12,10 @@ import type { GitHubError, IssueDetail, PullRequestSummary } from "./tracker/git
 
 /** How long an answer is shown again without asking GitHub. */
 export const KEEP_MS = 2 * 60_000;
+
+/** At most this many runs are read fresh from GitHub per {@link FRESH_WINDOW_MS}, across callers. */
+export const FRESH_RUNS_PER_WINDOW = 10;
+export const FRESH_WINDOW_MS = 60_000;
 
 /** The longest issue or pull request text sent to the page, in characters. */
 export const TEXT_LIMIT = 40_000;
@@ -143,13 +148,15 @@ const settle = <A>(read: Effect.Effect<Part<A>, GitHubError>) =>
 /**
  * The reader the run route calls with a run it found in the ledger, so a run id nobody made is
  * never read from GitHub. `readsFor` gives the tracker reads of a repo, or null when the factory
- * has no config to read with; `nowMs` is the clock. Answers are kept per run for {@link KEEP_MS}.
+ * has no config to read with; `nowMs` is the clock. Answers GitHub gave are kept per run for
+ * {@link KEEP_MS}; failures are not, so Try again asks again.
  */
 export const makeRunGitHubReader = (options: {
   readonly readsFor: (repo: string) => GitHubReads | null;
   readonly nowMs: () => number;
 }) => {
   const kept = new Map<string, { readonly atMs: number; readonly answer: RunGitHub }>();
+  let freshAt: Array<number> = [];
   return Effect.fn("FactoryRunGitHub.read")(function* (shown: ShownRun) {
     const now = options.nowMs();
     const hit = kept.get(shown.id);
@@ -157,7 +164,20 @@ export const makeRunGitHubReader = (options: {
     const run = parseRunId(shown.id);
     const issueNumber = /^\d+$/.test(run.issue) ? Number(run.issue) : null;
     const prNumber = ledgerPullRequest(shown.entries);
+    freshAt = freshAt.filter((atMs) => now - atMs < FRESH_WINDOW_MS);
+    if (freshAt.length >= FRESH_RUNS_PER_WINDOW && (issueNumber !== null || prNumber !== null)) {
+      const busy: Part<never> = {
+        kind: "failed",
+        message: "the factory is reading GitHub for many runs at once; try again in a minute",
+      };
+      return {
+        id: shown.id,
+        issue: issueNumber === null ? null : busy,
+        pr: prNumber === null ? null : busy,
+      } satisfies RunGitHub;
+    }
     const reads = options.readsFor(run.repo);
+    if (reads !== null && (issueNumber !== null || prNumber !== null)) freshAt.push(now);
     const unread: Part<never> = { kind: "failed", message: "the factory has no config loaded" };
     const [issue, pr] = yield* Effect.all(
       [
@@ -176,7 +196,9 @@ export const makeRunGitHubReader = (options: {
     );
     const answer: RunGitHub = { id: shown.id, issue, pr };
     for (const [key, entry] of kept) if (now - entry.atMs >= KEEP_MS) kept.delete(key);
-    kept.set(shown.id, { atMs: now, answer });
+    const settled = (part: Part<unknown> | null) =>
+      part === null || part.kind === "ok" || part.kind === "gone";
+    if (settled(issue) && settled(pr)) kept.set(shown.id, { atMs: now, answer });
     return answer;
   });
 };

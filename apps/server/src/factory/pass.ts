@@ -25,7 +25,7 @@ import {
   recordRateLimit,
   type Cooldown,
 } from "./cooldown.ts";
-import type { FreeSpace } from "./disk.ts";
+import { GIB, isLowDisk, type FreeSpace } from "./disk.ts";
 import { stateLabel, type State } from "./domain/lifecycle.ts";
 import { overload, type Load, type Overload } from "./load.ts";
 import type { LedgerError } from "./ledger/errors.ts";
@@ -852,7 +852,6 @@ const pruneStaleBranches = Effect.fn("Pass.pruneStaleBranches")(function* (
 
 /** The machine's attention item while a probed volume is below `min_free_gib`. */
 const LOW_DISK_ITEM_ID = "low-disk";
-const GIB = 1024 ** 3;
 
 /**
  * Whether the worktrees' or gate checkouts' volume has less free than `min_free_gib`. A full disk
@@ -881,7 +880,7 @@ const lowDisk = Effect.fn("Pass.lowDisk")(function* (
     return false;
   }
   const { path, freeBytes } = read.success;
-  if (freeBytes >= machine.minFreeGib * GIB) {
+  if (!isLowDisk(freeBytes, machine.minFreeGib)) {
     yield* clear;
     return false;
   }
@@ -2250,6 +2249,9 @@ const claim = Effect.fn("Pass.claim")(function* (
     const issues = [...new Set(items.map((item) => item.number))].sort((a, b) => a - b);
     const postponed = new Set(items.filter(isPostponed).map((item) => item.number));
     queues.push({ repo, issues, postponed, held: 0 });
+  }
+  if (queues.length > 0) {
+    yield* pass.record({ event: "ready_listed", data: { repos: queues.length } });
   }
   // A model whose rate limit cools down with no fallback free takes no new session: a repo whose T3
   // project runs on it claims nothing (said once by `sayCooldowns`). Read only while one cools.

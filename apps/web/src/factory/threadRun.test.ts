@@ -131,10 +131,10 @@ describe("findThreadRun", () => {
     expect(asked).toEqual(["a__b__9__1", "a__b__9__2", "a__b__9__3"]);
   });
 
-  it("gives up on a read that fails for any other reason", async () => {
+  it("fails on a read that fails for any other reason, so the caller can ask again", async () => {
     const read = async (): Promise<FactoryRunDetail> => {
       throw new FactoryApiError(0, "timeout", "timed out");
     };
-    expect(await findThreadRun(read, "a__b__9__", "t-new")).toBeNull();
+    await expect(findThreadRun(read, "a__b__9__", "t-new")).rejects.toThrow("timed out");
   });
 });
