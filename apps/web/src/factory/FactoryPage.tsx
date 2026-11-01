@@ -16,6 +16,7 @@ import { FactoryBelt } from "./FactoryBelt";
 import { FactoryFrame } from "./FactoryFrame";
 import { FactoryError, FactoryLoading, FactoryReadFailure } from "./FactoryNotices";
 import { messageOf, parseRunId } from "./format";
+import { bucketOf, countBuckets, matchesQuery } from "./runLedger";
 import { RunsTable } from "./RunsTable";
 import type { FactorySearch } from "./search";
 import {
@@ -106,21 +107,22 @@ export function FactoryPage() {
   const [note, setNote] = useState<string | null>(null);
   // The attention items dismissed on this page, hidden before the server's next status says so.
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
+  // Typed on this page only: the runs chip is in the URL, a half-typed search is not.
+  const [query, setQuery] = useState("");
 
   const togglePause = async ({ environmentId, status }: FactoryEnvironment) => {
     const paused = status.data?.paused_by_hand != null;
     setBusy((current) => withEnvironment(current, environmentId, true));
-    try {
-      const { message } = await (paused
-        ? factoryApi.resumeClaims(environmentId)
-        : factoryApi.pauseClaims(environmentId));
-      if (message !== undefined) setNote(message);
-    } catch (error) {
-      setNote(messageOf(error));
-    } finally {
-      setBusy((current) => withEnvironment(current, environmentId, false));
-      status.refresh();
-    }
+    // No try/finally: the React Compiler cannot compile one.
+    const message = await (
+      paused ? factoryApi.resumeClaims(environmentId) : factoryApi.pauseClaims(environmentId)
+    ).then(
+      (result) => result.message,
+      (error: unknown) => messageOf(error),
+    );
+    if (message !== undefined) setNote(message);
+    setBusy((current) => withEnvironment(current, environmentId, false));
+    status.refresh();
   };
 
   const allAttention = environments
@@ -208,8 +210,14 @@ export function FactoryPage() {
   const attention = allAttention.filter(
     ({ environmentId, item }) => inEnvironment(environmentId) && (!item.repo || inRepo(item.repo)),
   );
-  const runs = listedRuns.filter(
+  const scopedRuns = listedRuns.filter(
     ({ environmentId, repo }) => inEnvironment(environmentId) && inRepo(repo),
+  );
+  const searched = scopedRuns.filter(({ label, run }) => matchesQuery(run, label, query));
+  const counts = countBuckets(searched.map(({ run }) => run));
+  const bucketFilter = search.runs ?? null;
+  const runs = searched.filter(
+    ({ run }) => bucketFilter === null || bucketOf(run) === bucketFilter,
   );
   const filtersHideEveryRun = runs.length === 0 && listedRuns.length > 0;
   // Only the shown environments' reads: a filtered-out read loading or listed says nothing here.
@@ -287,7 +295,19 @@ export function FactoryPage() {
         ) : runsListed ? (
           <RunsTable
             nowMs={nowMs}
-            onClearFilters={filtersHideEveryRun ? () => setSearch({}) : undefined}
+            bucket={bucketFilter}
+            counts={counts}
+            onBucket={(value) => setSearch(withFilter(search, "runs", value))}
+            onClearFilters={
+              filtersHideEveryRun
+                ? () => {
+                    setQuery("");
+                    setSearch({});
+                  }
+                : undefined
+            }
+            onQuery={setQuery}
+            query={query}
             onShowAll={() => setAllRuns(true)}
             onShowRecent={() => setAllRuns(false)}
             partial={!allRuns}

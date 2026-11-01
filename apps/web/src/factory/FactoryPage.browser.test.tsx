@@ -1322,6 +1322,39 @@ describe("FactoryPage filters", () => {
     expect(page.button("Clear filters")).toBeUndefined();
   });
 
+  it("narrows the runs by state chip, kept in the URL, and by search, and Clear filters drops both", async () => {
+    using _state = setup();
+    state.runs = resource({
+      data: {
+        runs: [
+          runRow({ title: "Claim guard" }),
+          runRow({ id: "acme__w__7__1", state: "stuck", finished: true, title: "Export CSV" }),
+          runRow({ id: "acme__w__8__1", state: "stuck", finished: true, title: "Sign PDF" }),
+        ],
+      },
+    });
+    await using page = await render(createElement(FactoryPage));
+    const chip = (name: string) =>
+      page.all('[aria-label="Run state"] button').find((b) => b.textContent?.startsWith(name))!;
+    expect(chip("Needs a person").textContent).toContain("2");
+    expect(chip("Merged")).toBeUndefined();
+    await page.click(chip("Needs a person"));
+    expect(state.navigations.at(-1)).toEqual({
+      to: "/factory",
+      search: { runs: "attention" },
+      replace: true,
+    });
+    expect(runLinks(page).toSorted()).toEqual(["acme__w__7__1", "acme__w__8__1"]);
+    await userEvent.type(browser.getByRole("searchbox", { name: "Search runs" }), "csv");
+    expect(runLinks(page)).toEqual(["acme__w__7__1"]);
+    await userEvent.type(browser.getByRole("searchbox", { name: "Search runs" }), " nothing");
+    expect(page.text()).toContain("No runs match the filter");
+    await page.click(page.button("Clear filters")!);
+    expect(runLinks(page)).toHaveLength(3);
+    expect(validateFactorySearch({ runs: "attention" })).toEqual({ runs: "attention" });
+    expect(validateFactorySearch({ runs: "bogus" })).toEqual({});
+  });
+
   it("has no Environment select with one environment and no Repo select with one repo", async () => {
     using _state = setup();
     state.status = resource({ data: statusData({ attention: [ATTENTION] }) });
