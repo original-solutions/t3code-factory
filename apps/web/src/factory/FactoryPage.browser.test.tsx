@@ -105,6 +105,7 @@ const resource = <T,>(overrides: Partial<FactoryResource<T>>): FactoryResource<T
   data: null,
   error: null,
   readAt: NOW,
+  dataAt: NOW,
   refresh: vi.fn(),
   ...overrides,
 });
@@ -213,9 +214,11 @@ describe("FactoryPage", () => {
       refresh: refreshRuns,
     });
     await using page = await render(createElement(FactoryPage));
-    expect(page.text()).toContain(
-      "Could not refresh Mac Studio: Missing permission orchestration:read",
+    expect(page.text()).toContain("Mac Studio won't show this browser its factory");
+    expect(page.all("a").some((a) => a.getAttribute("data-to") === "/settings/connections")).toBe(
+      true,
     );
+    expect(page.text()).toContain("Missing permission orchestration:read");
     expect(page.text()).toContain("Running");
     await page.click(page.button("Retry")!);
     expect(refreshStatus).toHaveBeenCalledTimes(1);
@@ -235,8 +238,9 @@ describe("FactoryPage", () => {
     });
     await using page = await render(createElement(FactoryPage));
     expect(page.text()).toContain("original-solutions/t3code-factory");
-    expect(page.text()).toContain("Could not refresh Mac Studio: fetch failed");
-    expect(page.text()).not.toContain("Could not load the factory");
+    expect(page.text()).toContain("Can't reach Mac Studio");
+    expect(page.text()).toContain("fetch failed");
+    expect(page.text()).toContain("Showing what it said at");
     await page.click(page.button("Retry")!);
     expect(refreshStatus).toHaveBeenCalledTimes(1);
     expect(refreshRuns).toHaveBeenCalledTimes(1);
@@ -673,7 +677,8 @@ describe("FactoryPage environments", () => {
       },
     ];
     await using page = await render(createElement(FactoryPage));
-    expect(page.text()).toContain("Could not refresh Laptop: timed out");
+    expect(page.text()).toContain("Can't reach Laptop");
+    expect(page.text()).toContain("timed out");
     expect(page.text()).toContain("Idle: no repos");
     await page.click(page.button("Retry")!);
     expect(refreshOther).toHaveBeenCalledTimes(1);
@@ -752,8 +757,9 @@ describe.each([375, 1280])("FactoryPage at %i px", (width) => {
     const text = page.text();
     expect(text.indexOf("run ended stuck")).toBeGreaterThan(-1);
     expect(text.indexOf("run ended stuck")).toBeLessThan(text.indexOf("launch-sending"));
-    expect(text.indexOf("Could not refresh")).toBeGreaterThan(text.indexOf("run ended stuck"));
-    expect(text.indexOf("Could not refresh")).toBeLessThan(text.indexOf("launch-sending"));
+    // A failed read sits above the belt, whose data it may have left stale.
+    expect(text.indexOf("Can't reach")).toBeGreaterThan(-1);
+    expect(text.indexOf("Can't reach")).toBeLessThan(text.indexOf("run ended stuck"));
     await page.unmount();
   });
 
@@ -1188,7 +1194,7 @@ describe("FactoryPage filters", () => {
     state.search = { environment: "env-3" };
     await using page = await render(createElement(FactoryPage));
     await page.click(page.button("Show all runs")!);
-    expect(page.text()).not.toContain("Could not refresh Mac Studio");
+    expect(page.text()).not.toContain("Can't reach Mac Studio");
   });
 
   it("names a filtered-out environment whose status the belt still shows when it fails", async () => {
@@ -1201,7 +1207,8 @@ describe("FactoryPage filters", () => {
     });
     state.search = { environment: "env-3" };
     await using page = await render(createElement(FactoryPage));
-    expect(page.text()).toContain("Could not refresh Mac Studio: fetch failed");
+    expect(page.text()).toContain("Can't reach Mac Studio");
+    expect(page.text()).toContain("fetch failed");
   });
 
   it("names a filtered-out environment whose recent runs the belt still counts when they fail", async () => {
@@ -1214,7 +1221,8 @@ describe("FactoryPage filters", () => {
     });
     state.search = { environment: "env-3" };
     await using page = await render(createElement(FactoryPage));
-    expect(page.text()).toContain("Could not refresh Mac Studio: fetch failed");
+    expect(page.text()).toContain("Can't reach Mac Studio");
+    expect(page.text()).toContain("fetch failed");
   });
 
   describe("when an environment's recent runs failed before their first answer", () => {
@@ -1236,7 +1244,8 @@ describe("FactoryPage filters", () => {
       expect(stuck.textContent).toContain("Gate failed");
       expect(page.all('[aria-label="Loading Stuck"]')).toHaveLength(0);
       expect(stat(page, "Stuck")).toBe("1");
-      expect(page.text()).toContain("Could not refresh Mac Studio: timed out");
+      expect(page.text()).toContain("Can't reach Mac Studio");
+      expect(page.text()).toContain("timed out");
       expect(page.all('[aria-label="Retry Mac Studio"]')).toHaveLength(1);
     };
 
@@ -1296,7 +1305,8 @@ describe("FactoryPage filters", () => {
     state.others[0]!.runs = resource({ status: "error", error: new Error("timed out") });
     state.search = { environment: "env-3" };
     await using failed = await render(createElement(FactoryPage));
-    expect(failed.text()).toContain("Could not refresh Laptop: timed out");
+    expect(failed.text()).toContain("Can't reach Laptop");
+    expect(failed.text()).toContain("timed out");
     expect(failed.text()).not.toContain("No runs match the filter");
     await failed.unmount();
     state.others[0]!.runs = resource({ data: { runs: [] } });

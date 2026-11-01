@@ -238,6 +238,7 @@ describe("factoryApi on the connected environment", () => {
     } as unknown as PreparedConnection);
     const error = await failure(factoryApi.status(ENV_1));
     expect(error.status).toBe(0);
+    expect(error.code).toBe("relay");
     expect(error.message).toBe("The factory is not available over a relay connection yet.");
     expect(fetchMock).not.toHaveBeenCalled();
   });

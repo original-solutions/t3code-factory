@@ -272,7 +272,7 @@ const call = async <T>(
     if (error instanceof FactoryHttpError && error.kind === "timeout") throw timedOut();
     throw new FactoryApiError(
       0,
-      null,
+      error instanceof FactoryHttpError ? error.kind : null,
       error instanceof Error && error.message ? error.message : "The request failed.",
     );
   }

@@ -86,6 +86,7 @@ const resource = <T,>(overrides: Partial<FactoryResource<T>>): FactoryResource<T
   data: null,
   error: null,
   readAt: 0,
+  dataAt: 0,
   refresh: vi.fn(),
   ...overrides,
 });
@@ -156,6 +157,24 @@ describe("FactoryRunPage", () => {
     });
     await using page = await mount();
     expect(page.text()).toContain("ledger exploded");
+    await page.click(page.button("Retry")!);
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a run whose refresh failed under a notice saying it may be stale", async () => {
+    using _state = setup();
+    const refresh = vi.fn();
+    state.run = resource({
+      status: "error",
+      data: detail(),
+      dataAt: new Date(2026, 9, 27, 14, 5).getTime(),
+      error: new FactoryApiError(0, "timeout", "no answer in 15 seconds"),
+      refresh,
+    });
+    await using page = await mount();
+    expect(page.text()).toContain("is not answering");
+    expect(page.text()).toContain("Showing what it said at 14:05");
+    expect(page.text()).toContain("gate-checking");
     await page.click(page.button("Retry")!);
     expect(refresh).toHaveBeenCalledTimes(1);
   });

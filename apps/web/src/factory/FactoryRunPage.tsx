@@ -20,7 +20,7 @@ import {
 
 import { FactoryApiError, factoryApi, type FactoryEntry } from "./api";
 import { FactoryFrame } from "./FactoryFrame";
-import { FactoryError, FactoryLoading } from "./FactoryNotices";
+import { FactoryError, FactoryLoading, FactoryReadFailure } from "./FactoryNotices";
 import {
   currentStep,
   issueRef,
@@ -309,13 +309,28 @@ export function FactoryRunPage({
           title={`No run ${runId}`}
         />
       ) : (
-        <FactoryError message={messageOf(run.error)} onRetry={run.refresh} />
+        <FactoryReadFailure
+          dataAt={run.dataAt}
+          error={run.error}
+          label={label}
+          onRetry={run.refresh}
+          verb="read"
+        />
       );
   } else if (run.data === null) {
     body = <FactoryLoading label="Loading run" />;
   } else {
     body = (
       <>
+        {run.status === "error" ? (
+          <FactoryReadFailure
+            dataAt={run.dataAt}
+            error={run.error}
+            label={label}
+            onRetry={run.refresh}
+            verb="refresh"
+          />
+        ) : null}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
           <Badge variant={stateBadgeVariant(shown)}>{labelForState(shown)}</Badge>
           <span className="min-w-0 break-words text-muted-foreground">Step: {step ?? "-"}</span>

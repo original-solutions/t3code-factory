@@ -35,6 +35,8 @@ export interface FactoryResource<T> {
   readonly error: Error | null;
   /** When the latest answer landed (0 before any): the pages' age labels move on with a poll. */
   readonly readAt: number;
+  /** When the data shown landed (0 before any): a failed read keeps both. */
+  readonly dataAt: number;
   readonly refresh: () => void;
 }
 
@@ -42,7 +44,7 @@ type Loaded<T> = Omit<FactoryResource<T>, "refresh">;
 
 type Resource = "status" | "runs" | "runs:all" | `run:${string}`;
 
-const LOADING: Loaded<never> = { status: "loading", data: null, error: null, readAt: 0 };
+const LOADING: Loaded<never> = { status: "loading", data: null, error: null, readAt: 0, dataAt: 0 };
 
 interface Store {
   readonly environmentId: EnvironmentId;
@@ -102,13 +104,17 @@ const read = (key: string, store: Store): void => {
     }
   };
   load(store).then(
-    (data) => settle({ status: "ready", data, error: null, readAt: Date.now() }),
+    (data) => {
+      const now = Date.now();
+      settle({ status: "ready", data, error: null, readAt: now, dataAt: now });
+    },
     (cause: unknown) =>
       settle({
         status: "error",
         data: store.state.data,
         error: cause instanceof Error ? cause : new Error(String(cause)),
         readAt: Date.now(),
+        dataAt: store.state.dataAt,
       }),
   );
 };

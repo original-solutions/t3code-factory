@@ -244,7 +244,8 @@ export function FactoryPage() {
       {
         environmentId,
         label,
-        message: messageOf(failed.error),
+        error: failed.error,
+        dataAt: failed.dataAt,
         retry: () => {
           status.refresh();
           (failedRuns ?? runsRead)?.refresh();
@@ -268,6 +269,17 @@ export function FactoryPage() {
   } else {
     body = (
       <>
+        {/* Above the belt: what it shows may be stale, and below it the notice was out of sight. */}
+        {notices.map(({ environmentId, label, error, dataAt, retry }) => (
+          <FactoryReadFailure
+            dataAt={dataAt}
+            error={error}
+            key={environmentId}
+            label={label}
+            onRetry={retry}
+            verb="refresh"
+          />
+        ))}
         <FactoryBelt
           attention={attention}
           busy={busy}
@@ -279,15 +291,6 @@ export function FactoryPage() {
           recent={recentById}
           showEnvironment={showEnvironment}
         />
-        {notices.map(({ environmentId, label, message, retry }) => (
-          <FactoryReadFailure
-            key={environmentId}
-            label={label}
-            message={message}
-            onRetry={retry}
-            verb="refresh"
-          />
-        ))}
         {note ? (
           <p className="break-words text-sm text-muted-foreground" role="status">
             {note}

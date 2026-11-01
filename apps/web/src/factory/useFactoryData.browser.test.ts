@@ -212,7 +212,7 @@ describe("useFactoryStatus", () => {
     expect(result.current.data?.attention).toHaveLength(2);
   });
 
-  it("stamps when each answer landed, failed or not, and not in between", async () => {
+  it("stamps when each answer landed, failed or not, and when its data did", async () => {
     await using _state = setup();
     let fail = false;
     __setFactoryApiForTests(
@@ -230,6 +230,7 @@ describe("useFactoryStatus", () => {
     fail = true;
     await settle(20_000);
     expect(result.current.readAt).toBe(day + 30_000);
+    expect(result.current.dataAt).toBe(day);
   });
 
   it("fetches again every 30 seconds and on refresh, and not in between", async () => {

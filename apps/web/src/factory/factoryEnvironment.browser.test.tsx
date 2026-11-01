@@ -530,8 +530,9 @@ describe("the Factory page shows every environment that runs a factory", () => {
       },
     });
     const page = await show(createElement(FactoryPage));
-    expect(page.text()).toContain("Could not read Desktop: state file locked");
-    expect(page.text()).not.toContain("Could not refresh Desktop");
+    expect(page.text()).toContain("Desktop's factory failed to answer");
+    expect(page.text()).toContain("state file locked");
+    expect(page.text().split("Desktop's factory failed to answer")).toHaveLength(2);
     expect(page.text()).toContain("acme/widgets");
     expect(calls.runs.map(([env]) => env)).toEqual([ENV_2]);
     statusReads.length = 0;
@@ -567,7 +568,8 @@ describe("the Factory page shows every environment that runs a factory", () => {
       },
     });
     const page = await show(createElement(FactoryPage));
-    expect(page.text()).toContain("Could not refresh Desktop: ledger exploded");
+    expect(page.text()).toContain("Desktop's factory failed to answer");
+    expect(page.text()).toContain("ledger exploded");
     expect(page.text()).toContain("acme/widgets");
     expect(page.button("Retry")).toBeDefined();
   });

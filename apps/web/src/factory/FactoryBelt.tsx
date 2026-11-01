@@ -161,7 +161,8 @@ function ControlBar({
           </b>
         </div>
       </div>
-      <NextPass passes={report?.passes} />
+      {/* A countdown from a read that has since failed would tick on a pass nobody can see. */}
+      <NextPass passes={selected.status.status === "error" ? undefined : report?.passes} />
       <dl className="m-0 flex flex-wrap items-stretch">
         {report ? <Stat label="Slots" value={slotsText(report.slots)} /> : null}
         <Stat label="Runs today" value={counters.runsToday} />
@@ -185,8 +186,9 @@ function EnvironmentNote({
   if (report === null && status.status === "error") {
     return (
       <FactoryReadFailure
+        dataAt={status.dataAt}
+        error={status.error}
         label={label}
-        message={messageOf(status.error)}
         onRetry={status.refresh}
         verb="read"
       />
