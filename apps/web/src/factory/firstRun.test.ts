@@ -87,6 +87,13 @@ describe("firstRunSteps", () => {
     expect(steps.ready).toHaveLength(2);
   });
 
+  it("never counts claims as on where they are not read", () => {
+    const steps = firstRunSteps(ok([block("A", broken), block("B", { factory: null })]), null);
+    expect(steps.states).toEqual(["done", "current", "todo", "todo"]);
+    expect(steps.errors).toBe(1);
+    expect(firstRunSteps(ok([block("A")]), null).states[2]).toBe("current");
+  });
+
   it("knows only the claims step while the config is loading or failed", () => {
     expect(firstRunSteps({ kind: "loading" }, true).states).toEqual([
       "todo",

@@ -25,15 +25,16 @@ export type FirstRunConfig =
 /**
  * The four things between a machine and its first run: a watched repo, a config the factory can
  * build from, claims on, an issue labelled. The first one not done is current; a step that cannot
- * pass as things are is blocked.
+ * pass as things are is blocked. `paused` is null where claims are not read, so that step is not done.
  */
-export const firstRunSteps = (config: FirstRunConfig, paused: boolean) => {
+export const firstRunSteps = (config: FirstRunConfig, paused: boolean | null) => {
   const repos = config.kind === "ok" ? config.repos : [];
   const ready = repos.filter((repo) => {
     const health = repoHealth(repo);
     return health === "ready" || health === "default";
   });
-  const broken = repos.find((repo) => repoHealth(repo) === "error") ?? null;
+  const errored = repos.filter((repo) => repoHealth(repo) === "error");
+  const broken = errored[0] ?? null;
   // Each step: true when done, "blocked" when it cannot pass as things are, false when not yet.
   const watch =
     config.kind === "failed" || (config.kind === "ok" && config.watchError !== null)
@@ -42,10 +43,10 @@ export const firstRunSteps = (config: FirstRunConfig, paused: boolean) => {
   const read =
     ready.length > 0
       ? true
-      : repos.length > 0 && repos.every((repo) => repoHealth(repo) === "error")
+      : repos.length > 0 && errored.length === repos.length
         ? "blocked"
         : false;
-  const raw: ReadonlyArray<boolean | "blocked"> = [watch, read, !paused, false];
+  const raw: ReadonlyArray<boolean | "blocked"> = [watch, read, paused === false, false];
   let reached = false;
   const states = raw.map((step): SetupStepState => {
     if (step === true) return "done";
@@ -54,5 +55,5 @@ export const firstRunSteps = (config: FirstRunConfig, paused: boolean) => {
     return step === "blocked" ? "blocked" : "current";
   });
   const at = states.findIndex((state) => state === "current" || state === "blocked");
-  return { states, current: at + 1, ready, broken };
+  return { states, current: at + 1, ready, broken, errors: errored.length };
 };

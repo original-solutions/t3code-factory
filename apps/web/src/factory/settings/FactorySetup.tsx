@@ -1,47 +1,11 @@
-import { Link } from "@tanstack/react-router";
-import { CheckIcon, CopyIcon } from "lucide-react";
-
 import { SettingsSection } from "../../components/settings/settingsLayout";
-import { Button } from "../../components/ui/button";
-import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
-import { TouchLink } from "../TouchLink";
+import { firstRunSteps } from "../firstRun";
+import { FirstRunSteps } from "../FirstRunSteps";
 import type { RepoBlock } from "./api";
-import { setupProgress } from "./repoRoster";
-import { Step } from "./SetupStep";
-
-const FACTORY_BLOCK = `factory:
-  instructors: [your-github-login]
-  base: main
-  provision: [npm ci]
-  gate: [npm test]
-  autonomy: pr
-`;
-
-function Snippet({ text }: { readonly text: string }) {
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ timeout: 1500 });
-  return (
-    <div className="relative min-w-0 rounded-lg border border-border bg-muted/50">
-      <pre className="overflow-x-auto px-3 py-2.5 pr-10 font-mono text-xs leading-relaxed">
-        {text}
-      </pre>
-      <div className="absolute top-1.5 right-1.5">
-        <Button
-          aria-label="Copy the factory block"
-          onClick={() => copyToClipboard(text, undefined)}
-          size="icon-xs"
-          variant="ghost"
-        >
-          {isCopied ? <CheckIcon /> : <CopyIcon />}
-        </Button>
-      </div>
-    </div>
-  );
-}
 
 /**
- * The way from a fresh machine to its first build, at the top of Settings → Factory until a watched
- * repo can take work: add a repo, get its config read, label an issue. Each step says where it
- * stands from the config read the page already made.
+ * The first-run steps at the top of Settings → Factory until a watched repo can take work. Claims
+ * and the label come after that, on the Factory page, so this page does not read claims.
  */
 export function FactorySetup({
   file,
@@ -52,74 +16,18 @@ export function FactorySetup({
   readonly repos: ReadonlyArray<RepoBlock>;
   readonly watchError: string | null;
 }) {
-  const progress = setupProgress(repos, watchError);
-  if (progress === null) return null;
-  const { watch, read, errors, firstError } = progress;
-  const stepOf = watch === "done" ? 2 : 1;
+  const config = { kind: "ok", repos, watchError } as const;
+  const steps = firstRunSteps(config, null);
+  if (steps.ready.length > 0) return null;
   return (
     <div data-factory-setup="">
       <SettingsSection
         headerAction={
-          <span className="text-xs text-muted-foreground tabular-nums">{`Step ${stepOf} of 3`}</span>
+          <span className="text-xs text-muted-foreground tabular-nums">{`Step ${steps.current} of 4`}</span>
         }
         title="Get the factory building"
       >
-        <ol className="flex flex-col pt-3">
-          <Step n={1} state={watch} title="Watch a repo">
-            {watch === "blocked" ? (
-              <p className="break-words">T3 projects could not be listed: {watchError}</p>
-            ) : watch === "done" ? (
-              <p>
-                {repos.length === 1 ? "1 repo is watched." : `${repos.length} repos are watched.`}
-              </p>
-            ) : (
-              <>
-                <p>
-                  Add a clone of the repo as a T3 project, with this block committed to its
-                  .dw/config.yml on the default branch:
-                </p>
-                <Snippet text={FACTORY_BLOCK} />
-                <p className="break-words">
-                  Or put <code>default_project</code> in <code className="break-all">{file}</code>{" "}
-                  to watch every T3 project with a GitHub origin.
-                </p>
-                <div>
-                  <Button render={<Link to="/settings/projects" />} size="sm" variant="outline">
-                    Add a project
-                  </Button>
-                </div>
-              </>
-            )}
-          </Step>
-          <Step n={2} state={read} title="Let the factory read its config">
-            {read === "todo" ? (
-              <p>Each pass reads the repo's .dw/config.yml; what it found shows below.</p>
-            ) : errors > 0 && firstError !== null ? (
-              <>
-                <p>
-                  {errors === repos.length
-                    ? "Every watched repo has an error, so nothing can be built yet."
-                    : `${errors} of ${repos.length} watched repos have an error, and the rest are not read yet.`}{" "}
-                  Open a repo under Watched repos for all of them.
-                </p>
-                <p className="line-clamp-3 break-words rounded-md border border-destructive/24 bg-destructive/4 px-2.5 py-1.5 text-destructive-foreground">
-                  <span className="font-medium">{firstError.title}:</span> {firstError.message}
-                </p>
-              </>
-            ) : (
-              <p>Not read yet: the factory reads it on its next pass.</p>
-            )}
-          </Step>
-          <Step last n={3} state="todo" title="Label an issue factory:ready">
-            <p>
-              An instructor's <code>factory:ready</code> label on a GitHub issue starts a run on the
-              next pass.
-            </p>
-            <div className="-my-2.5">
-              <TouchLink render={<Link to="/factory" />}>Follow it on the Factory page</TouchLink>
-            </div>
-          </Step>
-        </ol>
+        <FirstRunSteps config={config} place={{ kind: "settings", file }} steps={steps} />
       </SettingsSection>
     </div>
   );

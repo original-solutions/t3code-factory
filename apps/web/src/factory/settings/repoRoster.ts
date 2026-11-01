@@ -38,25 +38,3 @@ export const repoRoster = (repos: ReadonlyArray<RepoBlock>) => {
 };
 
 export type SetupStepState = "done" | "current" | "todo" | "blocked";
-
-/**
- * How far a machine is from its first build: a repo watched, then one whose config the factory can
- * build from. Null once any repo can take work, when there is nothing left to set up.
- */
-export const setupProgress = (repos: ReadonlyArray<RepoBlock>, watchError: string | null) => {
-  const healths = repos.map(repoHealth);
-  if (healths.some((health) => health === "ready" || health === "default")) return null;
-  const broken = repos.find((block) => repoHealth(block) === "error");
-  const watch: SetupStepState =
-    watchError !== null ? "blocked" : repos.length > 0 ? "done" : "current";
-  const read: SetupStepState = repos.length > 0 ? "current" : "todo";
-  return {
-    watch,
-    read,
-    errors: healths.filter((health) => health === "error").length,
-    firstError:
-      broken === undefined
-        ? null
-        : { title: broken.title, message: broken.errors?.[0]?.message ?? "" },
-  };
-};

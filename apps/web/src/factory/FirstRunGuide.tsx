@@ -1,17 +1,14 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { Link } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { useEffect, useEffectEvent, useState } from "react";
 
-import { Button } from "~/components/ui/button";
 import { usePreparedConnection } from "~/state/session";
 
 import { STATION_META, STATIONS, type Station } from "./belt";
 import { STATION_ICON } from "./BeltRail";
 import { firstRunSteps, type FirstRunConfig } from "./firstRun";
-import { fetchFactoryConfig, type RepoBlock } from "./settings/api";
-import { Step } from "./settings/SetupStep";
-import { TouchLink } from "./TouchLink";
+import { FirstRunSteps } from "./FirstRunSteps";
+import { fetchFactoryConfig } from "./settings/api";
 
 /** The machine config of one environment, read once when its connection is ready. */
 function useFirstRunConfig(environmentId: EnvironmentId): FirstRunConfig {
@@ -43,17 +40,6 @@ function useFirstRunConfig(environmentId: EnvironmentId): FirstRunConfig {
   return config;
 }
 
-const names = (repos: ReadonlyArray<RepoBlock>) => {
-  const shown = repos.slice(0, 3).map(({ repo, title }) => repo || title);
-  return repos.length > 3 ? `${shown.join(", ")} and ${repos.length - 3} more` : shown.join(", ");
-};
-
-const SETTINGS = (
-  <Button render={<Link to="/settings/factory" />} size="sm" variant="outline">
-    Open Settings → Factory
-  </Button>
-);
-
 /** What each post does to a run, for a machine that has never sent one down the belt. */
 const JOURNEY = (gate: ReadonlyArray<string>): Readonly<Record<Station, string>> => ({
   claimed: "The next pass takes the labelled issue.",
@@ -82,16 +68,8 @@ export function FirstRunGuide({
   readonly onResume: () => void;
 }) {
   const config = useFirstRunConfig(environmentId);
-  const { states, current, ready, broken } = firstRunSteps(config, paused);
-  const [watch, read, claims, label] = states as [
-    (typeof states)[number],
-    (typeof states)[number],
-    (typeof states)[number],
-    (typeof states)[number],
-  ];
-  const repos = config.kind === "ok" ? config.repos : [];
-  const first = ready[0]?.factory ?? null;
-  const journey = JOURNEY(first?.gate ?? []);
+  const steps = firstRunSteps(config, paused);
+  const journey = JOURNEY(steps.ready[0]?.factory?.gate ?? []);
   return (
     <section
       aria-label="First run"
@@ -106,105 +84,12 @@ export function FirstRunGuide({
             request on its own.
           </p>
         </div>
-        {current > 0 ? (
-          <span className="text-xs text-muted-foreground tabular-nums">{`Step ${current} of 4`}</span>
+        {steps.current > 0 ? (
+          <span className="text-xs text-muted-foreground tabular-nums">{`Step ${steps.current} of 4`}</span>
         ) : null}
       </header>
       <div className="grid min-w-0 @3xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <ol aria-label="Before the first run" className="flex min-w-0 flex-col pt-4">
-          <Step n={1} state={watch} title="Watch a repo">
-            {config.kind === "loading" ? (
-              <p>Reading this machine's config.</p>
-            ) : config.kind === "failed" ? (
-              <>
-                <p className="break-words">
-                  The factory config could not be read: {config.message}
-                </p>
-                <div>{SETTINGS}</div>
-              </>
-            ) : config.watchError !== null ? (
-              <>
-                <p className="break-words">T3 projects could not be listed: {config.watchError}</p>
-                <div>{SETTINGS}</div>
-              </>
-            ) : watch === "done" ? (
-              <p className="break-words">{`Watching ${names(repos)}.`}</p>
-            ) : (
-              <>
-                <p>
-                  Add a clone of a GitHub repo as a T3 project, with a factory block in its{" "}
-                  <code>.dw/config.yml</code>. Settings has the block to copy.
-                </p>
-                <div>{SETTINGS}</div>
-              </>
-            )}
-          </Step>
-          <Step n={2} state={read} title="Give it a config it can build from">
-            {read === "done" ? (
-              <p className="break-words">{`Ready to build: ${names(ready)}.`}</p>
-            ) : read === "blocked" && broken !== null ? (
-              <>
-                <p>
-                  {repos.length === 1
-                    ? "The watched repo has an error, so nothing can be built yet."
-                    : `All ${repos.length} watched repos have an error, so nothing can be built yet.`}
-                </p>
-                <p className="break-words rounded-md border border-destructive/24 bg-destructive/4 px-2.5 py-1.5 text-destructive-foreground">
-                  <span className="line-clamp-3">
-                    <span className="font-medium">{broken.title}:</span>{" "}
-                    {broken.errors?.[0]?.message ?? ""}
-                  </span>
-                </p>
-                <div>{SETTINGS}</div>
-              </>
-            ) : read === "current" ? (
-              <p>Not read yet: the factory reads each repo's config at its next pass.</p>
-            ) : (
-              <p>Each pass reads the watched repos' configs.</p>
-            )}
-          </Step>
-          <Step n={3} state={claims} title="Turn claims on">
-            {claims === "done" ? (
-              <p>Claims are on: each pass looks for labelled issues.</p>
-            ) : (
-              <>
-                <p>Claims are paused, so no issue is picked up.</p>
-                <div>
-                  <Button disabled={busy} onClick={onResume} size="sm" variant="outline">
-                    Turn claims on
-                  </Button>
-                </div>
-              </>
-            )}
-          </Step>
-          <Step last n={4} state={label} title="Label an issue factory:ready">
-            <p>
-              {first !== null && first.instructors.length > 0
-                ? `An instructor (${first.instructors.join(", ")}) adds the label; `
-                : "An instructor adds the label; "}
-              the next pass claims the issue and it appears on this belt.
-            </p>
-            {ready.length > 0 ? (
-              <ul className="-my-2.5 flex flex-wrap gap-x-4">
-                {ready.slice(0, 3).map(({ repo }) => (
-                  <li key={repo}>
-                    <TouchLink
-                      render={
-                        <a
-                          href={`https://github.com/${repo}/issues`}
-                          rel="noreferrer"
-                          target="_blank"
-                        />
-                      }
-                    >
-                      {`${repo} issues`}
-                    </TouchLink>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </Step>
-        </ol>
+        <FirstRunSteps config={config} place={{ kind: "factory", busy, onResume }} steps={steps} />
         <div className="flex min-w-0 flex-col gap-3 border-t px-4 py-4 @3xl:border-t-0 @3xl:border-l">
           <h3 className="text-3xs font-semibold uppercase tracking-widest text-muted-foreground">
             How a run travels
