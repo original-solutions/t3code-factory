@@ -132,6 +132,7 @@ const calls = {
   dismiss: [] as Array<[string, ReadonlyArray<string>]>,
   stop: [] as Array<[string, string]>,
   runRead: [] as Array<[string, string]>,
+  gitHubRead: [] as Array<[string, string]>,
   runs: [] as Array<[string, boolean]>,
 };
 
@@ -154,6 +155,10 @@ const fakeApi: FactoryApi = {
   run: async (env, id) => {
     calls.runRead.push([env, id]);
     return runDetail(id) as never;
+  },
+  runGitHub: async (env, id) => {
+    calls.gitHubRead.push([env, id]);
+    return { id, issue: { kind: "signed-out", message: "not signed in" }, pr: null };
   },
   stopRun: async (env, id) => {
     calls.stop.push([env, id]);
@@ -668,7 +673,8 @@ describe("the run page follows its environment", () => {
     const page = await show(createElement(FactoryRunPage, { environmentId: ENV_2, runId: RUN_2 }));
     expect(calls.runRead.length).toBeGreaterThan(0);
     expect(calls.runRead.every(([env, id]) => env === ENV_2 && id === RUN_2)).toBe(true);
-    expect(page.text()).toContain("Studio");
+    expect(calls.gitHubRead).toEqual([[ENV_2, RUN_2]]);
+    expect(page.text()).toContain("GitHub can't be read from Studio");
     // The header's thread link and the timeline's session link.
     expect(linksTo(page, "/$environmentId/$threadId")).toEqual([
       { environmentId: ENV_2, threadId: "thread-9" },

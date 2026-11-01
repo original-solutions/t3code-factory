@@ -31,6 +31,7 @@ import {
   prEndOf,
   prUrlOf,
   runIsFinished,
+  prRef,
   runState,
   shownState,
   threadIdOf,
@@ -45,6 +46,7 @@ import {
 import { nextStep } from "./nextStep";
 import { GateOutput } from "./GateOutput";
 import { RunNextStep } from "./RunNextStep";
+import { RunGitHub } from "./RunGitHub";
 import { RunReportCard } from "./RunReportCard";
 import { RunTimeline } from "./RunTimeline";
 import { RunTrackLine } from "./RunTrackLine";
@@ -337,6 +339,13 @@ export function FactoryRunPage({
             threadId={threadId}
           />
         ) : null}
+        <RunGitHub
+          environmentId={environmentId}
+          issue={issue}
+          label={label}
+          pr={prRef(prUrlOf(entries))}
+          runId={runId}
+        />
         <RunTimeline entries={entries} environmentId={environmentId} />
         <GateOutput entries={entries} />
         <Ledger entries={entries} skipped={run.data.skipped} truncated={run.data.truncated} />

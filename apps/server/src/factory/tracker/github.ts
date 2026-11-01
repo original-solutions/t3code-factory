@@ -649,6 +649,25 @@ const PullRequestView = Schema.Struct({
   createdAt: Schema.String,
 });
 
+const PullRequestSummaryView = Schema.Struct({
+  number: Schema.Number,
+  title: Schema.String,
+  body: OptionalText,
+  state: Schema.String,
+  isDraft: Schema.Boolean,
+  additions: Schema.Number,
+  deletions: Schema.Number,
+  changedFiles: Schema.Number,
+  reviewDecision: OptionalText,
+  files: Schema.optional(
+    Schema.NullOr(
+      Schema.Array(
+        Schema.Struct({ path: Schema.String, additions: Schema.Number, deletions: Schema.Number }),
+      ),
+    ),
+  ),
+});
+
 const CheckRunRows = Schema.Array(
   Schema.Struct({
     name: Schema.String,
@@ -839,6 +858,26 @@ export interface PullRequest {
   readonly mergeable: Mergeable;
   /** When it was opened, as GitHub writes it: `YYYY-MM-DDTHH:MM:SSZ`. */
   readonly createdAt: string;
+}
+
+/** What a person reads of a pull request on the run page, as `gh pr view` gives it. */
+export interface PullRequestSummary {
+  readonly number: number;
+  readonly title: string;
+  /** "" for a pull request with no description. */
+  readonly body: string;
+  readonly state: "open" | "draft" | "merged" | "closed";
+  readonly additions: number;
+  readonly deletions: number;
+  readonly changedFiles: number;
+  /** GitHub's review decision in lower case, e.g. `approved`; null when it gives none. */
+  readonly reviewDecision: string | null;
+  /** The files gh lists (up to 100), in GitHub's order. */
+  readonly files: ReadonlyArray<{
+    readonly path: string;
+    readonly additions: number;
+    readonly deletions: number;
+  }>;
 }
 
 /**
@@ -1433,6 +1472,48 @@ export const makeGitHub = (options: GitHubOptions) => {
             ? "conflicting"
             : "unknown",
       createdAt: raw.createdAt,
+    };
+  });
+
+  /** The pull request as a person reads it; null when GitHub has no such pull request. */
+  const pullRequestSummary = Effect.fn("GitHub.pullRequestSummary")(function* (
+    number: number,
+  ): GitHubGen<PullRequestSummary | null> {
+    const args = [
+      ...repoArgs(["pr", "view", String(number)]),
+      "--json",
+      "number,title,body,state,isDraft,additions,deletions,changedFiles,reviewDecision,files",
+    ];
+    const stdout = yield* gh(args).pipe(
+      Effect.catchTags({
+        GitHubFailed: (error) =>
+          PULL_REQUEST_GONE.test(error.stderr) ? Effect.succeed(null) : Effect.fail(error),
+      }),
+    );
+    if (stdout === null) return null;
+    const raw = yield* decode(
+      PullRequestSummaryView,
+      args,
+      "an object describing a pull request",
+      stdout,
+    );
+    return {
+      number: raw.number,
+      title: raw.title,
+      body: raw.body ?? "",
+      state:
+        raw.state === "MERGED"
+          ? "merged"
+          : raw.state === "CLOSED"
+            ? "closed"
+            : raw.isDraft
+              ? "draft"
+              : "open",
+      additions: raw.additions,
+      deletions: raw.deletions,
+      changedFiles: raw.changedFiles,
+      reviewDecision: raw.reviewDecision ? raw.reviewDecision.toLowerCase() : null,
+      files: raw.files ?? [],
     };
   });
 
@@ -2389,6 +2470,7 @@ export const makeGitHub = (options: GitHubOptions) => {
     fileAt,
     baseConfig,
     pullRequest,
+    pullRequestSummary,
     markPrReady,
     markPrDraft,
     commentOnPr,

@@ -116,6 +116,45 @@ export interface FactoryRunDetail {
   readonly skipped: number;
 }
 
+/** One part of a run's GitHub read: what GitHub said, or why it could not be asked. */
+export type FactoryGitHubPart<T> =
+  | ({ readonly kind: "ok" } & T)
+  | { readonly kind: "signed-out"; readonly message: string }
+  | { readonly kind: "failed"; readonly message: string }
+  | { readonly kind: "gone" };
+
+/** A run's issue and pull request as the factory's `gh` reads them (`runGitHub.ts`). Untrusted text. */
+export interface FactoryRunGitHub {
+  readonly id: string;
+  /** Null for an issue that is not on GitHub. */
+  readonly issue: FactoryGitHubPart<{
+    readonly number: number;
+    readonly title: string;
+    readonly body: string;
+    readonly body_cut: boolean;
+    readonly author: string | null;
+    readonly labels: ReadonlyArray<string>;
+    readonly closed: boolean;
+  }> | null;
+  /** Null while the run has opened no pull request. */
+  readonly pr: FactoryGitHubPart<{
+    readonly number: number;
+    readonly title: string;
+    readonly body: string;
+    readonly body_cut: boolean;
+    readonly state: "open" | "draft" | "merged" | "closed";
+    readonly additions: number;
+    readonly deletions: number;
+    readonly changed_files: number;
+    readonly review_decision: string | null;
+    readonly files: ReadonlyArray<{
+      readonly path: string;
+      readonly additions: number;
+      readonly deletions: number;
+    }>;
+  }> | null;
+}
+
 export interface FactoryStopResult {
   readonly stopped: string;
   readonly already: boolean;
@@ -173,6 +212,7 @@ export interface FactoryApi {
     options: { readonly all: boolean },
   ) => Promise<{ readonly runs: ReadonlyArray<FactoryRunRow> }>;
   readonly run: (environmentId: EnvironmentId, id: string) => Promise<FactoryRunDetail>;
+  readonly runGitHub: (environmentId: EnvironmentId, id: string) => Promise<FactoryRunGitHub>;
   readonly stopRun: (environmentId: EnvironmentId, id: string) => Promise<FactoryStopResult>;
   readonly pauseClaims: (environmentId: EnvironmentId) => Promise<FactoryPauseResult>;
   readonly resumeClaims: (environmentId: EnvironmentId) => Promise<FactoryResumeResult>;
@@ -302,6 +342,7 @@ const httpApi: FactoryApi = {
   runs: (environmentId, { all }) =>
     get(environmentId, "/api/factory/runs", all ? { all: "1" } : undefined),
   run: (environmentId, id) => get(environmentId, runPath(id)),
+  runGitHub: (environmentId, id) => get(environmentId, `${runPath(id)}/github`),
   stopRun: (environmentId, id) => post(environmentId, `${runPath(id)}/stop`),
   pauseClaims: (environmentId) => post(environmentId, "/api/factory/claims/pause"),
   resumeClaims: (environmentId) => post(environmentId, "/api/factory/claims/resume"),
@@ -324,6 +365,7 @@ export const factoryApi: FactoryApi = {
   status: (environmentId) => (override ?? httpApi).status(environmentId),
   runs: (environmentId, options) => (override ?? httpApi).runs(environmentId, options),
   run: (environmentId, id) => (override ?? httpApi).run(environmentId, id),
+  runGitHub: (environmentId, id) => (override ?? httpApi).runGitHub(environmentId, id),
   stopRun: (environmentId, id) => (override ?? httpApi).stopRun(environmentId, id),
   pauseClaims: (environmentId) => (override ?? httpApi).pauseClaims(environmentId),
   resumeClaims: (environmentId) => (override ?? httpApi).resumeClaims(environmentId),

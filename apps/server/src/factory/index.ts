@@ -110,6 +110,7 @@ import * as ServerExitService from "./t3/exit.ts";
 import * as Paths from "./t3/paths.ts";
 import * as T3Sessions from "./t3/sessions.ts";
 import * as WatchedRepos from "./t3/watchedRepos.ts";
+import { makeRunGitHubReader, type RunGitHub, type ShownRun } from "./runGitHub.ts";
 import {
   bindProcess,
   ClaimMemo,
@@ -158,6 +159,8 @@ export class FactoryLoop extends Context.Service<
     readonly watchedRepos: Effect.Effect<WatchedListing, WatchedRepos.WatchedReposError>;
     /** How many threads have an agent at work (FactorySessions' `runningThreads`). */
     readonly runningThreads: Effect.Effect<number, T3Sessions.SessionsError>;
+    /** The issue and pull request of a run the ledger shows, read with the factory's `gh` (`runGitHub.ts`). */
+    readonly runGitHub: (run: ShownRun) => Effect.Effect<RunGitHub>;
   }
 >()("t3/factory/FactoryLoop") {}
 
@@ -1173,6 +1176,16 @@ const startFactory = Effect.fn("Factory.startFactory")(function* (options: Runti
         Effect.provideService(Path.Path, path),
       );
 
+  const runGitHub = makeRunGitHubReader({
+    nowMs: () => Date.now(),
+    readsFor: (repo) => {
+      const machine = state.current?.machine;
+      return machine === undefined
+        ? null
+        : bindProcess(makeGitHub({ repo, ghConfigDir: machine.ghConfigDir }), process);
+    },
+  });
+
   yield* reload;
   return {
     wake: Effect.suspend(() => state.loop?.wake ?? Effect.void),
@@ -1186,6 +1199,7 @@ const startFactory = Effect.fn("Factory.startFactory")(function* (options: Runti
     runningThreads: sessions.runningThreads,
     repoConfigs: Effect.sync(() => new Map(readings)),
     watchedRepos,
+    runGitHub,
   } satisfies FactoryLoop["Service"];
 });
 

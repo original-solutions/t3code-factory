@@ -1521,6 +1521,46 @@ it.effect("pullRequest merged and closed are not open", () =>
   }),
 );
 
+it.effect("pullRequestSummary reads what a person sees, with its state in one word", () =>
+  Effect.gen(function* () {
+    const view = (state: string, draft: boolean, extra = "") =>
+      `{"number":9,"title":"feat: x","body":null,"state":"${state}","isDraft":${draft},"additions":12,"deletions":3,"changedFiles":1,"reviewDecision":"CHANGES_REQUESTED"${extra}}`;
+    const t = setup(
+      reply(view("OPEN", true, ',"files":[{"path":"a.ts","additions":12,"deletions":3}]')),
+      reply(view("OPEN", false)),
+      reply(view("MERGED", false)),
+      reply(view("CLOSED", true)),
+      fail(1, "GraphQL: Could not resolve to a PullRequest with the number of 9."),
+    );
+    const first = yield* t.ok(t.github.pullRequestSummary(9));
+    assert.deepStrictEqual(first, {
+      number: 9,
+      title: "feat: x",
+      body: "",
+      state: "draft",
+      additions: 12,
+      deletions: 3,
+      changedFiles: 1,
+      reviewDecision: "changes_requested",
+      files: [{ path: "a.ts", additions: 12, deletions: 3 }],
+    });
+    assert.deepStrictEqual(t.calls()[0], [
+      "pr",
+      "view",
+      "9",
+      "--repo",
+      REPO,
+      "--json",
+      "number,title,body,state,isDraft,additions,deletions,changedFiles,reviewDecision,files",
+    ]);
+    const states = [];
+    for (let i = 0; i < 3; i += 1)
+      states.push((yield* t.ok(t.github.pullRequestSummary(9)))?.state);
+    assert.deepStrictEqual(states, ["open", "merged", "closed"]);
+    assert.isNull(yield* t.ok(t.github.pullRequestSummary(9)));
+  }),
+);
+
 it.effect("a pullRequest that does not exist is null", () =>
   Effect.gen(function* () {
     for (const stderr of [

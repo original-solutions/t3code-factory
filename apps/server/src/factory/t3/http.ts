@@ -51,6 +51,7 @@ export const STATUS_PATH = "/api/factory/status";
 const RUNS_PATH = "/api/factory/runs";
 const RUN_PATH = "/api/factory/runs/:id";
 const STOP_PATH = "/api/factory/runs/:id/stop";
+const RUN_GITHUB_PATH = "/api/factory/runs/:id/github";
 const PAUSE_PATH = "/api/factory/claims/pause";
 const RESUME_PATH = "/api/factory/claims/resume";
 export const DISMISS_PATH = "/api/factory/attention/dismiss";
@@ -204,6 +205,31 @@ const runRoute = factoryRoute(
           truncated: shown.truncated,
           skipped: shown.skipped,
         });
+      case "invalid":
+        return invalidRunId(shown.message);
+      case "not-found":
+        return runNotFound(shown.id);
+    }
+  }),
+);
+
+/**
+ * The run's issue and pull request as GitHub has them now, read with the factory's own `gh`. Read
+ * scope, as the run route: a caller who can read the run's thread already sees the agent read the
+ * issue there. Only a run the ledger has is read, and only its own issue and pull request.
+ */
+const runGitHubRoute = factoryRoute(
+  "GET",
+  RUN_GITHUB_PATH,
+  AuthOrchestrationReadScope,
+  Effect.gen(function* () {
+    const loop = yield* FactoryLoop;
+    const { factoryDir } = yield* FactoryPaths;
+    const idText = yield* idParam;
+    const shown = yield* guarded(() => showRun(factoryDir, idText));
+    switch (shown.kind) {
+      case "ok":
+        return respond(yield* loop.runGitHub(shown));
       case "invalid":
         return invalidRunId(shown.message);
       case "not-found":
@@ -474,6 +500,7 @@ export const FactoryRoutes = Layer.mergeAll(
   statusRoute,
   runsRoute,
   runRoute,
+  runGitHubRoute,
   stopRoute,
   pauseRoute,
   resumeRoute,

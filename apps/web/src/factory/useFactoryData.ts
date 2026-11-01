@@ -12,6 +12,7 @@ import {
   FactoryApiError,
   factoryApi,
   type FactoryRunDetail,
+  type FactoryRunGitHub,
   type FactoryRunRow,
   type FactoryStatus,
 } from "./api";
@@ -54,7 +55,7 @@ export interface FactoryResource<T> {
 
 type Loaded<T> = Omit<FactoryResource<T>, "refresh">;
 
-type Resource = "status" | "runs" | "runs:all" | `run:${string}`;
+type Resource = "status" | "runs" | "runs:all" | `run:${string}` | `github:${string}`;
 
 const LOADING: Loaded<never> = { status: "loading", data: null, error: null, readAt: 0, dataAt: 0 };
 
@@ -88,7 +89,9 @@ const load = ({ environmentId, resource }: Store): Promise<unknown> =>
     ? factoryApi.status(environmentId)
     : resource === "runs" || resource === "runs:all"
       ? factoryApi.runs(environmentId, { all: resource === "runs:all" })
-      : factoryApi.run(environmentId, resource.slice("run:".length));
+      : resource.startsWith("github:")
+        ? factoryApi.runGitHub(environmentId, resource.slice("github:".length))
+        : factoryApi.run(environmentId, resource.slice("run:".length));
 
 /** Whether `next` lacks a run that `previous` had: it finished, or the factory forgot it. */
 const droppedRun = (previous: FactoryStatus, next: FactoryStatus): boolean => {
@@ -286,7 +289,7 @@ export function useFactoryResource<T>(
   useLiveRefresh(tickNow, {
     key: `factory:${environmentId}:${resource}`,
     intervalMs: POLL_MS,
-    enabled: key !== null && resource !== "runs:all",
+    enabled: key !== null && resource !== "runs:all" && !resource.startsWith("github:"),
   });
   return { ...state, refresh: refreshNow };
 }
@@ -296,6 +299,13 @@ export const useFactoryRun = (
   id: string,
 ): FactoryResource<FactoryRunDetail> =>
   useFactoryResource<FactoryRunDetail>(environmentId, `run:${id}`);
+
+/** A run's issue and pull request from GitHub: read when the page opens, never polled. */
+export const useFactoryRunGitHub = (
+  environmentId: EnvironmentId | null,
+  id: string,
+): FactoryResource<FactoryRunGitHub> =>
+  useFactoryResource<FactoryRunGitHub>(environmentId, `github:${id}`);
 
 /**
  * The same resource of several environments, in the order of `environmentIds`. One subscription

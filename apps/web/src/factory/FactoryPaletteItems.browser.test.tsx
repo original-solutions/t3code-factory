@@ -45,6 +45,7 @@ const api = (runs: FactoryApi["runs"]): FactoryApi => ({
   pauseClaims: vi.fn(),
   resumeClaims: vi.fn(),
   dismissAttention: vi.fn(),
+  runGitHub: vi.fn(),
   snoozeDeploy: vi.fn(),
   deployNow: vi.fn(),
 });

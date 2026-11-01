@@ -160,6 +160,7 @@ const statusCall = (
           save: () => Effect.die("the benchmark does not save"),
           repoConfigs: Effect.succeed(new Map()),
           watchedRepos: Effect.succeed({ repos: [], departed: [], unresolved: [] }),
+          runGitHub: () => Effect.die("the benchmark does not read GitHub"),
         }),
       ),
       Context.add(Attention, {

@@ -212,6 +212,9 @@ interface World {
   readonly kicks?: boolean;
 }
 
+/** What the loop's GitHub reader was handed: the run ids and the entry count of each. */
+const gitHubReads: Array<string> = [];
+
 /** What the loop was asked to do: `count` wakes, `reloads` config reloads; `kicks` autodeploy kickstarts. */
 interface Calls {
   count: number;
@@ -288,6 +291,11 @@ const worldContext = (
           }).pipe(Effect.provide(NodeServices.layer)),
         repoConfigs,
         watchedRepos,
+        runGitHub: (run) =>
+          Effect.sync(() => {
+            gitHubReads.push(`${run.id} ${run.entries.length}`);
+            return { id: run.id, issue: { kind: "gone" as const }, pr: null };
+          }),
       }),
     ),
     Context.add(Attention, attentionWith(world.attention ?? [])),
@@ -393,6 +401,7 @@ const FACTORY_ROUTES = [
   ["GET", "/api/factory/status"],
   ["GET", "/api/factory/runs"],
   ["GET", `/api/factory/runs/${ID}`],
+  ["GET", `/api/factory/runs/${ID}/github`],
   ["POST", `/api/factory/runs/${ID}/stop`],
   ["POST", "/api/factory/claims/pause"],
   ["POST", "/api/factory/claims/resume"],
@@ -435,6 +444,7 @@ describe("every factory route", () => {
         "/api/factory/status",
         "/api/factory/runs",
         `/api/factory/runs/${ID}`,
+        `/api/factory/runs/${ID}/github`,
         CONFIG_PATH,
       ]) {
         for (const token of [tokens.operate, tokens.settingsWrite]) {
@@ -1064,6 +1074,34 @@ describe("GET /api/factory/runs/:id", () => {
       const response = await call("GET", `/api/factory/runs/${ID}`, tokens.read);
       assert.strictEqual(response.status, 404);
       assert.notInclude(await response.text(), "leaked");
+    }),
+  );
+});
+
+describe("GET /api/factory/runs/:id/github", () => {
+  it.effect("hands the loop's reader the run the ledger shows, and serves its answer", () =>
+    serving({}, async (call, { tokens, dir }) => {
+      seed(dir, run10, BUILDING);
+      gitHubReads.length = 0;
+      const response = await call("GET", `/api/factory/runs/${ID}/github`, tokens.read);
+      assert.strictEqual(response.status, 200);
+      assert.deepStrictEqual(await response.json(), { id: ID, issue: { kind: "gone" }, pr: null });
+      assert.deepStrictEqual(gitHubReads, [`${ID} 3`]);
+    }),
+  );
+
+  it.effect("reads nothing from GitHub for a run with no ledger or a bad id", () =>
+    serving({}, async (call, { tokens }) => {
+      gitHubReads.length = 0;
+      assert.strictEqual(
+        (await call("GET", `/api/factory/runs/${ID}/github`, tokens.read)).status,
+        404,
+      );
+      assert.strictEqual(
+        (await call("GET", "/api/factory/runs/not-a-run/github", tokens.read)).status,
+        400,
+      );
+      assert.deepStrictEqual(gitHubReads, []);
     }),
   );
 });

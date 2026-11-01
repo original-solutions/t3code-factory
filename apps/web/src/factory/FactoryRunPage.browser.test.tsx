@@ -11,6 +11,7 @@ import { render, renderAt } from "./testing";
 
 const state = vi.hoisted(() => ({
   run: null as unknown,
+  gitHub: null as unknown,
   environmentId: "env-1" as string,
   // The history state the run page was opened with, and where it navigated since.
   history: {} as Record<string, unknown>,
@@ -52,6 +53,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
 vi.mock("./useFactoryData", () => ({
   readFactoryRunAhead: () => {},
   useFactoryRun: () => state.run,
+  useFactoryRunGitHub: () => state.gitHub,
   useFactoryEnvironmentLabel: (environmentId: string) =>
     environmentId === "env-2" ? "Mac Studio" : environmentId,
 }));
@@ -109,6 +111,7 @@ const api = (overrides: Partial<FactoryApi>): FactoryApi => ({
   pauseClaims: vi.fn(),
   resumeClaims: vi.fn(),
   dismissAttention: vi.fn(),
+  runGitHub: vi.fn(),
   snoozeDeploy: vi.fn(),
   deployNow: vi.fn(),
   ...overrides,
@@ -125,6 +128,7 @@ const openLedger = (page: Page) =>
 function setup(): Disposable {
   state.environmentId = "env-1";
   state.run = resource({ data: detail() });
+  state.gitHub = resource({ data: { id: RUN_ID, issue: null, pr: null } });
   state.history = {};
   state.navigations = [];
   return {
@@ -609,5 +613,74 @@ describe("FactoryRunPage opened from a list", () => {
     expect(page.all("h1")[0]!.textContent).toBe(RUN_ID);
     await userEvent.keyboard("j{Escape}");
     expect(state.navigations).toEqual([{ to: "/factory", search: {}, state: {} }]);
+  });
+
+  it("reads the run's issue and pull request on the page: the ask, the files that changed most, the description", async () => {
+    using _state = setup();
+    state.run = resource({
+      data: detail([
+        ...BUILDING,
+        entry("pr_opened", { pr: 31, url: "https://github.com/o/r/pull/31" }),
+      ]),
+    });
+    state.gitHub = resource({
+      data: {
+        id: RUN_ID,
+        issue: {
+          kind: "ok",
+          number: 20,
+          title: "Sync keeps failing",
+          body: "## Why\nThe **sync** drops rows.",
+          body_cut: false,
+          author: "tom",
+          labels: ["factory:building", "bug"].filter((l) => !l.startsWith("factory:")),
+          closed: false,
+        },
+        pr: {
+          kind: "ok",
+          number: 31,
+          title: "fix: sync keeps rows",
+          body: "",
+          body_cut: false,
+          state: "draft",
+          additions: 40,
+          deletions: 2,
+          changed_files: 8,
+          review_decision: "changes_requested",
+          files: [
+            { path: "src/a.ts", additions: 1, deletions: 0 },
+            { path: "src/sync/rows.ts", additions: 30, deletions: 2 },
+          ],
+        },
+      },
+    });
+    await using page = await mount();
+    const issue = page.all('[aria-label="The issue"]')[0]!;
+    expect(issue.textContent).toContain("The ask · issue #20 by tom");
+    expect(issue.textContent).toContain("Sync keeps failing");
+    await vi.waitFor(() => expect(issue.querySelector("strong")?.textContent).toBe("sync"));
+    const pr = page.all('[aria-label="The pull request"]')[0]!;
+    expect(pr.textContent).toContain("Changes requested");
+    expect(pr.textContent).toContain("across 8 files");
+    const files = [...pr.querySelectorAll('[aria-label="Files that changed most"] li')].map(
+      (li) => li.textContent,
+    );
+    expect(files).toEqual(["src/sync/rows.ts+30 −2", "src/a.ts+1 −0", "and 6 more files"]);
+    expect(pr.textContent).toContain("The pull request has no description.");
+  });
+
+  it("says in one line when GitHub can't be read, and links out instead", async () => {
+    using _state = setup();
+    state.gitHub = resource({
+      data: { id: RUN_ID, issue: { kind: "signed-out", message: "x" }, pr: null },
+    });
+    await using page = await mount();
+    const card = page.all('[aria-label="GitHub"]')[0]!;
+    expect(card.textContent).toContain("GitHub can't be read from env-1");
+    expect(card.textContent).toContain("isn't signed in here");
+    expect(card.querySelector("a")?.getAttribute("href")).toBe(
+      "https://github.com/original-solutions/t3code-factory/issues/20",
+    );
+    expect(page.button("Try again")).toBeUndefined();
   });
 });
