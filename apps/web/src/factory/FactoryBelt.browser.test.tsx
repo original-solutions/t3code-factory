@@ -561,7 +561,7 @@ describe("the control bar", () => {
     expect(belt.onTogglePause).toHaveBeenLastCalledWith(belt.environments[1]);
   });
 
-  it("reads paused: the switch off, the rail dim and the Claimed post saying since when", async () => {
+  it("reads paused: the switch off, the Claimed lane dim and its post saying since when", async () => {
     using _state = await setup();
     const since = at(11, 2);
     const desktop = environment(DESKTOP, "Desktop", [statusRun(4, { state: "pr-open" })], {
@@ -578,9 +578,10 @@ describe("the control bar", () => {
     expect(station(page, "claimed").textContent).toContain(
       `claims paused by hand since ${clock(since)}`,
     );
-    expect(Number(getComputedStyle(lane(page, "pr")).opacity)).toBeLessThan(1);
-    expect(Number(getComputedStyle(station(page, "pr")).opacity)).toBeLessThan(1);
-    expect(Number(getComputedStyle(station(page, "building")).opacity)).toBeLessThan(1);
+    // Held claims stop new runs, not the ones on the rail: only the Claimed lane dims.
+    expect(Number(getComputedStyle(lane(page, "claimed")).opacity)).toBeLessThan(1);
+    expect(Number(getComputedStyle(lane(page, "pr")).opacity)).toBe(1);
+    expect(Number(getComputedStyle(station(page, "pr")).opacity)).toBe(1);
     // The Claimed post carries the pause note, so it stays readable.
     expect(Number(getComputedStyle(station(page, "claimed")).opacity)).toBe(1);
     expect(station(page, "claimed").textContent).not.toContain("factory:triage");

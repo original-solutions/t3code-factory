@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { agentPulse, type AgentThread } from "./agentPulse";
+import { agentCensus, agentPulse, type AgentThread } from "./agentPulse";
 
 type Runtime = NonNullable<AgentThread["runtime"]>;
 
@@ -100,5 +100,33 @@ describe("agentPulse", () => {
       items: 12,
       lastActivity: "2026-11-01T08:05:00.000Z",
     });
+  });
+});
+
+describe("agentCensus", () => {
+  const pulse = (over: Parameters<typeof thread>[0]) => agentPulse(thread(over));
+
+  it("is null when no run's agent is in this client", () => {
+    expect(agentCensus([])).toBeNull();
+    expect(agentCensus([null, null])).toBeNull();
+  });
+
+  it("counts the agents a person must answer first, then failed, working, waiting and idle", () => {
+    expect(
+      agentCensus([
+        pulse({ runtime: { status: "completed" } }),
+        pulse({ runtime: { status: "running" } }),
+        pulse({ hasPendingApprovals: true }),
+        pulse({ runtime: { status: "running" } }),
+        pulse({ hasPendingUserInput: true }),
+        pulse({ runtime: { status: "failed" } }),
+        pulse({ runtime: { status: "waiting" } }),
+        null,
+      ]),
+    ).toBe("2 need you · 1 failed · 2 working · 1 waiting · 1 idle");
+  });
+
+  it("says needs for one agent that waits on a person", () => {
+    expect(agentCensus([pulse({ hasPendingApprovals: true })])).toBe("1 needs you");
   });
 });

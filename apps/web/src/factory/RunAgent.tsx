@@ -9,7 +9,7 @@ import { formatClock } from "./belt";
 import type { BeltColour } from "./runTrack";
 
 /** The agent's state in the belt's colours: working is Building, waiting on a person Needs info. */
-const STATION: Record<AgentTone, BeltColour | null> = {
+export const AGENT_STATION: Record<AgentTone, BeltColour | null> = {
   working: "building",
   waiting: "info",
   failed: "stuck",
@@ -23,7 +23,7 @@ const clockOf = (iso: string | null): string | null => {
 
 /** A static dot in the agent's tone; it never animates, so a list of them costs no paint. */
 export function AgentDot({ tone }: { tone: AgentTone }) {
-  const station = STATION[tone];
+  const station = AGENT_STATION[tone];
   return (
     <span
       aria-hidden

@@ -113,13 +113,49 @@
   }
 }
 
+/*
+ * A tile's strip when its agent's thread gains an item: one light runs along it and is gone. At most
+ * one per BEAT_GAP_MS (beltMotion.ts), so a busy agent never keeps the belt painting.
+ */
+.factory-strip-beat {
+  transform-origin: top;
+  animation: factory-strip-swell 900ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+@keyframes factory-strip-swell {
+  30% {
+    transform: scaleY(1.75);
+  }
+}
+.factory-strip-beat::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 45%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklab, white 85%, transparent),
+    transparent
+  );
+  transform: translateX(-100%);
+  animation: factory-strip-beat 900ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+@keyframes factory-strip-beat {
+  to {
+    transform: translateX(225%);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .factory-ghost {
     transition: none;
   }
   .factory-post-flash,
   .factory-tile-glow,
-  .factory-tile-enter {
+  .factory-tile-enter,
+  .factory-strip-beat,
+  .factory-strip-beat::after {
     animation: none;
   }
 }

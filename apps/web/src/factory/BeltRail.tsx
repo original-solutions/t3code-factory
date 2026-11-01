@@ -3,10 +3,13 @@ import { Link } from "@tanstack/react-router";
 import { ChevronDownIcon, FlagIcon, InboxIcon, ShieldCheckIcon, WrenchIcon } from "lucide-react";
 import { Fragment, useState, type ComponentType, type RefCallback } from "react";
 
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
+import { useQuietThreadShells } from "~/state/entities";
 
 import {
   fitLane,
@@ -17,7 +20,9 @@ import {
   type BeltRun,
   type Station,
 } from "./belt";
+import { agentCensus, agentPulse, type AgentPulse } from "./agentPulse";
 import { BeltDot } from "./BeltDot";
+import { TileStrip } from "./TileStrip";
 import { BeltReadout, READOUT_ID } from "./BeltReadout";
 import { formatAge } from "./format";
 import type { RunStop } from "./RunActionBar";
@@ -86,17 +91,18 @@ function Post({
   note,
   paused,
   open,
-  dim,
+  census,
   onPick,
 }: {
   station: Station;
   count: number | string;
   /** The line under the label. */
   note: string;
+  /** What the agents of its runs are doing, in place of the note; null when none is here. */
+  census: string | null;
   /** Claims are held, by hand or for an update: the note says so, and takes the label's place. */
   paused: boolean;
   open: boolean;
-  dim: boolean;
   onPick: () => void;
 }) {
   const { name, tag } = STATION_META[station];
@@ -109,7 +115,6 @@ function Post({
         "relative flex min-w-0 flex-col justify-center gap-1 rounded-lg @3xl:justify-start border border-t-3 border-t-(--factory-station) bg-card px-2.5 py-2 @3xl:px-3 text-left outline-none hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         PLACEMENT[station].post,
         open && "border-(--factory-station) bg-accent/30",
-        dim && station !== "claimed" && "opacity-60 grayscale",
       )}
       data-post={station}
       data-station={station}
@@ -132,7 +137,17 @@ function Post({
         <span className="hidden font-mono text-3xs text-muted-foreground @3xl:block">{tag}</span>
       )}
       {/* The pause note is not a Badge: a Badge never wraps, and the note takes two lines here. */}
-      {note === "" ? null : (
+      {census !== null && !paused ? (
+        <span
+          className={cn(
+            "hidden text-xs @3xl:block",
+            census.includes("you") ? "font-semibold text-warning-foreground" : "text-foreground",
+          )}
+          data-part="census"
+        >
+          {census}
+        </span>
+      ) : note === "" ? null : (
         <span
           className={cn(
             "text-xs",
@@ -157,33 +172,44 @@ function Tile({
   station,
   mine,
   nowMs,
+  pulse,
   tileRef,
 }: {
   run: BeltRun;
   station: Station;
+  /** What the run's agent is doing, when its thread is in this client. */
+  pulse: AgentPulse | null;
   /** Whether the run is in the environment picked in the belt: solid, else hollow. */
   mine: boolean;
   nowMs: number;
   tileRef: RefCallback<HTMLElement>;
 }) {
   const elapsed = elapsedOf(run.forMs, nowMs);
+  const needsPerson = pulse?.tone === "waiting";
   return (
     <Link
-      aria-label={`${run.issue}, ${run.label}, ${elapsed}`}
+      aria-label={`${run.issue}, ${run.label}, ${elapsed}${pulse ? `, agent ${pulse.word}` : ""}`}
       className={cn(
         "relative flex h-12 w-[60px] shrink-0 flex-col justify-between overflow-hidden rounded-md border px-1.5 pt-2 pb-1 text-foreground outline-none hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         mine ? "bg-card" : "border-dashed bg-transparent",
+        needsPerson && "border-(--factory-info) bg-warning/8 dark:bg-warning/16",
+        pulse?.tone === "failed" && "border-(--factory-stuck)",
       )}
+      data-agent-tone={pulse?.tone}
       data-station={station}
       data-tile={run.key}
       params={{ environmentId: run.environmentId, runId: run.id }}
       ref={tileRef}
       to="/factory/$environmentId/$runId"
     >
-      <span aria-hidden className="absolute inset-x-0 top-0 h-1 bg-(--factory-station)" />
+      <TileStrip
+        environmentId={run.environmentId}
+        idle={pulse !== null && pulse.tone !== "working"}
+        threadId={run.threadId}
+      />
       <span className="font-mono text-xs font-semibold leading-none">{run.issue}</span>
       <span className="flex items-center gap-1 font-mono text-3xs leading-none text-muted-foreground">
-        <BeltDot selected={mine} />
+        <BeltDot selected={mine} tone={pulse?.tone} />
         <span className="min-w-0 truncate">{elapsed}</span>
       </span>
     </Link>
@@ -222,6 +248,7 @@ function Lane({
   selectedId,
   nowMs,
   dim,
+  pulseOf,
   onOpen,
   tileRef,
 }: {
@@ -230,6 +257,7 @@ function Lane({
   selectedId: EnvironmentId;
   nowMs: number;
   dim: boolean;
+  pulseOf: (run: BeltRun) => AgentPulse | null;
   onOpen: () => void;
   tileRef: RefCallback<HTMLElement>;
 }) {
@@ -262,6 +290,7 @@ function Lane({
           key={run.key}
           mine={run.environmentId === selectedId}
           nowMs={nowMs}
+          pulse={pulseOf(run)}
           run={run}
           station={station}
           tileRef={tileRef}
@@ -310,6 +339,22 @@ function DoneBin({ belt, known }: { belt: Belt; known: boolean }) {
   );
 }
 
+const shellKey = (environmentId: string, threadId: string) => `${environmentId} ${threadId}`;
+
+/**
+ * What each run's agent is doing, from the threads this client already holds, held through
+ * streaming ticks: no factory read.
+ */
+function usePulseOf(): (run: BeltRun) => AgentPulse | null {
+  const shells = useQuietThreadShells();
+  const byKey = new Map<string, EnvironmentThreadShell>();
+  for (const shell of shells) byKey.set(shellKey(shell.environmentId, shell.id), shell);
+  return (run) =>
+    run.threadId === null || run.finished
+      ? null
+      : agentPulse(byKey.get(shellKey(run.environmentId, run.threadId)) ?? null);
+}
+
 /**
  * Five posts, a lane of tiles under each, and the readout of the picked post. Wide, they are a grid
  * of five columns; narrow, one row per post with its lane beside it, and the readout under the row. The open post is the caller's, so the rail can come and go without losing it.
@@ -339,6 +384,7 @@ export function BeltRail({
   tileRef: RefCallback<HTMLElement>;
 }) {
   const paused = claimsHeld !== null;
+  const pulseOf = usePulseOf();
   const noteOf = (station: Station) => {
     if (station === "claimed" && claimsHeld !== null) {
       return `claims ${claimsHeld.why} since ${formatClock(claimsHeld.since)}`;
@@ -352,7 +398,7 @@ export function BeltRail({
         <Fragment key={station}>
           <Post
             count={station === "done" && !known ? "-" : belt.runs[station].length}
-            dim={paused}
+            census={station === "done" ? null : agentCensus(belt.runs[station].map(pulseOf))}
             note={noteOf(station)}
             onPick={() => onOpenChange(open === station ? null : station)}
             open={open === station}
@@ -363,9 +409,11 @@ export function BeltRail({
             <DoneBin belt={belt} known={known} />
           ) : (
             <Lane
-              dim={paused}
+              // Held claims stop new runs, not the ones on the rail.
+              dim={paused && station === "claimed"}
               nowMs={nowMs}
               onOpen={() => onOpenChange(station)}
+              pulseOf={pulseOf}
               runs={belt.runs[station]}
               selectedId={selectedId}
               station={station}

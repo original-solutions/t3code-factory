@@ -6,6 +6,8 @@ import { holdBins, placesOf, tileMotions, type Belt, type Place, type TileMotion
 const SLIDE_MS = 750;
 /** How long the place of a tile that left its lane is remembered, for a bin to want it. */
 const MEMORY_MS = 5000;
+/** The least time between two beats of a tile's strip, so a busy agent never keeps it moving. */
+export const BEAT_GAP_MS = 2500;
 /** How big a tile is when it lands in a bin. */
 const BIN_SCALE = "scale(.55)";
 
@@ -44,7 +46,7 @@ export const samePlaces = (a: ReadonlyMap<string, Place>, b: ReadonlyMap<string,
   a.size === b.size && Array.from(a).every(([key, place]) => b.get(key) === place);
 
 /** Plays `cls`, a one-shot animation of belt.css, from its start, and drops it when it ends. */
-function oneShot(element: Element | null | undefined, cls: string) {
+export function oneShot(element: Element | null | undefined, cls: string) {
   if (!(element instanceof HTMLElement)) return;
   element.classList.remove(cls);
   // Reading the layout restarts an animation the class had already played.

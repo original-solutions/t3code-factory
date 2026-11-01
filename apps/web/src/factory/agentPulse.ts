@@ -126,3 +126,26 @@ export function agentPulse(thread: AgentThread | null): AgentPulse | null {
     since: thread.latestRun?.completedAt ?? thread.updatedAt,
   };
 }
+
+const NEEDS_PERSON = new Set(["needs approval", "needs answer"]);
+
+/**
+ * What the agents of a post's runs are doing, as a post's note: `2 need you · 1 working`, the ones
+ * a person must answer first. Null when none of them is in this client's store.
+ */
+export function agentCensus(pulses: ReadonlyArray<AgentPulse | null>): string | null {
+  const counts = { you: 0, failed: 0, working: 0, waiting: 0, ended: 0 };
+  for (const pulse of pulses) {
+    if (pulse === null) continue;
+    if (NEEDS_PERSON.has(pulse.word)) counts.you += 1;
+    else counts[pulse.tone] += 1;
+  }
+  const parts = [
+    counts.you > 0 ? `${counts.you} ${counts.you === 1 ? "needs" : "need"} you` : null,
+    counts.failed > 0 ? `${counts.failed} failed` : null,
+    counts.working > 0 ? `${counts.working} working` : null,
+    counts.waiting > 0 ? `${counts.waiting} waiting` : null,
+    counts.ended > 0 ? `${counts.ended} idle` : null,
+  ].filter((part) => part !== null);
+  return parts.length === 0 ? null : parts.join(" · ");
+}
