@@ -117,7 +117,7 @@ import {
   type GitHubError,
   type IssueSummary,
   isNotFound,
-  isNotReceived,
+  isTransientRead,
 } from "./tracker/github.ts";
 
 // server.ts imports this module before it builds a layer, so from here on a full disk under
@@ -177,11 +177,11 @@ const asPassError =
     message: `${prefix}${error.message}`,
   });
 
-/** The pass error of a failed tracker call, marked transient when GitHub never received it. */
+/** The pass error of a failed tracker read, marked transient when another try may well succeed. */
 const asTrackerPassError = (error: GitHubError): PassError => ({
   kind: "tracker",
   message: error.message,
-  transient: isNotReceived(error),
+  transient: isTransientRead(error),
 });
 
 const byNumber = (a: number, b: number) => a - b;
@@ -240,7 +240,7 @@ const projectFromBase = Effect.fn("Factory.projectFromBase")(function* (
     Effect.mapError((error): ProjectReadError => ({
       kind: "config",
       message: `cannot read ${PROJECT_CONFIG_PATH} from GitHub: ${error.message}`,
-      transient: isNotReceived(error),
+      transient: isTransientRead(error),
       errors: [
         {
           file: PROJECT_CONFIG_PATH,

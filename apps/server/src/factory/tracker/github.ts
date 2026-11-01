@@ -268,6 +268,17 @@ const NOT_RECEIVED: ReadonlyArray<readonly [reason: string, stderr: RegExp]> = [
 const notReceived = (stderr: string): string | null =>
   NOT_RECEIVED.find(([, pattern]) => pattern.test(stderr))?.[0] ?? null;
 
+/**
+ * gh's stderr when the connection dropped mid-request or mid-answer (`Get "…": unexpected EOF`,
+ * `Post "https://api.github.com/graphql": unexpected EOF`). GitHub may have applied it, so only a
+ * read is tried again on it.
+ */
+const UNEXPECTED_EOF = /"https?:\/\/[^"\n]*": unexpected EOF/;
+
+/** Why a read that failed with `stderr` may well succeed if tried again, or null. */
+const readTransient = (stderr: string): string | null =>
+  notReceived(stderr) ?? (UNEXPECTED_EOF.test(stderr) ? "unexpected EOF" : null);
+
 const utf8Bytes = (text: string): number => new TextEncoder().encode(text).length;
 
 const oneLine = (text: string): string => text.replaceAll("\r", "\\r").replaceAll("\n", "\\n");
@@ -397,6 +408,13 @@ export const isNotFound = (error: GitHubError): boolean =>
  */
 export const isNotReceived = (error: GitHubError): boolean =>
   error._tag === "GitHubFailed" && notReceived(error.stderr) !== null;
+
+/**
+ * A read failed in a way another try may well fix: GitHub never received it, or the connection
+ * dropped with an unexpected EOF. Only for the error of a read; a write's EOF may have landed.
+ */
+export const isTransientRead = (error: GitHubError): boolean =>
+  error._tag === "GitHubFailed" && readTransient(error.stderr) !== null;
 
 const Login = Schema.Struct({ login: Schema.String });
 const OptionalText = Schema.optional(Schema.NullOr(Schema.String));
@@ -1103,17 +1121,19 @@ export const makeGitHub = (options: GitHubOptions) => {
 
   /**
    * Runs `attempt`, trying it again up to {@link GH_ATTEMPTS} times after a failure GitHub
-   * never received ({@link NOT_RECEIVED}). The last failure is returned as it is, so a caller
-   * sees what it would have without the retries.
+   * never received ({@link NOT_RECEIVED}), or, when `read`, after an unexpected EOF too. The
+   * last failure is returned as it is, so a caller sees what it would have without the retries.
    */
-  const retryNotReceived = Effect.fn("GitHub.retryNotReceived")(function* <A>(
+  const retryTransient = Effect.fn("GitHub.retryTransient")(function* <A>(
     attempt: Effect.Effect<A, GitHubError, FactoryProcess>,
+    read = false,
   ): GitHubGen<A> {
+    const transient = read ? readTransient : notReceived;
     for (let tried = 1; ; tried += 1) {
       const result = yield* Effect.result(attempt);
       if (result._tag === "Success") return result.success;
       const error = result.failure;
-      const reason = error._tag === "GitHubFailed" ? notReceived(error.stderr) : null;
+      const reason = error._tag === "GitHubFailed" ? transient(error.stderr) : null;
       if (error._tag !== "GitHubFailed" || reason === null || tried >= GH_ATTEMPTS) {
         return yield* error;
       }
@@ -1125,9 +1145,16 @@ export const makeGitHub = (options: GitHubOptions) => {
     }
   });
 
-  /** Runs `gh` with {@link retryNotReceived}, each attempt with the full time limit. */
+  /** Runs `gh` with {@link retryTransient}, each attempt with the full time limit. */
   const gh = Effect.fn("GitHub.gh")(function* (args: ReadonlyArray<string>): GitHubGen<string> {
-    return yield* retryNotReceived(ghOnce(args));
+    return yield* retryTransient(ghOnce(args));
+  });
+
+  /** {@link gh} for a call that changes nothing on GitHub, so an unexpected EOF is retried too. */
+  const ghRead = Effect.fn("GitHub.ghRead")(function* (
+    args: ReadonlyArray<string>,
+  ): GitHubGen<string> {
+    return yield* retryTransient(ghOnce(args), true);
   });
 
   const parseError = (args: ReadonlyArray<string>, expected: string) =>
@@ -1146,13 +1173,13 @@ export const makeGitHub = (options: GitHubOptions) => {
       ),
     );
 
-  /** Runs `gh` and decodes its stdout as JSON of the shape `schema`. */
+  /** Runs a reading `gh` and decodes its stdout as JSON of the shape `schema`. */
   const ghJson = <T, E>(
     args: ReadonlyArray<string>,
     schema: Schema.Codec<T, E>,
     expected: string,
   ): GitHubEffect<T> =>
-    gh(args).pipe(Effect.flatMap((stdout) => decode(schema, args, expected, stdout)));
+    ghRead(args).pipe(Effect.flatMap((stdout) => decode(schema, args, expected, stdout)));
 
   /**
    * Runs `gh api --paginate` and collects the rows of every JSON array in stdout:
@@ -1163,7 +1190,7 @@ export const makeGitHub = (options: GitHubOptions) => {
     schema: Schema.Codec<ReadonlyArray<T>, E>,
     expected: string,
   ): GitHubGen<Array<T>> {
-    const pages = splitJsonValues(yield* gh(args));
+    const pages = splitJsonValues(yield* ghRead(args));
     if (pages.length === 0) {
       return yield* parseError(args, `${expected} (output was empty)`);
     }
@@ -1403,7 +1430,7 @@ export const makeGitHub = (options: GitHubOptions) => {
       "--json",
       "number,isDraft,state,headRefName,isCrossRepository,baseRefName,headRefOid,mergeable,createdAt",
     ];
-    const stdout = yield* gh(args).pipe(
+    const stdout = yield* ghRead(args).pipe(
       Effect.catchTags({
         GitHubFailed: (error) =>
           PULL_REQUEST_GONE.test(error.stderr) ? Effect.succeed(null) : Effect.fail(error),
@@ -1654,7 +1681,7 @@ export const makeGitHub = (options: GitHubOptions) => {
       "--jq",
       ".status",
     ];
-    const stdout = yield* gh(args).pipe(Effect.catchIf(isNotFound, () => Effect.succeed(null)));
+    const stdout = yield* ghRead(args).pipe(Effect.catchIf(isNotFound, () => Effect.succeed(null)));
     if (stdout === null) return null;
     switch (stdout.trim()) {
       case "ahead":
@@ -2257,7 +2284,7 @@ export const makeGitHub = (options: GitHubOptions) => {
       "--add-label",
       stateLabel(to),
     ];
-    return yield* retryNotReceived(
+    return yield* retryTransient(
       Effect.gen(function* () {
         const stdout = yield* ghOnce(view);
         const current = yield* decode(AssigneesView, view, "an object with `assignees`", stdout);
