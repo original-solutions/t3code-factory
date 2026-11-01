@@ -33,7 +33,7 @@ A run in `factory:building` can be stopped from here. See [Stopping a run by han
 <img class="screenshot light-only" src="/screenshots/needs-attention-light.png" alt="The bins under the belt: Needs attention with a stuck item and a needs-info item, each with View run and Dismiss, beside the Needs info bin with the run's questions and the Stuck bin with the reason it stopped" />
 <img class="screenshot dark-only" src="/screenshots/needs-attention-dark.png" alt="The bins under the belt: Needs attention with a stuck item and a needs-info item, each with View run and Dismiss, beside the Needs info bin with the run's questions and the Stuck bin with the reason it stopped" />
 
-Under the belt, the Factory page lists what needs a person in three bins: Needs attention, Needs info and Stuck. Needs info and Stuck list each run's issue with the questions it asked or the reason it stopped. The sidebar's Factory item shows how many items need attention. An item is raised when:
+Under the belt, the Factory page lists what needs a person in three bins: Needs attention, Needs info and Stuck. Needs info lists each run's issue with the questions it asked. Stuck sorts its runs by why they stopped: each cause, such as "The run passed its time limit", is a fold with its count and issue numbers, the biggest first, and opening it shows each run with its repo, age and the rest of its reason. The sidebar's Factory item shows how many items need attention. An item is raised when:
 
 - a run went to `factory:stuck` or `factory:needs-info`,
 - a run is holding a slot but nothing will move it, for example its label was changed by hand,

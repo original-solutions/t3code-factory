@@ -1212,7 +1212,7 @@ describe("FactoryPage filters", () => {
     };
     const expectBelt = (page: Awaited<ReturnType<typeof render>>) => {
       const stuck = page.all("section").find((s) => s.getAttribute("aria-label") === "Stuck")!;
-      expect(stuck.textContent).toContain("gate failed");
+      expect(stuck.textContent).toContain("Gate failed");
       expect(page.all('[aria-label="Loading Stuck"]')).toHaveLength(0);
       expect(stat(page, "Stuck")).toBe("1");
       expect(page.text()).toContain("Could not refresh Mac Studio: timed out");

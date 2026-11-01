@@ -1125,10 +1125,12 @@ describe("Attention, Needs info and Stuck", () => {
       page.all("section").find((section) => section.getAttribute("aria-label") === name)!;
     const stuck = bin("Stuck");
     expect(stuck.textContent).toContain("Sync");
-    expect(stuck.textContent).toContain("cannot push the sync branch");
+    expect(stuck.textContent).toContain("Cannot push the sync branch");
     expect(stuck.textContent).toContain("#31");
     expect(stuck.textContent).toContain("#33");
-    expect(stuck.textContent).toContain("gate failed");
+    expect(stuck.textContent).toContain("Gate failed");
+    // One fold per cause; folded runs stay in the page.
+    expect(stuck.querySelectorAll("[data-cause]")).toHaveLength(3);
     expect(stuck.textContent).toContain("Studio");
     expect(stuck.textContent).not.toContain("Title of 31");
     expect(runLinksIn(stuck).map(paramsOf)).toEqual(
@@ -1331,7 +1333,7 @@ describe("a recent runs list that failed before its first answer", () => {
       .all("section")
       .find((section) => section.getAttribute("aria-label") === "Stuck")!;
     expect(stuck.textContent).toContain("#30");
-    expect(stuck.textContent).toContain("gate failed");
+    expect(stuck.textContent).toContain("Gate failed");
   });
 });
 
