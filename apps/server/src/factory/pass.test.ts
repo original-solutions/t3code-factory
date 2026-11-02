@@ -6021,7 +6021,7 @@ describe("a provider rate limit", () => {
         assert.equal(first.report.errors, 0);
         assert.deepEqual(coolingLines(first.lines), [coolingLine(until, FABLE_KEY, 1, HELD)]);
         assert.deepEqual(coolingSkips(fake), [
-          { event: "claim_skipped", data: { reason: "cooling-down" } },
+          { event: "claim_skipped", data: { repo: REPO, reason: "cooling-down" } },
         ]);
         assert.equal(
           lineFor(first.lines, 1),

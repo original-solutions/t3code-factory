@@ -19,8 +19,14 @@ const READS_NO_ISSUE = new Set([
   "late",
 ]);
 
-/** A repo whose ready list or model a pass could not read: its waits carry over from before. */
-const REPO_UNREAD = new Set(["list-failed", "model-unread"]);
+/** A repo a pass did not read or claim from: its waits carry over from before. */
+const REPO_UNREAD = new Set([
+  "list-failed",
+  "model-unread",
+  "cooling-down",
+  "config-not-loaded",
+  "ambiguous-project",
+]);
 
 /** An issue whose blockers a pass could not read: its wait carries over from before. */
 const ISSUE_UNREAD = "read-failed";
@@ -181,7 +187,10 @@ export const readReadyQueue = (dataDir: string, nowMs: number): ReadyQueue => {
     } else if (current !== null && entry.event === "repo_skipped") {
       const repo = text(field(entry.data, "repo"));
       const reason = text(field(entry.data, "reason"));
-      if (repo !== null && reason !== null) current.repos.set(repo, reason);
+      if (repo !== null && reason !== null) {
+        current.repos.set(repo, reason);
+        if (REPO_UNREAD.has(reason)) current.unreadRepos.add(repo);
+      }
     }
     const settled =
       checked !== null &&

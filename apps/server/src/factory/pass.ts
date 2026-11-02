@@ -2258,7 +2258,6 @@ const claim = Effect.fn("Pass.claim")(function* (
   // project runs on it claims nothing (said once by `sayCooldowns`). Read only while one cools.
   const now = world.nowMs();
   if ([...world.cooldowns.values()].some((cooldown) => now < cooldown.untilMs)) {
-    let held = false;
     for (const queue of queues) {
       if (queue.issues.length === 0) continue;
       const read = yield* Effect.result(world.projectModel(queue.repo));
@@ -2275,10 +2274,12 @@ const claim = Effect.fn("Pass.claim")(function* (
         launchModel(world.cooldowns, pass.fallbacks, read.success, now) === null
       ) {
         queue.issues.length = 0;
-        held = true;
+        yield* pass.record({
+          event: "claim_skipped",
+          data: { repo: queue.repo.watched.repo, reason: "cooling-down" },
+        });
       }
     }
-    if (held) yield* pass.record({ event: "claim_skipped", data: { reason: "cooling-down" } });
   }
   let active = count(known, queues);
   let late = false;

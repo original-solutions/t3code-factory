@@ -109,6 +109,8 @@ const REPO_WORDS: Readonly<Record<string, string>> = {
   "not-owner": "factory.owner names another machine",
   "list-failed": "its factory:ready issues could not be listed; the waits shown are from before",
   "model-unread": "its T3 project's model could not be read; the waits shown are from before",
+  "cooling-down":
+    "its T3 project's model is cooling down after a rate limit; the waits shown are from before",
 };
 
 const sameRepo = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();

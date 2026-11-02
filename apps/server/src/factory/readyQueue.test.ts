@@ -161,6 +161,35 @@ describe("readReadyQueue", () => {
     expect(queue.waiting[0]!.since).toBe(formatTs(NOW - 4 * HOUR + 1));
   });
 
+  it("carries a repo cooling down or whose config did not load, while the others still count", () => {
+    const dir = logOf(
+      pass(NOW - 3 * HOUR, [
+        ["acme/app", 7, "blocked"],
+        ["acme/ops", 2, "limit"],
+        ["acme/web", 3, "limit"],
+      ]) +
+        pass(NOW - 2 * HOUR, [
+          ["acme/app", null, "cooling-down"],
+          ["acme/web", 5, "blocked"],
+        ]).replace(
+          line(NOW - 2 * HOUR, "pass_started", {}),
+          line(NOW - 2 * HOUR, "pass_started", {}) +
+            line(NOW - 2 * HOUR, "repo_skipped", {
+              repo: "acme/ops",
+              reason: "config-not-loaded",
+              message: "x",
+            }),
+        ),
+    );
+    const queue = readReadyQueue(dir, NOW);
+    expect(queue.checked_at).toBe(formatTs(NOW - 2 * HOUR + 2));
+    expect(queue.waiting.map(({ repo, issue }) => `${repo}#${issue}`)).toEqual([
+      "acme/app#7",
+      "acme/ops#2",
+      "acme/web#5",
+    ]);
+  });
+
   it("counts a pass from before the marker that skipped an issue as one that read the list", () => {
     const dir = logOf(
       pass(NOW - 2 * HOUR, [["acme/app", 7, "blocked"]], false) +
