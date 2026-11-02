@@ -15,6 +15,8 @@ import { Input } from "../../components/ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../../components/ui/input-group";
 import { cn } from "../../lib/utils";
 import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
+
+import { useLegacySessionNotices } from "../useLegacySessionNotices";
 import {
   fetchFactoryConfig,
   fetchMachineNow,
@@ -245,6 +247,7 @@ function MachineConfigForm({
   readonly prepared: PreparedConnection;
 }) {
   const canWrite = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
+  const [legacySession] = useLegacySessionNotices(environmentId === null ? [] : [environmentId]);
 
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
@@ -370,7 +373,9 @@ function MachineConfigForm({
         ) : null}
         {!canWrite ? (
           <p className="text-muted-foreground">
-            This session is read-only: it cannot change the factory settings.
+            {legacySession
+              ? "This session is read-only: it cannot change the factory settings (it lacks settings:write). Pair again to get it."
+              : "This session is read-only: it cannot change the factory settings."}
           </p>
         ) : null}
         {topErrors.length > 0 ? (

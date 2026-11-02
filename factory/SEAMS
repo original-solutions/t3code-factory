@@ -28,6 +28,7 @@ apps/desktop/src/ipc/methods/window.ts
 apps/desktop/src/preload.ts
 apps/mobile/app.config.ts
 apps/mobile/src/Stack.tsx
+apps/mobile/src/features/home/HomeScreen.tsx
 apps/mobile/src/features/settings/SettingsRouteScreen.tsx
 apps/mobile/src/state/use-remote-environment-registry.ts
 apps/server/src/cloud/bootService.test.ts

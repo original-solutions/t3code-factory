@@ -86,6 +86,7 @@ import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-sw
 import { useFabScroll } from "./FabScrollContext";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { ThreadListFilters } from "./ThreadListFilters";
+import { LegacySessionBanner } from "../../factory/LegacySessionBanner";
 
 interface HomeScreenProps {
   readonly projects: ReadonlyArray<EnvironmentProject>;
@@ -726,6 +727,7 @@ export function HomeScreen(props: HomeScreenProps) {
           onProjectChange={props.onProjectChange}
         />
       ) : null}
+      <LegacySessionBanner />
     </>
   );
 

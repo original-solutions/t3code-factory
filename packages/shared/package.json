@@ -511,6 +511,10 @@
       "types": "./src/forkIdentity.ts",
       "import": "./src/forkIdentity.ts"
     },
+    "./legacySession": {
+      "types": "./src/legacySession.ts",
+      "import": "./src/legacySession.ts"
+    },
     "./placeholderNames": {
       "types": "./src/placeholderNames.ts",
       "import": "./src/placeholderNames.ts"

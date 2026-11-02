@@ -117,6 +117,8 @@ describe("the legacy session banner source", () => {
       ["alpha", session(AuthStandardClientScopes)],
       ["beta", session(LEGACY)],
     ]);
+    // The sessions here are plain values, so the registry is told to read them again.
+    appAtomRegistry.refresh(legacySessionNoticesAtom);
     expect(appAtomRegistry.get(legacySessionNoticesAtom).map((n) => n.environmentId)).toEqual([
       "beta",
     ]);

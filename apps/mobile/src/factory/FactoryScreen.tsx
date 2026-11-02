@@ -27,6 +27,7 @@ import {
   type SignInState,
 } from "./factorySignIn";
 import { FACTORY_BEFORE_CONTENT_LOADED_SCRIPT } from "./factoryWebViewScripts";
+import { LegacySessionBanner } from "./LegacySessionBanner";
 
 function Message(props: {
   readonly title: string;
@@ -48,6 +49,7 @@ function Message(props: {
 export function FactoryScreen() {
   return (
     <SettingsScreen title="Factory">
+      <LegacySessionBanner />
       <FactoryBody />
     </SettingsScreen>
   );

@@ -17,6 +17,7 @@ import {
   AuthSettingsWriteScope,
   type AuthGrantScope,
 } from "@t3tools/contracts";
+import { LEGACY_SESSION_PAIR_AGAIN } from "@t3tools/shared/legacySession";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -175,7 +176,7 @@ function mintFailureReason(error: RemoteEnvironmentRequestError): string {
     case "EnvironmentAuthInvalidError":
       return "The server no longer accepts this pairing.";
     case "EnvironmentScopeRequiredError":
-      return `This pairing cannot sign in the Factory pages: it lacks ${error.requiredPermission ?? error.requiredScope}.`;
+      return `This pairing cannot sign in the Factory pages: it lacks ${error.requiredPermission ?? error.requiredScope}. ${LEGACY_SESSION_PAIR_AGAIN}`;
     case "EnvironmentRequestInvalidError":
     case "EnvironmentOperationForbiddenError":
       return "The server refused to sign in the Factory pages.";
