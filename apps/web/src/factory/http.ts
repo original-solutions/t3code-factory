@@ -96,6 +96,9 @@ export const parseJson = (text: string): unknown => {
   }
 };
 
+/** The end of failureMessage's missing-permission sentence, for a caller that has a better fix to give. */
+export const PAIR_AGAIN_TAIL = " Pair the app again to get it.";
+
 /**
  * The server's own `message` for a non-2xx answer. A refusal for a missing scope without one (older
  * servers send none) says which permission this session was paired without. Else the status.
@@ -106,7 +109,7 @@ export const failureMessage = (status: number, body: unknown): string => {
   if (textField(body, "code") === "insufficient_scope") {
     const permission = textField(body, "requiredPermission") ?? textField(body, "requiredScope");
     if (permission !== null) {
-      return `This session cannot do that: it needs the ${permission} permission, and this session was paired without it. Pair the app again to get it.`;
+      return `This session cannot do that: it needs the ${permission} permission, and this session was paired without it.${PAIR_AGAIN_TAIL}`;
     }
   }
   return `The factory answered ${status}.`;

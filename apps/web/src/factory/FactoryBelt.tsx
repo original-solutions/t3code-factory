@@ -23,6 +23,7 @@ import { ControlFoldProvider, DIAL_CELL } from "./ControlFold";
 import { MachineRoster, useSecond } from "./MachineRoster";
 import type { QueueOrigin } from "./runQueue";
 import { DeployBanner } from "./DeployBanner";
+import { PAIR_AGAIN_TAIL } from "./http";
 import { LegacySessionBanner } from "./LegacySessionBanner";
 import { useLegacySessionNotices } from "./useLegacySessionNotices";
 import { dayStrip, type DayStrip as Strip } from "./dayStrip";
@@ -407,7 +408,9 @@ export function FactoryBelt({
         withEntry(
           current,
           environmentId,
-          legacy ? `${messageOf(error)} ${LEGACY_SESSION_PAIR_AGAIN}` : messageOf(error),
+          legacy
+            ? `${messageOf(error).replace(PAIR_AGAIN_TAIL, "")} ${LEGACY_SESSION_PAIR_AGAIN}`
+            : messageOf(error),
         ),
       );
     }
