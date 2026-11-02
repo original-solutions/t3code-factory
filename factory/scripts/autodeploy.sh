@@ -278,7 +278,8 @@ wait_for_pass() {
 # cannot read, or a factory pass still running after $pass_wait seconds. A pass alone is not work
 # in the way: it runs about half of every cycle and has no session to cut off, so the tick
 # re-reads the status every 5 s until the pass ends and goes on in the same tick. That wait never
-# applies to a run or a thread, nor once the install was asked for. The pending marker is rewritten each tick that reads the status,
+# applies to a run or a thread, nor once the install was asked for or the build has waited past
+# the limit. The pending marker is rewritten each tick that reads the status,
 # busy or not, so the server drains through the build too. A tick that cannot ask leaves the file
 # as it is: the server ignores one that is older than 30 minutes, which covers an autodeploy that
 # cannot fetch, has no token, or is not running at all, and a blip does not lose the
@@ -316,7 +317,16 @@ factory_idle() {
     return 0
   fi
   if [[ -z $busy && $pass == true ]]; then
-    local rc=0
+    local rc=0 waited
+    # A build past the limit does not wait for the pass either; the deploy interrupts it, and the
+    # pass resumes on the new build.
+    waited=$(pending_waited)
+    read_deploy_limit
+    if ((waited >= deploy_limit * 60)); then
+      [[ -n $said_overdue ]] || say "deploying $short although a factory pass is still running: the build has waited $(fmt_duration "$waited"), past deploy_wait_minutes $deploy_limit$deploy_limit_note"
+      said_overdue=1
+      return 0
+    fi
     wait_for_pass || rc=$?
     ((rc == 0 || rc == 2)) || return 1
   fi
