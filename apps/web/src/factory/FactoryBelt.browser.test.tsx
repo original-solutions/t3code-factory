@@ -13,6 +13,7 @@ import "~/index.css";
 import { act, fakeTimers } from "../../test/render";
 import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
 import type { FactoryRunRow, FactoryStatus } from "./api";
+import { failureMessage } from "./http";
 import { __resetStopDeskForTests, STOP_GRACE_MS } from "./stopDesk";
 import { render } from "./testing";
 import type { FactoryEnvironment, FactoryResource } from "./useFactoryData";
@@ -958,50 +959,55 @@ describe("a waiting update", () => {
     expect(deployNow).toHaveBeenCalledWith(DESKTOP, SHA);
   });
 
+  // An Update now refused as the server answers it: the body goes through the same failureMessage
+  // the API client uses.
+  const refusedWith = (body: unknown) => async () => {
+    throw new FactoryApiError(403, "insufficient_scope", failureMessage(403, body));
+  };
+  const forbidden = {
+    code: "insufficient_scope",
+    requiredScope: "orchestration:operate",
+    requiredPermission: "environment:maintain",
+    traceId: "trace-1",
+  };
+  const notes = (page: Page) => page.all('[role="status"]').map((p) => p.textContent);
+
   it("tells a session paired without the permission why Update now failed", async () => {
     using _state = await setup();
-    const sentence =
-      "This session cannot do that: it needs the environment:maintain permission, and this session was paired without it. Pair the app again to get it.";
-    __setFactoryApiForTests(
-      api({
-        deployNow: async () => {
-          throw new FactoryApiError(403, "insufficient_scope", sentence);
-        },
-      }),
-    );
+    __setFactoryApiForTests(api({ deployNow: refusedWith(forbidden) }));
     await using page = await render(
       createElement(FactoryBelt, props({ environments: [withUpdate([])] })),
     );
     await page.click(page.button("Update now")!);
-    expect(page.all('[role="status"]').some((p) => p.textContent === sentence)).toBe(true);
+    expect(notes(page)).toContain(
+      "This session cannot do that: it needs the environment:maintain permission, and this session was paired without it. Pair the app again to get it.",
+    );
     expect(page.button("Snooze 1 hour")!.disabled).toBe(false);
   });
 
-  it("ends a failed Update now with the fix when the session predates the permissions", async () => {
+  it("shows the server's own message when the refusal carries one", async () => {
     using _state = await setup();
-    signedIn(DESKTOP, LEGACY_PERMISSIONS);
-    const sentence =
-      "This session cannot do that: it needs the environment:maintain permission, and this session was paired without it. Pair the app again to get it.";
     __setFactoryApiForTests(
-      api({
-        deployNow: async () => {
-          throw new FactoryApiError(403, "insufficient_scope", sentence);
-        },
-      }),
+      api({ deployNow: refusedWith({ ...forbidden, message: "Needs the maintain permission." }) }),
     );
     await using page = await render(
       createElement(FactoryBelt, props({ environments: [withUpdate([])] })),
     );
     await page.click(page.button("Update now")!);
-    expect(
-      page
-        .all('[role="status"]')
-        .some(
-          (p) =>
-            p.textContent ===
-            `${sentence} Pair again with a new link (run t3 pair on the server's machine).`,
-        ),
-    ).toBe(true);
+    expect(notes(page)).toContain("Needs the maintain permission.");
+  });
+
+  it("ends a failed Update now with the fix, once, when the session predates the permissions", async () => {
+    using _state = await setup();
+    signedIn(DESKTOP, LEGACY_PERMISSIONS);
+    __setFactoryApiForTests(api({ deployNow: refusedWith(forbidden) }));
+    await using page = await render(
+      createElement(FactoryBelt, props({ environments: [withUpdate([])] })),
+    );
+    await page.click(page.button("Update now")!);
+    expect(notes(page)).toContain(
+      "This session cannot do that: it needs the environment:maintain permission, and this session was paired without it. Pair again with a new link (run t3 pair on the server's machine).",
+    );
   });
 
   it("posts Update now with no dialog when nothing is in progress, and says when the update starts", async () => {
