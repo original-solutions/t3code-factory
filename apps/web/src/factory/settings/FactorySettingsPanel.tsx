@@ -248,7 +248,7 @@ function MachineConfigForm({
   readonly prepared: PreparedConnection;
 }) {
   const canWrite = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
-  const [legacySession] = useLegacySessionNotices(environmentId === null ? [] : [environmentId]);
+  const legacySession = useLegacySessionNotices([environmentId]).get(environmentId);
 
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [form, setForm] = useState<FormState>(EMPTY_FORM);

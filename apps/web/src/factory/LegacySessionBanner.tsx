@@ -15,8 +15,8 @@ export function LegacySessionBanner({
   environments: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly label: string }>;
 }) {
   const notices = useLegacySessionNotices(environments.map(({ environmentId }) => environmentId));
-  return environments.map(({ environmentId, label }, index) => {
-    const notice = notices[index];
+  return environments.map(({ environmentId, label }) => {
+    const notice = notices.get(environmentId);
     if (!notice) return null;
     return (
       <Alert
