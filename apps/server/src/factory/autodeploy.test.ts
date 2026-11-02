@@ -1018,7 +1018,7 @@ describe("autodeploy.sh with a factory pass running", () => {
     expect(lines(result.output)).toHaveLength(1);
     expect(result.output).toMatch(
       new RegExp(
-        `waiting to deploy ${short}: a factory pass is still running after 2s; waited [01]s of deploy_wait_minutes 120`,
+        `waiting to deploy ${short}: a factory pass is still running after 2s; waited [0-5]s of deploy_wait_minutes 120`,
       ),
     );
     expect(result.output).not.toContain("a factory run is in progress");

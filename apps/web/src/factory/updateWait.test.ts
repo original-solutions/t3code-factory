@@ -61,7 +61,7 @@ describe("updateWait", () => {
     ).toBe(null);
   });
 
-  it("lists what the install waits for: runs in progress at their post, the pass, the threads", () => {
+  it("lists what the install waits for: runs in progress at their post, the threads, and not a running pass", () => {
     const wait = updateWait(
       status({
         runs: [
@@ -88,7 +88,6 @@ describe("updateWait", () => {
       { kind: "run", id: "acme__shop__3__1", text: "acme/shop", issue: "#3", station: "claimed" },
       { kind: "run", id: "acme__shop__6__1", text: "acme/shop", issue: "#6", station: null },
       { kind: "run", id: "acme__shop__7__1", text: "acme/shop", issue: "#7", station: "gate" },
-      { kind: "pass" },
       { kind: "threads", running: 2 },
     ]);
   });

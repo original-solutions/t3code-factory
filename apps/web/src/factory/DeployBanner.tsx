@@ -60,7 +60,6 @@ export function DeployBanner({
   }
 
   const inProgress = runsInProgress(status.runs);
-  const passRunning = status.passes.running;
   // A count T3 could not read may hide threads at work, so it asks as one would; an older server
   // that sends no count asks only for runs.
   const threads = status.threads === undefined ? 0 : status.threads.running;
@@ -92,9 +91,7 @@ export function DeployBanner({
             <Button
               disabled={busy}
               onClick={() =>
-                inProgress.length > 0 || passRunning || threads !== 0
-                  ? setConfirming(true)
-                  : onDeployNow()
+                inProgress.length > 0 || threads !== 0 ? setConfirming(true) : onDeployNow()
               }
               size="xs"
             >
@@ -119,11 +116,6 @@ export function DeployBanner({
                   </li>
                 ))}
               </ul>
-            ) : null}
-            {passRunning ? (
-              <p className="text-sm text-muted-foreground">
-                The factory pass running now will be interrupted.
-              </p>
             ) : null}
             {threads !== 0 ? (
               <p className="text-sm text-muted-foreground">
@@ -222,11 +214,9 @@ function Blocker({
     return (
       <li className="flex items-center gap-2 text-xs">
         <span aria-hidden className="size-2 shrink-0 rounded-xs bg-muted-foreground" />
-        {blocker.kind === "pass"
-          ? "The factory pass running now"
-          : blocker.running === null
-            ? "Threads T3 could not count"
-            : `${blocker.running} ${blocker.running === 1 ? "thread" : "threads"} with an agent at work`}
+        {blocker.running === null
+          ? "Threads T3 could not count"
+          : `${blocker.running} ${blocker.running === 1 ? "thread" : "threads"} with an agent at work`}
       </li>
     );
   }
