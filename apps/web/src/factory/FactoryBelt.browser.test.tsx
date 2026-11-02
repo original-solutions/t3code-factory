@@ -1,4 +1,9 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthStandardClientScopes,
+  type AuthEnvironmentScope,
+  type EnvironmentId,
+} from "@t3tools/contracts";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { createElement, type ComponentProps, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page as browser, userEvent } from "vite-plus/test/browser";
@@ -39,6 +44,25 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
       },
       children,
     ),
+}));
+
+// The sessions the belt reads, by environment: none until a test sets one. An atom per key, kept so
+// a render reads the same one again.
+const sessions = vi.hoisted(() => ({
+  byId: new Map<string, unknown>(),
+  atoms: new Map<string, unknown>(),
+}));
+vi.mock("~/state/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/state/session")>()),
+  environmentSessionStatesAtom: (key: string) => {
+    const kept = sessions.atoms.get(key);
+    if (kept) return kept;
+    const made = Atom.make(
+      key === "" ? [] : key.split("\n").map((id) => sessions.byId.get(id) ?? AsyncResult.initial()),
+    );
+    sessions.atoms.set(key, made);
+    return made;
+  },
 }));
 
 import { FactoryBelt } from "./FactoryBelt";
@@ -203,11 +227,33 @@ const api = (overrides: Partial<FactoryApi>): FactoryApi => ({
   ...overrides,
 });
 
+const LEGACY_PERMISSIONS: ReadonlyArray<AuthEnvironmentScope> = [
+  "orchestration:read",
+  "orchestration:operate",
+  "terminal:operate",
+  "review:write",
+  "relay:read",
+];
+
+/** The session an environment answers with, until the test ends. */
+const signedIn = (
+  environmentId: EnvironmentId,
+  permissions: ReadonlyArray<AuthEnvironmentScope>,
+) => {
+  sessions.atoms.clear();
+  sessions.byId.set(
+    environmentId,
+    AsyncResult.success({ authenticated: true, auth: {}, permissions }),
+  );
+};
+
 async function setup(width = 1440): Promise<Disposable> {
   vi.setSystemTime(NOW);
   await browser.viewport(width, 900);
   return {
     [Symbol.dispose]() {
+      sessions.byId.clear();
+      sessions.atoms.clear();
       __setFactoryApiForTests();
       __resetStopDeskForTests();
       vi.useRealTimers();
@@ -929,6 +975,33 @@ describe("a waiting update", () => {
     await page.click(page.button("Update now")!);
     expect(page.all('[role="status"]').some((p) => p.textContent === sentence)).toBe(true);
     expect(page.button("Snooze 1 hour")!.disabled).toBe(false);
+  });
+
+  it("ends a failed Update now with the fix when the session predates the permissions", async () => {
+    using _state = await setup();
+    signedIn(DESKTOP, LEGACY_PERMISSIONS);
+    const sentence =
+      "This session cannot do that: it needs the environment:maintain permission, and this session was paired without it. Pair the app again to get it.";
+    __setFactoryApiForTests(
+      api({
+        deployNow: async () => {
+          throw new FactoryApiError(403, "insufficient_scope", sentence);
+        },
+      }),
+    );
+    await using page = await render(
+      createElement(FactoryBelt, props({ environments: [withUpdate([])] })),
+    );
+    await page.click(page.button("Update now")!);
+    expect(
+      page
+        .all('[role="status"]')
+        .some(
+          (p) =>
+            p.textContent ===
+            `${sentence} Pair again with a new link (run t3 pair on the server's machine).`,
+        ),
+    ).toBe(true);
   });
 
   it("posts Update now with no dialog when nothing is in progress, and says when the update starts", async () => {
@@ -2285,5 +2358,42 @@ describe("tile motion", () => {
       expect(ghostsOf(page)).toEqual([]);
       expect(page.all(".factory-tile-enter")).toEqual([]);
     });
+  });
+});
+
+describe("a session paired before the current permissions", () => {
+  const legacyBanner = (page: Page) =>
+    page.all("[data-factory-legacy-session]").map((node) => node.textContent ?? "");
+
+  it("says what it cannot do and how to pair again, and stays", async () => {
+    using _state = await setup();
+    signedIn(DESKTOP, LEGACY_PERMISSIONS);
+    await using page = await render(createElement(FactoryBelt, props()));
+    const [text] = legacyBanner(page);
+    expect(legacyBanner(page)).toHaveLength(1);
+    for (const scope of ["settings:write", "environment:maintain", "access:write"]) {
+      expect(text).toContain(scope);
+    }
+    expect(text).toContain("run `t3 pair` on the server's machine");
+    expect(text).not.toContain("Desktop");
+    expect(page.all("[data-factory-legacy-session] button")).toHaveLength(0);
+
+    await page.rerender(createElement(FactoryBelt, props()));
+    expect(legacyBanner(page)).toHaveLength(1);
+  });
+
+  it("names the environment only when more than one is connected", async () => {
+    using _state = await setup();
+    signedIn(STUDIO, LEGACY_PERMISSIONS);
+    await using page = await render(createElement(FactoryBelt, twoEnvironments()));
+    expect(legacyBanner(page)).toHaveLength(1);
+    expect(legacyBanner(page)[0]).toContain("Studio");
+  });
+
+  it("shows nothing for a session that holds every permission", async () => {
+    using _state = await setup();
+    signedIn(DESKTOP, AuthStandardClientScopes);
+    await using page = await render(createElement(FactoryBelt, props()));
+    expect(legacyBanner(page)).toHaveLength(0);
   });
 });

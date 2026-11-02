@@ -55,6 +55,8 @@ packages/shared/src/codexAuthHandoff.test.ts
 packages/shared/src/codexAuthHandoff.ts
 packages/shared/src/forkIdentity.test.ts
 packages/shared/src/forkIdentity.ts
+packages/shared/src/legacySession.test.ts
+packages/shared/src/legacySession.ts
 packages/shared/src/placeholderNames.ts
 packages/shared/src/promptLinks.test.ts
 packages/shared/src/promptLinks.ts
