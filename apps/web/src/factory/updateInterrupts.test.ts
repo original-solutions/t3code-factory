@@ -19,6 +19,6 @@ describe("what Update now asks about", () => {
 
   it("waits for a running pass instead of deferring for it", () => {
     expect(script).toContain("pass_wait=${T3FAC_PASS_WAIT:-120}");
-    expect(script).toContain("wait_for_pass");
+    expect(script).toContain("a factory pass is still running after ${pass_wait}s");
   });
 });

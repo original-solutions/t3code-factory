@@ -5,9 +5,11 @@ import {
   type SessionGrantInput,
 } from "@t3tools/contracts";
 
+/** Mints a pairing link for the factory server, whose state is not in `t3`'s default base dir. */
+const PAIR_COMMAND = "~/.local/share/t3fac/current/t3 pair --base-dir ~/.config/t3fac";
+
 /** The fix for a session that predates the fine-grained permissions, as the end of a failure message. */
-export const LEGACY_SESSION_PAIR_AGAIN =
-  "Pair again with a new link (run t3 pair on the server's machine).";
+export const LEGACY_SESSION_PAIR_AGAIN = `Pair again with a new link (run ${PAIR_COMMAND} on the server's machine).`;
 
 export interface LegacySessionNotice {
   readonly missing: ReadonlyArray<AuthEnvironmentScope>;
@@ -30,6 +32,6 @@ export function legacySessionNotice(
   if (missing.length === 0) return null;
   return {
     missing,
-    sentence: `This session was paired before the current permissions existed, so it cannot ${listOf(missing)}. Pair again with a new link: run \`t3 pair\` on the server's machine, then scan or open it here.`,
+    sentence: `This session was paired before the current permissions existed, so it cannot ${listOf(missing)}. Pair again with a new link: run \`${PAIR_COMMAND}\` on the server's machine, then scan or open it here.`,
   };
 }

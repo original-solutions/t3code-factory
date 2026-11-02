@@ -30,7 +30,9 @@ describe("legacySessionNotice", () => {
     expect(notice?.sentence).toContain("environment:maintain");
     expect(notice?.sentence).toContain("access:write");
     expect(notice?.sentence).toContain("This session was paired before the current permissions");
-    expect(notice?.sentence).toContain("run `t3 pair` on the server's machine");
+    expect(notice?.sentence).toContain(
+      "Pair again with a new link: run `~/.local/share/t3fac/current/t3 pair --base-dir ~/.config/t3fac` on the server's machine, then scan or open it here.",
+    );
   });
 
   it("returns nothing for a full, unauthenticated, purposely limited or unscoped session", () => {
@@ -43,7 +45,7 @@ describe("legacySessionNotice", () => {
 
   it("carries the one-line fix for a failure message", () => {
     expect(LEGACY_SESSION_PAIR_AGAIN).toBe(
-      "Pair again with a new link (run t3 pair on the server's machine).",
+      "Pair again with a new link (run ~/.local/share/t3fac/current/t3 pair --base-dir ~/.config/t3fac on the server's machine).",
     );
   });
 });

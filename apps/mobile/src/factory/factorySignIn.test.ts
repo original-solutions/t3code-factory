@@ -280,7 +280,7 @@ describe("mintPairingToken", () => {
     expect(result).toEqual({
       ok: false,
       reason:
-        "This pairing cannot sign in the Factory pages: it lacks access:write. Pair again with a new link (run t3 pair on the server's machine).",
+        "This pairing cannot sign in the Factory pages: it lacks access:write. Pair again with a new link (run ~/.local/share/t3fac/current/t3 pair --base-dir ~/.config/t3fac on the server's machine).",
     });
   });
 

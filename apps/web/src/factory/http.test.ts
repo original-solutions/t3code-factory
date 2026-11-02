@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { failureMessage } from "./http";
+import { failureMessage, failureParts } from "./http";
 
 describe("failureMessage", () => {
   it("shows the server's own message", () => {
@@ -19,6 +19,13 @@ describe("failureMessage", () => {
     ).toBe(
       "This session cannot do that: it needs the environment:maintain permission, and this session was paired without it. Pair the app again to get it.",
     );
+    expect(
+      failureParts(403, { code: "insufficient_scope", requiredPermission: "environment:maintain" }),
+    ).toEqual({
+      reason:
+        "This session cannot do that: it needs the environment:maintain permission, and this session was paired without it.",
+      fix: "Pair the app again to get it.",
+    });
   });
 
   it("falls back to the required scope without a permission", () => {

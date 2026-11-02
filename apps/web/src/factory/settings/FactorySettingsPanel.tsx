@@ -1,5 +1,6 @@
 import { AuthSettingsWriteScope, type EnvironmentId } from "@t3tools/contracts";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
+import { LEGACY_SESSION_PAIR_AGAIN } from "@t3tools/shared/legacySession";
 import * as Option from "effect/Option";
 import { useEffect, useEffectEvent, useState } from "react";
 
@@ -374,7 +375,7 @@ function MachineConfigForm({
         {!canWrite ? (
           <p className="text-muted-foreground">
             {legacySession
-              ? "This session is read-only: it cannot change the factory settings (it lacks settings:write). Pair again to get it."
+              ? `This session is read-only: it cannot change the factory settings (it lacks ${AuthSettingsWriteScope}). ${LEGACY_SESSION_PAIR_AGAIN}`
               : "This session is read-only: it cannot change the factory settings."}
           </p>
         ) : null}

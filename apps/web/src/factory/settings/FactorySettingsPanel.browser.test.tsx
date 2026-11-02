@@ -780,7 +780,7 @@ describe("FactorySettingsPanel", () => {
     const text = textOf(panel.container).replace(/\s+/g, " ");
 
     expect(text).toContain(
-      "This session is read-only: it cannot change the factory settings (it lacks settings:write). Pair again to get it.",
+      "This session is read-only: it cannot change the factory settings (it lacks settings:write). Pair again with a new link (run ~/.local/share/t3fac/current/t3 pair --base-dir ~/.config/t3fac on the server's machine).",
     );
   });
 

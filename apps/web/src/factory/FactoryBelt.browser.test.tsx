@@ -11,9 +11,8 @@ import { page as browser, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
 import { act, fakeTimers } from "../../test/render";
-import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
+import { __setFactoryApiForTests, FactoryApiError, failureError, type FactoryApi } from "./api";
 import type { FactoryRunRow, FactoryStatus } from "./api";
-import { failureMessage } from "./http";
 import { __resetStopDeskForTests, STOP_GRACE_MS } from "./stopDesk";
 import { render } from "./testing";
 import type { FactoryEnvironment, FactoryResource } from "./useFactoryData";
@@ -953,16 +952,19 @@ describe("a waiting update", () => {
     });
     await using page = await render(createElement(FactoryBelt, props({ environments: [desktop] })));
     expect(banner(page)?.textContent).toContain("Nothing is in the way");
+    expect(banner(page)?.textContent).toContain(
+      "A factory pass is running: a check waits up to 2 minutes for it to end, and leaves the install to the next check if it runs longer.",
+    );
     expect(banner(page)?.textContent).not.toContain("Installs sooner once");
     await page.click(page.button("Update now")!);
     expect(dialog()).toBeNull();
     expect(deployNow).toHaveBeenCalledWith(DESKTOP, SHA);
   });
 
-  // An Update now refused as the server answers it: the body goes through the same failureMessage
+  // An Update now refused as the server answers it: the body goes through the same failureError
   // the API client uses.
   const refusedWith = (body: unknown) => async () => {
-    throw new FactoryApiError(403, "insufficient_scope", failureMessage(403, body));
+    throw failureError(403, body);
   };
   const forbidden = {
     code: "insufficient_scope",
@@ -1006,7 +1008,22 @@ describe("a waiting update", () => {
     );
     await page.click(page.button("Update now")!);
     expect(notes(page)).toContain(
-      "This session cannot do that: it needs the environment:maintain permission, and this session was paired without it. Pair again with a new link (run t3 pair on the server's machine).",
+      "This session cannot do that: it needs the environment:maintain permission, and this session was paired without it. Pair again with a new link (run ~/.local/share/t3fac/current/t3 pair --base-dir ~/.config/t3fac on the server's machine).",
+    );
+  });
+
+  it("ends the server's own refusal message with the fix when the session predates the permissions", async () => {
+    using _state = await setup();
+    signedIn(DESKTOP, LEGACY_PERMISSIONS);
+    const message =
+      "This request needs the environment:maintain scope, which this client does not have.";
+    __setFactoryApiForTests(api({ deployNow: refusedWith({ ...forbidden, message }) }));
+    await using page = await render(
+      createElement(FactoryBelt, props({ environments: [withUpdate([])] })),
+    );
+    await page.click(page.button("Update now")!);
+    expect(notes(page)).toContain(
+      `${message} Pair again with a new link (run ~/.local/share/t3fac/current/t3 pair --base-dir ~/.config/t3fac on the server's machine).`,
     );
   });
 
@@ -2380,7 +2397,9 @@ describe("a session paired before the current permissions", () => {
     for (const scope of ["settings:write", "environment:maintain", "access:write"]) {
       expect(text).toContain(scope);
     }
-    expect(text).toContain("run `t3 pair` on the server's machine");
+    expect(text).toContain(
+      "run `~/.local/share/t3fac/current/t3 pair --base-dir ~/.config/t3fac` on the server's machine",
+    );
     expect(text).not.toContain("Desktop");
     expect(page.all("[data-factory-legacy-session] button")).toHaveLength(0);
 

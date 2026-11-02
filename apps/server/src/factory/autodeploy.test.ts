@@ -13,7 +13,9 @@ import { formatTs } from "./ledger/time.ts";
 const script = NodePath.resolve(import.meta.dirname, "../../../../factory/scripts/autodeploy.sh");
 const TOKEN = "test-token";
 
-// The stub status API answers each request with the next queued body, then the last one again.
+// The stub status API answers each request with the next queued body, then the last one again. A
+// function is called for its body as the request arrives, and SERVER_ERROR answers 500.
+const SERVER_ERROR = Symbol("500");
 let statusBodies: Array<unknown> = [];
 let statusAuth: Array<string | undefined> = [];
 let server: NodeHttp.Server;
@@ -26,7 +28,12 @@ beforeAll(async () => {
       res.writeHead(401).end();
       return;
     }
-    const body = statusBodies.length > 1 ? statusBodies.shift() : statusBodies[0];
+    const next = statusBodies.length > 1 ? statusBodies.shift() : statusBodies[0];
+    if (next === SERVER_ERROR) {
+      res.writeHead(500).end();
+      return;
+    }
+    const body = typeof next === "function" ? next() : next;
     res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(body));
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -1061,6 +1068,87 @@ describe("autodeploy.sh with a factory pass running", () => {
     expect(result.deploys).toEqual([]);
     expect(lines(result.output)).toHaveLength(1);
     expect(result.output).toContain("a factory run is in progress");
+  });
+
+  it("waits again for a pass that started during the build, then installs in the same tick", async () => {
+    const sha = commitToOrigin("second");
+    const short = git(clone, "rev-parse", "--short", sha);
+    statusBodies = [IDLE, PASSING, IDLE];
+    const result = await runAutodeploy({ T3FAC_PASS_WAIT: "30" });
+    expect(result.deploys).toHaveLength(2);
+    expect(current()).toBe(`versions/0.0.1+fac.${short}`);
+    expect(lines(result.output)).toEqual([expect.stringContaining(`deployed ${short}`)]);
+  });
+
+  it("leaves a finished build for the next tick when a pass that started during it runs on", async () => {
+    const sha = commitToOrigin("second");
+    const short = git(clone, "rev-parse", "--short", sha);
+    statusBodies = [IDLE, PASSING];
+    const result = await runAutodeploy({ T3FAC_PASS_WAIT: "2" });
+    expect(result.deploys).toEqual([
+      `--build-only ${short} io.github.rawphp.t3fac.autodeploy no-lock`,
+    ]);
+    expect(current()).not.toContain(short);
+    expect(lines(result.output)).toEqual([
+      expect.stringContaining(
+        `waiting to deploy ${short}: a factory pass is still running after 2s`,
+      ),
+    ]);
+    expect(NodeFS.existsSync(NodePath.join(dataDir(), "deploy-pending"))).toBe(true);
+  });
+
+  it.each([
+    ["answers 500", SERVER_ERROR, "cannot read http://127.0.0.1:"],
+    ["cannot be parsed", { runs: "nope" }, "cannot read the factory status"],
+  ])("does not deploy when a re-read during the wait %s", async (_name, answer, why) => {
+    const sha = commitToOrigin("second");
+    const short = git(clone, "rev-parse", "--short", sha);
+    statusBodies = [PASSING, answer];
+    const result = await runAutodeploy({ T3FAC_PASS_WAIT: "30" });
+    expect(result.deploys).toEqual([]);
+    expect(lines(result.output)).toEqual([
+      expect.stringContaining(`not deploying ${short}: ${why}`),
+    ]);
+    expect(NodeFS.existsSync(NodePath.join(dataDir(), "deploy-pending"))).toBe(true);
+  });
+
+  it("a snooze that starts during the wait stops the install", async () => {
+    const sha = commitToOrigin("second");
+    const short = git(clone, "rev-parse", "--short", sha);
+    const end = 4_102_444_800;
+    statusBodies = [
+      PASSING,
+      () => {
+        NodeFS.writeFileSync(NodePath.join(dataDir(), "deploy-snoozed"), `${end} 1\n`);
+        return PASSING;
+      },
+      IDLE,
+    ];
+    const result = await runAutodeploy({ T3FAC_PASS_WAIT: "30" });
+    expect(result.deploys).toEqual([]);
+    expect(lines(result.output)).toEqual([
+      expect.stringContaining(
+        `not deploying ${short}: snoozed until ${formatTs(end * 1000).replace(".000Z", "Z")}`,
+      ),
+    ]);
+    expect(NodeFS.existsSync(NodePath.join(dataDir(), "deploy-pending"))).toBe(true);
+  });
+
+  it("an Update now asked during the wait installs without waiting for the pass", async () => {
+    const sha = commitToOrigin("second");
+    const short = git(clone, "rev-parse", "--short", sha);
+    statusBodies = [
+      PASSING,
+      () => {
+        NodeFS.writeFileSync(NodePath.join(dataDir(), "deploy-now"), `${sha}\n`);
+        return PASSING;
+      },
+    ];
+    const result = await runAutodeploy({ T3FAC_PASS_WAIT: "30" });
+    expect(result.deploys).toHaveLength(2);
+    expect(current()).toBe(`versions/0.0.1+fac.${short}`);
+    expect(result.output).toContain(`deploying ${short} now, as asked from the Factory page`);
+    expect(result.output).not.toContain("still running");
   });
 
   it("deploy-now installs at once, whatever the pass is doing", async () => {
