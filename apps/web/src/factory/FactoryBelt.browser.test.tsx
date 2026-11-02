@@ -896,19 +896,39 @@ describe("a waiting update", () => {
     expect(banner(page)?.textContent).toContain("Update waiting.");
   });
 
-  it("asks before Update now interrupts a running factory pass", async () => {
+  it("does not count a running factory pass as in the way", async () => {
     using _state = await setup();
-    const deployNow = vi.fn();
+    const deployNow = vi.fn(async () => ({ commit: SHA, kicked: false, message: "next tick" }));
     __setFactoryApiForTests(api({ deployNow }));
     const desktop = withUpdate([], {
       threads: { running: 0 },
       passes: { at: iso(NOW), poll_seconds: 60, running: true },
     });
     await using page = await render(createElement(FactoryBelt, props({ environments: [desktop] })));
+    expect(banner(page)?.textContent).toContain("Nothing is in the way");
+    expect(banner(page)?.textContent).not.toContain("Installs sooner once");
     await page.click(page.button("Update now")!);
-    await expect.poll(() => dialog()).not.toBeNull();
-    expect(dialog()!.textContent).toContain("The factory pass running now will be interrupted.");
-    expect(deployNow).not.toHaveBeenCalled();
+    expect(dialog()).toBeNull();
+    expect(deployNow).toHaveBeenCalledWith(DESKTOP, SHA);
+  });
+
+  it("tells a session paired without the permission why Update now failed", async () => {
+    using _state = await setup();
+    const sentence =
+      "This session cannot do that: it needs the environment:maintain permission, and this session was paired without it. Pair the app again to get it.";
+    __setFactoryApiForTests(
+      api({
+        deployNow: async () => {
+          throw new FactoryApiError(403, "insufficient_scope", sentence);
+        },
+      }),
+    );
+    await using page = await render(
+      createElement(FactoryBelt, props({ environments: [withUpdate([])] })),
+    );
+    await page.click(page.button("Update now")!);
+    expect(page.all('[role="status"]').some((p) => p.textContent === sentence)).toBe(true);
+    expect(page.button("Snooze 1 hour")!.disabled).toBe(false);
   });
 
   it("posts Update now with no dialog when nothing is in progress, and says when the update starts", async () => {
