@@ -84,6 +84,9 @@ function installDesktop(bearer: string) {
         },
       ],
       getLocalEnvironmentBearerToken: () => Promise.resolve(bearer),
+      getLocalEnvironmentEnabled: () => true,
+      getRelayTelemetryEnabled: () => false,
+      getClientPlatform: () => "darwin",
     } as unknown as DesktopBridge,
   });
   vi.stubGlobal("document", { title: "T3 Code" });

@@ -388,6 +388,10 @@ it.effect("dismiss hides the open items it names and answers the ids it dismisse
         (yield* attention.list()).map((i) => i.id),
         ["b"],
       );
+      assert.deepStrictEqual(
+        (yield* attention.listDismissed()).map((i) => i.id),
+        ["a"],
+      );
       assert.deepStrictEqual(yield* attention.dismiss(["a"]), []);
       const file = yield* fileOf(dir);
       assert.deepStrictEqual(
@@ -399,6 +403,38 @@ it.effect("dismiss hides the open items it names and answers the ids it dismisse
       );
     }).pipe(Effect.provide(serviceOver(dir, process)));
   }),
+);
+
+it.effect(
+  "restore lists a dismissed item again without notifying it, and answers the ids it restored",
+  () =>
+    withDir((dir) => {
+      const { calls, process } = recorder();
+      return Effect.gen(function* () {
+        const attention = yield* Attention;
+        yield* attention.raise(item({ id: "a" }));
+        yield* attention.raise(item({ id: "b" }));
+        yield* attention.dismiss(["a", "b"]);
+        assert.deepStrictEqual(yield* attention.restore(["a", "a", "nope"]), ["a"]);
+        assert.deepStrictEqual(
+          (yield* attention.list()).map((i) => i.id),
+          ["a"],
+        );
+        assert.deepStrictEqual(
+          (yield* attention.listDismissed()).map((i) => i.id),
+          ["b"],
+        );
+        assert.deepStrictEqual(yield* attention.restore(["a"]), []);
+        assert.deepStrictEqual(
+          (yield* fileOf(dir)).items.map((i) => [i["id"], i["dismissed"]]),
+          [
+            ["a", undefined],
+            ["b", true],
+          ],
+        );
+        assert.strictEqual(calls.length, 2);
+      }).pipe(Effect.provide(serviceOver(dir, process)));
+    }),
 );
 
 it.effect("a dismissed item raised again is neither listed nor notified, after a restart too", () =>

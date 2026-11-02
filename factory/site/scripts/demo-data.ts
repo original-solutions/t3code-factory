@@ -6,6 +6,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import { Ledger } from "../../../apps/server/src/factory/ledger/ledger.ts";
+import { MachineLog } from "../../../apps/server/src/factory/ledger/machineLog.ts";
 import type {
   Cause,
   CauseExtras,
@@ -46,6 +47,8 @@ export interface DemoRun {
   readonly pr?: number;
   /** For `needs-info`: what the session asked, as it was posted on the issue. */
   readonly questions?: string;
+  /** For `stuck`: a reason other than the failed gate, given without the gate attempts. */
+  readonly stuckReason?: string;
 }
 
 export const DEMO_RUNS: ReadonlyArray<DemoRun> = [
@@ -113,6 +116,54 @@ export const DEMO_RUNS: ReadonlyArray<DemoRun> = [
   },
 ];
 
+const TIME_LIMIT = "the run passed its time limit";
+const GATE_FAILED = "the gate failed after 3 attempts";
+const historyRun = (
+  repo: "storefront" | "billing",
+  issue: number,
+  title: string,
+  daysAgo: number,
+  kind: "merged" | "stuck" | "needs-info",
+  stuckReason?: string,
+): DemoRun => ({
+  repo: `acme/${repo}`,
+  issue,
+  title,
+  kind,
+  instructor: issue % 2 === 0 ? "jo-park" : "sam-lee",
+  startedAgoMs: daysAgo * DAY,
+  ...(kind === "needs-info"
+    ? { questions: "1. Which page should this live on?" }
+    : { pr: issue + 100 }),
+  ...(stuckReason === undefined || stuckReason === GATE_FAILED ? {} : { stuckReason }),
+});
+
+/**
+ * Finished runs from the five weeks before this one, for Trends: claimed eight days ago or more,
+ * so they stay out of the runs table's week, the repo tiles' seven days and the catch-up. The
+ * time limit fades as a cause week by week, as it would once issues were split smaller.
+ */
+const HISTORY: ReadonlyArray<DemoRun> = [
+  historyRun("storefront", 46, "Search suggestions as you type", 8.2, "merged"),
+  historyRun("billing", 17, "Proration when a plan changes", 9.1, "merged"),
+  historyRun("storefront", 45, "Wishlist share link", 10.4, "merged"),
+  historyRun("billing", 16, "Dunning emails for failed cards", 11.3, "stuck", TIME_LIMIT),
+  historyRun("storefront", 44, "Lazy-load product images", 15.2, "merged"),
+  historyRun("billing", 15, "Tax ID on invoices", 16.5, "merged"),
+  historyRun("storefront", 43, "Gift card balance check", 17.1, "stuck", GATE_FAILED),
+  historyRun("billing", 14, "Usage-based line items", 18.6, "needs-info"),
+  historyRun("storefront", 41, "Rework the cart drawer", 22.3, "merged"),
+  historyRun("billing", 13, "Customer portal for invoices", 23.4, "stuck", TIME_LIMIT),
+  historyRun("storefront", 40, "Order history filters", 24.2, "stuck", TIME_LIMIT),
+  historyRun("billing", 12, "Credit notes", 25.5, "merged"),
+  historyRun("storefront", 38, "Multi-currency price display", 29.3, "stuck", TIME_LIMIT),
+  historyRun("billing", 11, "Annual billing toggle", 30.2, "merged"),
+  historyRun("storefront", 37, "Product reviews", 31.4, "stuck", TIME_LIMIT),
+  historyRun("billing", 10, "Invoice PDF branding", 32.1, "needs-info"),
+  historyRun("storefront", 35, "Checkout address autocomplete", 36.2, "merged"),
+  historyRun("billing", 9, "Webhook signature check", 37.3, "stuck", GATE_FAILED),
+];
+
 /** The machine config the server loads from `<home>/factory/config.yml`. */
 const MACHINE_CONFIG = `# Demo machine config for the docs screenshots.
 gh_config_dir: /Users/jo-park/.config/t3fac/gh
@@ -120,6 +171,8 @@ poll_seconds: 60
 max_concurrent_runs: 2
 max_concurrent_gates: 1
 notify: false
+# The throwaway home sits on whatever disk runs the script; no low-disk item in the shots.
+min_free_gib: 0
 `;
 
 /** A stable fake id from a run, so every rerun of the script draws the same images. */
@@ -322,6 +375,14 @@ const writeRun = (factoryDir: string, run: DemoRun, nowMs: number): number => {
         "advance",
         "pr-opened",
       );
+      if (run.stuckReason !== undefined) {
+        at += 2 * HOUR;
+        removeWorktree("advance");
+        write(4_000, { event: "stuck", data: { reason: run.stuckReason } }, "advance", "stuck");
+        state(4_000, { from: "building", to: "stuck" }, "advance", "stuck");
+        ledger.finish("stuck", null, null, { step: "advance", reason: "stuck" });
+        break;
+      }
       for (const attempt of [1, 2, 3]) {
         gateAttempt(attempt, [0, 1]);
         if (attempt < 3) {
@@ -335,7 +396,7 @@ const writeRun = (factoryDir: string, run: DemoRun, nowMs: number): number => {
         5_000,
         {
           event: "stuck",
-          data: { reason: "the gate failed after 3 attempts", branch, commits_ahead: 9 },
+          data: { reason: GATE_FAILED, branch, commits_ahead: 9 },
         },
         "gate",
         "gate-failed",
@@ -352,7 +413,8 @@ const writeRun = (factoryDir: string, run: DemoRun, nowMs: number): number => {
       );
       gateAttempt(1, [0, 0]);
       passGate(1);
-      at += 5 * HOUR;
+      // Review takes a different while on each pull request.
+      at += (2 + (run.issue % 5)) * HOUR;
       ledger.finish(
         "pr-open",
         null,
@@ -388,9 +450,55 @@ const attentionItems = (endedAt: ReadonlyMap<DemoRun, number>) =>
     ];
   });
 
+/** The ready issues the claim step holds back, each from how long ago until now. */
+const WAITS: ReadonlyArray<{ repo: string; issue: number; reason: string; sinceMs: number }> = [
+  { repo: "acme/storefront", issue: 64, reason: "postponed", sinceMs: 110 * MINUTE },
+  { repo: "acme/storefront", issue: 65, reason: "blocked", sinceMs: 95 * MINUTE },
+  { repo: "acme/storefront", issue: 66, reason: "blocked", sinceMs: 95 * MINUTE },
+  { repo: "acme/billing", issue: 31, reason: "limit", sinceMs: 35 * MINUTE },
+  { repo: "acme/billing", issue: 32, reason: "limit", sinceMs: 12 * MINUTE },
+];
+/** The passes the machine log holds: one a minute for the last two hours. */
+const PASSES = 120;
+
+/**
+ * Writes the machine log's passes, each with the `claim_skipped` lines of the waits it saw, and
+ * one issue sent back to `factory:proposed` an hour ago.
+ */
+const writePasses = (factoryDir: string, nowMs: number): void => {
+  let at = 0;
+  const log = MachineLog.open(factoryDir, { clock: () => at });
+  for (let n = PASSES; n >= 1; n -= 1) {
+    const start = nowMs - n * MINUTE;
+    at = start;
+    log.append({ event: "pass_started", data: {} });
+    for (const wait of WAITS) {
+      if (n * MINUTE > wait.sinceMs) continue;
+      at += 50;
+      log.append({
+        event: "claim_skipped",
+        data: { repo: wait.repo, issue: String(wait.issue), reason: wait.reason },
+      });
+    }
+    if (n === 60) {
+      at += 50;
+      log.append({
+        event: "claim_skipped",
+        data: { repo: "acme/billing", issue: "30", reason: "unapproved" },
+      });
+    }
+    at = start + 2_000;
+    log.append({
+      event: "pass_finished",
+      data: { runs: 2, claimed: 0, errors: 0, attention: 2 },
+    });
+  }
+  log.close();
+};
+
 /**
  * Seeds `<home>/factory`, the factory's data dir under a T3 home: the machine config, a ledger
- * per run in `DEMO_RUNS`, and the open attention items. No T3 project is seeded, so no repo is
+ * per run in `DEMO_RUNS` and `HISTORY`, the machine log's passes, and the open attention items. No T3 project is seeded, so no repo is
  * watched and the factory's passes have nothing to ask GitHub.
  */
 export const seedDemoHome = (home: string, nowMs: number): void => {
@@ -398,6 +506,8 @@ export const seedDemoHome = (home: string, nowMs: number): void => {
   NodeFS.mkdirSync(factoryDir, { recursive: true, mode: 0o700 });
   NodeFS.writeFileSync(NodePath.join(factoryDir, "config.yml"), MACHINE_CONFIG, { mode: 0o600 });
   const endedAt = new Map(DEMO_RUNS.map((run) => [run, writeRun(factoryDir, run, nowMs)]));
+  for (const run of HISTORY) writeRun(factoryDir, run, nowMs);
+  writePasses(factoryDir, nowMs);
   NodeFS.writeFileSync(
     NodePath.join(factoryDir, "attention.json"),
     `${JSON.stringify({ items: attentionItems(endedAt) })}\n`,

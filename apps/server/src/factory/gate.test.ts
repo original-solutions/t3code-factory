@@ -23,6 +23,7 @@ import {
   clearGateLocks,
   gateLockFile,
   gateLocksHeld,
+  gateLockTimes,
   gateResultsComment,
   gateRoot,
   layer as gateLayer,
@@ -1730,21 +1731,26 @@ it.live("a gate is queued while max_concurrent_gates other locks are held", () =
   }).pipe(provided),
 );
 
-it.live("clearGateLocks removes every lock file and nothing else", () =>
-  Effect.gen(function* () {
-    const dataDir = tempDir("gate-clear");
-    // No gates directory yet.
-    assert.strictEqual(yield* clearGateLocks(dataDir), 0);
-    const gates = NodePath.join(dataDir, "gates");
-    NodeFS.mkdirSync(gates, { recursive: true });
-    NodeFS.writeFileSync(NodePath.join(gates, "a.lock"), "");
-    NodeFS.writeFileSync(NodePath.join(gates, "b.lock"), "");
-    NodeFS.writeFileSync(NodePath.join(gates, "notes.txt"), "keep");
-    assert.strictEqual(gateLocksHeld(dataDir), 2);
-    assert.strictEqual(yield* clearGateLocks(dataDir), 2);
-    assert.deepStrictEqual(NodeFS.readdirSync(gates), ["notes.txt"]);
-    assert.strictEqual(gateLocksHeld(dataDir), 0);
-  }),
+it.live(
+  "gateLockTimes dates each lock; clearGateLocks removes every lock file and nothing else",
+  () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir("gate-clear");
+      // No gates directory yet.
+      assert.strictEqual(yield* clearGateLocks(dataDir), 0);
+      const gates = NodePath.join(dataDir, "gates");
+      NodeFS.mkdirSync(gates, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(gates, "a.lock"), "");
+      NodeFS.writeFileSync(NodePath.join(gates, "b.lock"), "");
+      NodeFS.writeFileSync(NodePath.join(gates, "notes.txt"), "keep");
+      assert.strictEqual(gateLocksHeld(dataDir), 2);
+      NodeFS.utimesSync(NodePath.join(gates, "a.lock"), 1_000, 1_000);
+      assert.include(gateLockTimes(dataDir), 1_000_000);
+      assert.strictEqual(gateLockTimes(dataDir).length, 2);
+      assert.strictEqual(yield* clearGateLocks(dataDir), 2);
+      assert.deepStrictEqual(NodeFS.readdirSync(gates), ["notes.txt"]);
+      assert.strictEqual(gateLocksHeld(dataDir), 0);
+    }),
 );
 
 it("the gate's paths are built from the validated run id", () => {

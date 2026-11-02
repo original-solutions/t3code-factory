@@ -89,8 +89,9 @@ export interface BeltRun {
   readonly prUrl: string | null;
   /** For the bins: why a run is stuck, or the questions it posted. */
   readonly reason: string | null;
-  /** Whether the run page would enable its Stop: a building run that is not finished. */
-  readonly stoppable: boolean;
+  readonly finished: boolean;
+  /** The session's thread, which the status report names for a run that is not finished. */
+  readonly threadId: string | null;
 }
 
 export interface Belt {
@@ -104,11 +105,6 @@ export interface Belt {
   };
   readonly stuck: ReadonlyArray<BeltRun>;
   readonly info: ReadonlyArray<BeltRun>;
-  readonly counters: {
-    readonly runsToday: number;
-    readonly mergedToday: number;
-    readonly stuck: number;
-  };
   /** The post of the run that began last, among the rail and today's done runs. */
   readonly newest: Station;
 }
@@ -127,7 +123,7 @@ export function summariseDone(doneRuns: ReadonlyArray<BeltRun>): Belt["done"] {
 const startedOf = (row: FactoryRunRow | undefined): number =>
   row?.started_ts ? Date.parse(row.started_ts) : Number.NaN;
 
-const issueOf = (id: string): string => {
+export const issueOf = (id: string): string => {
   const issue = parseRunId(id)?.issue;
   if (issue === undefined) return id;
   return /^[0-9]+$/.test(issue) ? `#${issue}` : issue;
@@ -140,7 +136,7 @@ const newestFirst = (a: number, b: number): number => {
 };
 
 /** The viewer's today as `[start, next start)` in epoch ms, around `nowMs`. */
-const localDay = (nowMs: number): readonly [number, number] => {
+export const localDay = (nowMs: number): readonly [number, number] => {
   const start = new Date(nowMs);
   start.setHours(0, 0, 0, 0);
   const end = new Date(start);
@@ -150,7 +146,7 @@ const localDay = (nowMs: number): readonly [number, number] => {
 
 /**
  * What the belt shows, from every environment's unfinished runs and recent runs list: the runs at
- * each post, today's done bin, the Stuck and Needs info bins, and the counters. Only the newest
+ * each post, today's done bin, and the Stuck and Needs info bins. Only the newest
  * attempt of an issue counts for the bins and Done, and "today" is the viewer's local day.
  */
 export function deriveBelt(environments: ReadonlyArray<BeltEnvironment>, nowMs: number): Belt {
@@ -167,7 +163,6 @@ export function deriveBelt(environments: ReadonlyArray<BeltEnvironment>, nowMs: 
   const info: Array<BeltRun> = [];
   // In the order seen, so that of two runs with the same (or no) start the later one is newest.
   const ranked: Array<{ station: Station; startedMs: number }> = [];
-  let runsToday = 0;
 
   for (const { environmentId, label, active, recent } of environments) {
     const rowById = new Map(recent.map((row) => [row.id, row]));
@@ -188,7 +183,8 @@ export function deriveBelt(environments: ReadonlyArray<BeltEnvironment>, nowMs: 
       forMs: null,
       prUrl: row?.pr_url ?? null,
       reason: null,
-      stoppable: false,
+      finished: row?.finished ?? false,
+      threadId: null,
       ...rest,
     });
 
@@ -204,15 +200,13 @@ export function deriveBelt(environments: ReadonlyArray<BeltEnvironment>, nowMs: 
         step: row?.step ?? run.state,
         forMs: run.for_ms,
         prUrl: run.pr_url ?? row?.pr_url ?? null,
-        stoppable: run.state === "building",
+        finished: false,
+        threadId: run.thread_id,
       });
       lanes[station].push(made);
       ranked.push({ station, startedMs: made.startedMs });
     }
 
-    for (const row of recent) {
-      if (today(startedOf(row))) runsToday++;
-    }
     for (const row of newestAttempts(recent)) {
       if (row.finished && (row.pr_end === "merged" || row.pr_end === "closed")) {
         const finishedMs = startedOf(row) + (row.total_ms ?? Number.NaN);
@@ -221,6 +215,7 @@ export function deriveBelt(environments: ReadonlyArray<BeltEnvironment>, nowMs: 
           run: beltRun(row.id, row, {
             step: shownState(row.state, row.pr_end),
             forMs: row.total_ms,
+            finished: true,
           }),
           finishedMs,
         });
@@ -246,8 +241,6 @@ export function deriveBelt(environments: ReadonlyArray<BeltEnvironment>, nowMs: 
 
   const byStart = (a: BeltRun, b: BeltRun) => newestFirst(a.startedMs, b.startedMs);
   const doneRuns = done.map(({ run }) => run);
-  const summary = summariseDone(doneRuns);
-  const sortedStuck = stuck.toSorted(byStart);
   return {
     runs: {
       claimed: lanes.claimed.toSorted(byStart),
@@ -256,10 +249,9 @@ export function deriveBelt(environments: ReadonlyArray<BeltEnvironment>, nowMs: 
       pr: lanes.pr.toSorted(byStart),
       done: doneRuns,
     },
-    done: summary,
-    stuck: sortedStuck,
+    done: summariseDone(doneRuns),
+    stuck: stuck.toSorted(byStart),
     info: info.toSorted(byStart),
-    counters: { runsToday, mergedToday: summary.merged, stuck: sortedStuck.length },
     newest,
   };
 }
@@ -341,7 +333,7 @@ export function tileMotions(
 /**
  * The belt with the runs that are not in a bin yet left out of them, so a bin's count changes when
  * the slide ends: those in `landing`, still sliding into a bin, and those whose `places` put them
- * elsewhere (a lane wins over a bin there). Lanes and counters are as they were. The same belt when
+ * elsewhere (a lane wins over a bin there). Lanes and the newest post are as they were. The same belt when
  * nothing is left out.
  */
 export function holdBins(
@@ -364,6 +356,25 @@ export function holdBins(
     stuck,
     info,
   };
+}
+
+/** The most room, in shares, a lane takes however many tiles it holds; Done always takes this. */
+const MAX_LANE_SHARE = 6;
+const DONE_SHARE = 1.5;
+
+/**
+ * The wide belt's column template: every post has the floor `--factory-post-min` (belt.css), and the
+ * room past it goes to the lanes by how many tiles each holds, capped so one busy post cannot take
+ * the belt. The floor fits two tiles, so a lane of two or fewer keeps one share and the belt only
+ * reshapes when a lane would otherwise hide runs. Done's bin is text, so its share is fixed.
+ */
+export function beltColumns(tiles: Readonly<Record<Exclude<Station, "done">, number>>): string {
+  const share = (count: number) => Math.min(Math.max(count - 1, 1), MAX_LANE_SHARE);
+  return [tiles.claimed, tiles.building, tiles.gate, tiles.pr]
+    .map(share)
+    .concat(DONE_SHARE)
+    .map((fr) => `minmax(var(--factory-post-min), ${fr}fr)`)
+    .join(" ");
 }
 
 /**
@@ -392,7 +403,7 @@ export function nextPassText(
   const at = Date.parse(passes.at);
   if (Number.isNaN(at)) return null;
   const seconds = Math.max(0, Math.ceil((at + passes.poll_seconds * 1000 - nowMs) / 1000));
-  return `next pass in ${seconds}s`;
+  return `next pass in ${seconds < 60 ? "" : `${Math.floor(seconds / 60)}m `}${seconds % 60}s`;
 }
 
 /** `HH:MM` in the viewer's time. */
@@ -400,3 +411,9 @@ export function formatClock(ms: number): string {
   const date = new Date(ms);
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
+
+/** An ISO time as {@link formatClock} shows it; null for none or one that does not parse. */
+export const clockOfIso = (iso: string | null): string | null => {
+  const ms = iso === null ? Number.NaN : Date.parse(iso);
+  return Number.isNaN(ms) ? null : formatClock(ms);
+};

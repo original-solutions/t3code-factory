@@ -5,6 +5,7 @@
  * `t3_env_holds` and `t3_logs`; `min_free_gib` shows as the `low-disk` item.
  */
 import type { AttentionItem } from "./attention.ts";
+import type { MachineHealth } from "./health.ts";
 import { deployWait, loadDeploySnooze, loadHandPause, loadPendingDeploy } from "./claims.ts";
 import { DEFAULT_DEPLOY_WAIT_MINUTES } from "./config.ts";
 import { scanMachineLogBack, type MachineEntry } from "./ledger/machineLog.ts";
@@ -120,17 +121,33 @@ export interface StatusReport {
     readonly reason: string | null;
     readonly message: string | null;
   }>;
+  /** The disk, load and gates the pass holds claims on, read with the report; null while idle. */
+  readonly health: MachineHealth | null;
   /** What the factory needs a person for, from the open attention items. */
-  readonly attention: ReadonlyArray<{
-    readonly id: string;
-    readonly kind: string;
-    readonly repo: string | null;
-    readonly issue: number | null;
-    readonly run: string | null;
-    readonly message: string;
-    readonly first_seen: string;
-  }>;
+  readonly attention: ReadonlyArray<ReportedAttention>;
+  /** Open items a person dismissed: still true, so a hold one causes still holds claims. */
+  readonly dismissed: ReadonlyArray<ReportedAttention>;
 }
+
+interface ReportedAttention {
+  readonly id: string;
+  readonly kind: string;
+  readonly repo: string | null;
+  readonly issue: number | null;
+  readonly run: string | null;
+  readonly message: string;
+  readonly first_seen: string;
+}
+
+const reported = (item: AttentionItem): ReportedAttention => ({
+  id: item.id,
+  kind: item.kind,
+  repo: item.repo,
+  issue: item.issue,
+  run: item.run,
+  message: item.message,
+  first_seen: formatTs(item.firstSeenMs),
+});
 
 /** How far back a problem still counts as recent. */
 const PROBLEM_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -271,6 +288,9 @@ export const buildStatus = (input: {
   /** The loop's `runningThreads`, or null when it failed. */
   readonly runningThreads: number | null;
   readonly attention: ReadonlyArray<AttentionItem>;
+  readonly dismissed?: ReadonlyArray<AttentionItem>;
+  /** The loop's `health`; null when idle or not read. */
+  readonly health?: MachineHealth | null;
   /** The run files the last report read, kept by the caller between reports. */
   readonly cache?: RunReadCache;
 }): StatusReport => {
@@ -360,14 +380,8 @@ export const buildStatus = (input: {
       reason: problem.reason,
       message: problem.message,
     })),
-    attention: input.attention.map((item) => ({
-      id: item.id,
-      kind: item.kind,
-      repo: item.repo,
-      issue: item.issue,
-      run: item.run,
-      message: item.message,
-      first_seen: formatTs(item.firstSeenMs),
-    })),
+    health: input.health ?? null,
+    attention: input.attention.map(reported),
+    dismissed: (input.dismissed ?? []).map(reported),
   };
 };

@@ -1,6 +1,10 @@
 import { formatElapsedDurationLabel } from "../timestampFormat";
 import type { FactoryEntry } from "./api";
 
+/** `1 file`, `3 files`; `many` for a plural that is not `one` plus `s`. */
+export const plural = (n: number, one: string, many = `${one}s`): string =>
+  `${n} ${n === 1 ? one : many}`;
+
 export interface ParsedRunId {
   readonly owner: string;
   readonly repo: string;
@@ -58,16 +62,23 @@ export function currentStep(entries: ReadonlyArray<FactoryEntry>): string | null
   return null;
 }
 
-/** The `thread_id` of the last `session_launched` entry that has one. */
-export function threadIdOf(entries: ReadonlyArray<FactoryEntry>): string | null {
+/** A field of the last `session_launched` entry that has it. */
+function launchField(entries: ReadonlyArray<FactoryEntry>, key: string): string | null {
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
     if (entry.event !== "session_launched") continue;
-    const id = textField(entry.data, "thread_id");
-    if (id !== null) return id;
+    const value = textField(entry.data, key);
+    if (value !== null) return value;
   }
   return null;
 }
+
+/** The `thread_id` of the last `session_launched` entry that has one. */
+export const threadIdOf = (entries: ReadonlyArray<FactoryEntry>) =>
+  launchField(entries, "thread_id");
+
+/** The issue title a launch recorded; untrusted text. */
+export const issueTitleOf = (entries: ReadonlyArray<FactoryEntry>) => launchField(entries, "title");
 
 export interface GateCommand {
   readonly command: string;
@@ -134,23 +145,6 @@ export function labelForState(state: string | null): string {
   return state ?? "unknown";
 }
 
-export type StateBadgeVariant = "info" | "success" | "error" | "warning" | "secondary";
-
-export function stateBadgeVariant(state: string | null): StateBadgeVariant {
-  switch (state) {
-    case "building":
-      return "info";
-    case "pr-open":
-      return "success";
-    case "stuck":
-      return "error";
-    case "needs-info":
-      return "warning";
-    default:
-      return "secondary";
-  }
-}
-
 /** The `to` of the last `state_changed` entry. */
 export function runState(entries: ReadonlyArray<FactoryEntry>): string | null {
   for (let i = entries.length - 1; i >= 0; i--) {
@@ -183,22 +177,6 @@ export function runIsFinished(entries: ReadonlyArray<FactoryEntry>): boolean {
   return entries.some((entry) => entry.event === "finished");
 }
 
-/** What a stuck or needs-info run waits on a person for: untrusted text, show it as text only. */
-export function whyStopped(
-  entries: ReadonlyArray<FactoryEntry>,
-): { readonly title: string; readonly text: string } | null {
-  const state = runState(entries);
-  const [event, key, title] =
-    state === "stuck"
-      ? ["stuck", "reason", "Why it is stuck"]
-      : state === "needs-info"
-        ? ["questions_posted", "questions", "Questions on the issue"]
-        : [null, null, null];
-  if (event === null) return null;
-  const text = textField(entries.findLast((entry) => entry.event === event)?.data, key);
-  return text === null ? null : { title, text };
-}
-
 /** A reference to show: a link when it has a target, else plain text. */
 export interface LinkRef {
   readonly text: string;
@@ -206,6 +184,15 @@ export interface LinkRef {
 }
 
 /** An issue of `owner/repo`: `#20` linked to GitHub when numeric, else the bare text. */
+/** A message without the `owner/repo:` it opens with when the item already names that repo. */
+export function withoutRepoPrefix(message: string, repo: string | null): string {
+  if (repo === null) return message;
+  const prefix = `${repo.toLowerCase()}:`;
+  if (!message.toLowerCase().startsWith(prefix)) return message;
+  const rest = message.slice(prefix.length).trim();
+  return rest === "" ? message : rest;
+}
+
 export const issueRef = (repo: string, issue: string): LinkRef =>
   /^[0-9]+$/.test(issue)
     ? { text: `#${issue}`, href: `https://github.com/${repo}/issues/${issue}` }

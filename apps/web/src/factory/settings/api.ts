@@ -5,6 +5,7 @@
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 
 import { factoryRequest, failureMessage, parseJson } from "../http";
+import type { MachineNow } from "./tuning";
 
 export interface ConfigError {
   readonly file: string;
@@ -38,6 +39,8 @@ export interface RepoBlock {
       readonly interruption_resumes: number;
     };
     readonly autonomy: "pr";
+    /** The one machine that may claim, null for any. An older server does not send it. */
+    readonly owner?: string | null;
   } | null;
   readonly errors: ReadonlyArray<ConfigError> | null;
 }
@@ -52,6 +55,9 @@ export interface MachineConfigValues {
   readonly max_concurrent_runs: number | null;
   readonly max_concurrent_gates: number | null;
   readonly feedback_seconds: number | null;
+  /** The pass's disk floor and load limit; an older server neither reports nor takes them. */
+  readonly min_free_gib?: number | null;
+  readonly max_load_per_core?: number | null;
 }
 
 /** The file's values read leniently when it does not load: any key may be missing or oddly typed. */
@@ -67,6 +73,8 @@ export interface MachineConfigReport {
     readonly max_concurrent_runs: number;
     readonly max_concurrent_gates: number;
     readonly feedback_seconds: number;
+    readonly min_free_gib?: number;
+    readonly max_load_per_core?: number;
   } | null;
   /** What an empty form holds; the server owns these so the page never copies them. */
   readonly defaults: MachineConfigValues;
@@ -127,3 +135,18 @@ export const fetchFactoryConfig = (prepared: PreparedConnection) => request(prep
 
 export const saveFactoryConfig = (prepared: PreparedConnection, values: MachineConfigValues) =>
   request(prepared, "POST", values);
+
+/** The factory's status as the limits read it, or null when it cannot be read (a refused scope, an older server). */
+export const fetchMachineNow = async (prepared: PreparedConnection): Promise<MachineNow | null> => {
+  try {
+    const response = await factoryRequest(prepared, {
+      method: "GET",
+      path: "/api/factory/status",
+    });
+    const parsed = parseJson(response.text);
+    if (response.status < 200 || response.status >= 300 || !isObject(parsed)) return null;
+    return "slots" in parsed ? (parsed as MachineNow) : null;
+  } catch {
+    return null;
+  }
+};

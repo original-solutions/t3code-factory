@@ -60,6 +60,8 @@ export interface FactoryStatus {
     readonly unreadable: boolean;
   }>;
   readonly attention: ReadonlyArray<FactoryAttentionItem>;
+  /** Items a person dismissed whose cause still holds; absent from older servers. */
+  readonly dismissed?: ReadonlyArray<FactoryAttentionItem>;
   readonly slots: { readonly used: number; readonly max: number | null };
   /**
    * Threads with an agent at work, a person's or the factory's, which an update interrupts; null
@@ -77,6 +79,36 @@ export interface FactoryStatus {
     readonly stale?: boolean;
   };
   readonly problems: ReadonlyArray<unknown>;
+  /**
+   * The disk, load and gates the pass holds claims on, read with this status; null while idle;
+   * absent from older servers. `apps/server/src/factory/health.ts`.
+   */
+  readonly health?: FactoryHealth | null;
+}
+
+export interface FactoryHealth {
+  readonly disk:
+    | {
+        readonly path: string;
+        readonly free_bytes: number;
+        readonly total_bytes: number;
+        /** `min_free_gib` in bytes; null when the check is off. */
+        readonly floor_bytes: number | null;
+        readonly low: boolean;
+      }
+    | { readonly error: string };
+  readonly load: {
+    readonly one_minute: number;
+    readonly cores: number;
+    /** Null when the check is off. */
+    readonly limit: number | null;
+    readonly high: boolean;
+  };
+  readonly gates: {
+    readonly running: number;
+    readonly max: number;
+    readonly oldest_ms: number | null;
+  };
 }
 
 export interface FactoryRunRow {
@@ -116,6 +148,69 @@ export interface FactoryRunDetail {
   readonly skipped: number;
 }
 
+/** One part of a run's GitHub read: what GitHub said, or why it could not be asked. */
+export type FactoryGitHubPart<T> =
+  | ({ readonly kind: "ok" } & T)
+  | { readonly kind: "signed-out"; readonly message: string }
+  | { readonly kind: "failed"; readonly message: string }
+  | { readonly kind: "gone" };
+
+/** A run's issue and pull request as the factory's `gh` reads them (`runGitHub.ts`). Untrusted text. */
+export interface FactoryRunGitHub {
+  readonly id: string;
+  /** Null for an issue that is not on GitHub. */
+  readonly issue: FactoryGitHubPart<{
+    readonly number: number;
+    readonly title: string;
+    readonly body: string;
+    readonly body_cut: boolean;
+    readonly author: string | null;
+    readonly labels: ReadonlyArray<string>;
+    readonly closed: boolean;
+  }> | null;
+  /** Null while the run has opened no pull request. */
+  readonly pr: FactoryGitHubPart<{
+    readonly number: number;
+    readonly title: string;
+    readonly body: string;
+    readonly body_cut: boolean;
+    readonly state: "open" | "draft" | "merged" | "closed";
+    readonly additions: number;
+    readonly deletions: number;
+    readonly changed_files: number;
+    readonly review_decision: string | null;
+    readonly files: ReadonlyArray<{
+      readonly path: string;
+      readonly additions: number;
+      readonly deletions: number;
+    }>;
+  }> | null;
+}
+
+/** The ready issues the claim step held back, from the machine log (`readyQueue.ts` on the server). */
+export interface FactoryReadyQueue {
+  readonly last_pass_at: string | null;
+  /** The newest pass's machine-wide skips: `paused`, `low-disk`, `high-load`, `deploy-pending`, `late`, … */
+  readonly holds: ReadonlyArray<string>;
+  /** When the newest pass that read the ready issues ended; `waiting` is as of then. */
+  readonly checked_at: string | null;
+  readonly waiting: ReadonlyArray<{
+    readonly repo: string;
+    readonly issue: string;
+    readonly reason: string;
+    readonly since: string;
+    readonly passes: number;
+    /** The server read only part of the log, so the wait began before `since`; absent on older servers. */
+    readonly since_cut?: boolean;
+  }>;
+  readonly turned_away: ReadonlyArray<{
+    readonly repo: string;
+    readonly issue: string;
+    readonly at: string;
+  }>;
+  readonly skipped_repos: ReadonlyArray<{ readonly repo: string; readonly reason: string }>;
+}
+
 export interface FactoryStopResult {
   readonly stopped: string;
   readonly already: boolean;
@@ -132,6 +227,11 @@ export interface FactoryPauseResult {
 export interface FactoryDismissResult {
   /** The ids the server dismissed; an id that was not open is left out. */
   readonly dismissed: ReadonlyArray<string>;
+}
+
+export interface FactoryRestoreResult {
+  /** The ids the server listed again; an id that was not dismissed is left out. */
+  readonly restored: ReadonlyArray<string>;
 }
 
 export interface FactorySnoozeResult {
@@ -173,6 +273,8 @@ export interface FactoryApi {
     options: { readonly all: boolean },
   ) => Promise<{ readonly runs: ReadonlyArray<FactoryRunRow> }>;
   readonly run: (environmentId: EnvironmentId, id: string) => Promise<FactoryRunDetail>;
+  readonly runGitHub: (environmentId: EnvironmentId, id: string) => Promise<FactoryRunGitHub>;
+  readonly queue: (environmentId: EnvironmentId) => Promise<FactoryReadyQueue>;
   readonly stopRun: (environmentId: EnvironmentId, id: string) => Promise<FactoryStopResult>;
   readonly pauseClaims: (environmentId: EnvironmentId) => Promise<FactoryPauseResult>;
   readonly resumeClaims: (environmentId: EnvironmentId) => Promise<FactoryResumeResult>;
@@ -189,6 +291,10 @@ export interface FactoryApi {
     environmentId: EnvironmentId,
     ids: ReadonlyArray<string>,
   ) => Promise<FactoryDismissResult>;
+  readonly restoreAttention: (
+    environmentId: EnvironmentId,
+    ids: ReadonlyArray<string>,
+  ) => Promise<FactoryRestoreResult>;
 }
 
 /**
@@ -272,7 +378,7 @@ const call = async <T>(
     if (error instanceof FactoryHttpError && error.kind === "timeout") throw timedOut();
     throw new FactoryApiError(
       0,
-      null,
+      error instanceof FactoryHttpError ? error.kind : null,
       error instanceof Error && error.message ? error.message : "The request failed.",
     );
   }
@@ -302,6 +408,8 @@ const httpApi: FactoryApi = {
   runs: (environmentId, { all }) =>
     get(environmentId, "/api/factory/runs", all ? { all: "1" } : undefined),
   run: (environmentId, id) => get(environmentId, runPath(id)),
+  runGitHub: (environmentId, id) => get(environmentId, `${runPath(id)}/github`),
+  queue: (environmentId) => get(environmentId, "/api/factory/queue"),
   stopRun: (environmentId, id) => post(environmentId, `${runPath(id)}/stop`),
   pauseClaims: (environmentId) => post(environmentId, "/api/factory/claims/pause"),
   resumeClaims: (environmentId) => post(environmentId, "/api/factory/claims/resume"),
@@ -310,6 +418,8 @@ const httpApi: FactoryApi = {
   deployNow: (environmentId, commit) => post(environmentId, "/api/factory/deploy/now", { commit }),
   dismissAttention: (environmentId, ids) =>
     post(environmentId, "/api/factory/attention/dismiss", { ids }),
+  restoreAttention: (environmentId, ids) =>
+    post(environmentId, "/api/factory/attention/restore", { ids }),
 };
 
 let override: FactoryApi | undefined;
@@ -324,6 +434,8 @@ export const factoryApi: FactoryApi = {
   status: (environmentId) => (override ?? httpApi).status(environmentId),
   runs: (environmentId, options) => (override ?? httpApi).runs(environmentId, options),
   run: (environmentId, id) => (override ?? httpApi).run(environmentId, id),
+  runGitHub: (environmentId, id) => (override ?? httpApi).runGitHub(environmentId, id),
+  queue: (environmentId) => (override ?? httpApi).queue(environmentId),
   stopRun: (environmentId, id) => (override ?? httpApi).stopRun(environmentId, id),
   pauseClaims: (environmentId) => (override ?? httpApi).pauseClaims(environmentId),
   resumeClaims: (environmentId) => (override ?? httpApi).resumeClaims(environmentId),
@@ -332,4 +444,6 @@ export const factoryApi: FactoryApi = {
   deployNow: (environmentId, commit) => (override ?? httpApi).deployNow(environmentId, commit),
   dismissAttention: (environmentId, ids) =>
     (override ?? httpApi).dismissAttention(environmentId, ids),
+  restoreAttention: (environmentId, ids) =>
+    (override ?? httpApi).restoreAttention(environmentId, ids),
 };

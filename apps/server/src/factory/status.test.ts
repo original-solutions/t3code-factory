@@ -181,7 +181,9 @@ describe("buildStatus: nothing recorded", () => {
       runs: [],
       left_out: [],
       problems: [],
+      health: null,
       attention: [],
+      dismissed: [],
     });
   });
 
@@ -238,7 +240,9 @@ describe("buildStatus: nothing recorded", () => {
       "runs",
       "left_out",
       "problems",
+      "health",
       "attention",
+      "dismissed",
     ]);
     expect(Object.keys(status.passes)).toEqual([
       "at",
@@ -773,6 +777,7 @@ describe("buildStatus: the rest of the report", () => {
           message: null,
         },
       ],
+      health: null,
       attention: [
         {
           id: "stuck:a/b#1",
@@ -784,6 +789,7 @@ describe("buildStatus: the rest of the report", () => {
           first_seen: formatTs(ago(HOUR)),
         },
       ],
+      dismissed: [],
     });
   });
 
@@ -1019,6 +1025,18 @@ describe("buildStatus: attention", () => {
       ["config", "config", null, formatTs(ago(HOUR))],
       ["stuck:a/b#1", "stuck", "a/b", formatTs(T0)],
     ]);
+    expect(status.dismissed).toEqual([]);
+  });
+
+  it("dismissed items come apart from the open ones", () => {
+    const status = report(tempDir(), {
+      attention: [attentionItem()],
+      dismissed: [
+        attentionItem({ id: "config", kind: "config", repo: null, issue: null, run: null }),
+      ],
+    });
+    expect(status.attention.map((item) => item.id)).toEqual(["stuck:a/b#1"]);
+    expect(status.dismissed.map((item) => item.id)).toEqual(["config"]);
   });
 });
 

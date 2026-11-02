@@ -43,6 +43,7 @@ import { runIdToString, runPath, type RunId } from "../ledger/runId.ts";
 import { T0, useTempDirs } from "../ledger/testSupport.ts";
 import { formatTs } from "../ledger/time.ts";
 import { stopRequestPath } from "../runner/stop.ts";
+import type { MachineHealth } from "../health.ts";
 import type { FactoryStatus } from "../status.ts";
 import { saveMachineConfig } from "../settings.ts";
 import { route } from "./auth.ts";
@@ -54,6 +55,7 @@ import {
   DEPLOY_NOW_PATH,
   DEPLOY_SNOOZE_PATH,
   DISMISS_PATH,
+  RESTORE_PATH,
   FactoryRoutes,
   RESTART_PATH,
   STATUS_PATH,
@@ -194,6 +196,7 @@ interface World {
   /** Threads with an agent at work, or "fails" for a read that fails. */
   readonly runningThreads?: number | "fails";
   readonly attention?: ReadonlyArray<AttentionItem>;
+  readonly dismissed?: ReadonlyArray<AttentionItem>;
   /** The factory dir; the machine config is `<dir>/config.yml`. */
   readonly dir?: string;
   /** What the loop last read of each repo's project config. */
@@ -210,7 +213,12 @@ interface World {
   readonly cors?: boolean;
   /** What kickstarting the autodeploy job answers; false (it fails) when unset. */
   readonly kicks?: boolean;
+  /** What the loop reads of the machine's health; null when unset. */
+  readonly health?: MachineHealth;
 }
+
+/** What the loop's GitHub reader was handed: the run ids and the entry count of each. */
+const gitHubReads: Array<string> = [];
 
 /** What the loop was asked to do: `count` wakes, `reloads` config reloads; `kicks` autodeploy kickstarts. */
 interface Calls {
@@ -219,15 +227,21 @@ interface Calls {
   kicks: number;
 }
 
-const attentionWith = (items: ReadonlyArray<AttentionItem>) =>
+const attentionWith = (
+  items: ReadonlyArray<AttentionItem>,
+  dismissed: ReadonlyArray<AttentionItem> = [],
+) =>
   Attention.of({
     list: () => Effect.succeed(items),
+    listDismissed: () => Effect.succeed(dismissed),
     raise: () => Effect.void,
     clear: () => Effect.void,
     passEnded: () => Effect.void,
     setNotify: () => Effect.void,
     dismiss: (ids) =>
       Effect.succeed(items.filter((item) => ids.includes(item.id)).map((item) => item.id)),
+    restore: (ids) =>
+      Effect.succeed(dismissed.filter((item) => ids.includes(item.id)).map((item) => item.id)),
   });
 
 const worldContext = (
@@ -288,9 +302,15 @@ const worldContext = (
           }).pipe(Effect.provide(NodeServices.layer)),
         repoConfigs,
         watchedRepos,
+        runGitHub: (run) =>
+          Effect.sync(() => {
+            gitHubReads.push(`${run.id} ${run.entries.length}`);
+            return { id: run.id, issue: { kind: "gone" as const }, pr: null };
+          }),
+        health: Effect.succeed(world.health ?? null),
       }),
     ),
-    Context.add(Attention, attentionWith(world.attention ?? [])),
+    Context.add(Attention, attentionWith(world.attention ?? [], world.dismissed ?? [])),
     Context.add(FactoryPaths, {
       baseDir: dir,
       worktreesDir: NodePath.join(dir, "worktrees"),
@@ -393,10 +413,13 @@ const FACTORY_ROUTES = [
   ["GET", "/api/factory/status"],
   ["GET", "/api/factory/runs"],
   ["GET", `/api/factory/runs/${ID}`],
+  ["GET", `/api/factory/runs/${ID}/github`],
+  ["GET", "/api/factory/queue"],
   ["POST", `/api/factory/runs/${ID}/stop`],
   ["POST", "/api/factory/claims/pause"],
   ["POST", "/api/factory/claims/resume"],
   ["POST", "/api/factory/attention/dismiss"],
+  ["POST", "/api/factory/attention/restore"],
   ["GET", "/api/factory/config"],
   ["POST", "/api/factory/config"],
   ["POST", "/api/factory/restart"],
@@ -435,6 +458,8 @@ describe("every factory route", () => {
         "/api/factory/status",
         "/api/factory/runs",
         `/api/factory/runs/${ID}`,
+        `/api/factory/runs/${ID}/github`,
+        "/api/factory/queue",
         CONFIG_PATH,
       ]) {
         for (const token of [tokens.operate, tokens.settingsWrite]) {
@@ -455,6 +480,7 @@ describe("every factory route", () => {
         "/api/factory/claims/pause",
         "/api/factory/claims/resume",
         "/api/factory/attention/dismiss",
+        "/api/factory/attention/restore",
         "/api/factory/restart",
         "/api/factory/deploy/snooze",
         "/api/factory/deploy/now",
@@ -501,7 +527,9 @@ describe("GET /api/factory/status", () => {
         "runs",
         "left_out",
         "problems",
+        "health",
         "attention",
+        "dismissed",
       ]);
       assert.strictEqual((body.passes as { poll_seconds: unknown }).poll_seconds, null);
       assert.deepStrictEqual(body.slots, { used: 0, max: null });
@@ -541,22 +569,47 @@ describe("GET /api/factory/status", () => {
     }),
   );
 
-  it.effect("carries the open attention items", () =>
-    serving({ status: running, attention: [attentionItem()] }, async (call, { tokens }) => {
-      const body = await json(await call("GET", STATUS_PATH, tokens.read));
-      assert.deepStrictEqual(body.attention, [
-        {
-          id: "stuck:a/b#1",
-          kind: "stuck",
-          repo: "a/b",
-          issue: 1,
-          run: "a__b__1__1",
-          message: "run went stuck",
-          first_seen: formatTs(T0),
-        },
-      ]);
-    }),
+  it.effect("carries the open attention items, and the dismissed ones apart", () =>
+    serving(
+      {
+        status: running,
+        attention: [attentionItem()],
+        dismissed: [
+          attentionItem({ id: "low-disk", kind: "attention", repo: null, issue: null, run: null }),
+        ],
+      },
+      async (call, { tokens }) => {
+        const body = await json(await call("GET", STATUS_PATH, tokens.read));
+        assert.deepStrictEqual(
+          (body.dismissed as Array<{ id: string }>).map((item) => item.id),
+          ["low-disk"],
+        );
+        assert.deepStrictEqual(body.attention, [
+          {
+            id: "stuck:a/b#1",
+            kind: "stuck",
+            repo: "a/b",
+            issue: 1,
+            run: "a__b__1__1",
+            message: "run went stuck",
+            first_seen: formatTs(T0),
+          },
+        ]);
+      },
+    ),
   );
+
+  it.effect("carries the machine's health the loop reads", () => {
+    const health: MachineHealth = {
+      disk: { path: "/w", free_bytes: 5, total_bytes: 50, floor_bytes: 10, low: true },
+      load: { one_minute: 1, cores: 4, limit: 8, high: false },
+      gates: { running: 1, max: 2, oldest_ms: 3_000 },
+    };
+    return serving({ status: running, health }, async (call, { tokens }) => {
+      const body = await json(await call("GET", STATUS_PATH, tokens.read));
+      assert.deepStrictEqual(body.health, health);
+    });
+  });
 
   it.effect("answers 500 factory_error when the machine log cannot be read", () =>
     serving({ status: running }, async (call, { tokens, dir }) => {
@@ -980,6 +1033,37 @@ describe("GET /api/factory/runs", () => {
   );
 });
 
+describe("GET /api/factory/queue", () => {
+  it.effect("lists the ready issues the last pass held back, from the machine log", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(T0 + 60_000);
+      return yield* serving({ clock: yield* Clock.Clock }, async (call, { tokens, dir }) => {
+        const at = (ms: number, event: string, data: unknown) =>
+          `${JSON.stringify({ ts: formatTs(ms), ms, event, data })}\n`;
+        NodeFS.writeFileSync(
+          NodePath.join(dir, "events.jsonl"),
+          at(T0, "pass_started", {}) +
+            at(T0 + 1, "claim_skipped", { repo: "rawphp/softfac", issue: 12, reason: "blocked" }) +
+            at(T0 + 2, "pass_finished", { runs: 0, claimed: 0, errors: 0, attention: 0 }),
+        );
+        const response = await call("GET", "/api/factory/queue", tokens.read);
+        assert.strictEqual(response.status, 200);
+        const body = (await response.json()) as { waiting: ReadonlyArray<unknown> };
+        assert.deepStrictEqual(body.waiting, [
+          {
+            repo: "rawphp/softfac",
+            issue: "12",
+            reason: "blocked",
+            since: formatTs(T0 + 1),
+            passes: 1,
+            since_cut: false,
+          },
+        ]);
+      });
+    }),
+  );
+});
+
 describe("GET /api/factory/runs/:id", () => {
   it.effect("shows each entry with its time, event, data and cause", () =>
     serving({}, async (call, { tokens, dir }) => {
@@ -1064,6 +1148,34 @@ describe("GET /api/factory/runs/:id", () => {
       const response = await call("GET", `/api/factory/runs/${ID}`, tokens.read);
       assert.strictEqual(response.status, 404);
       assert.notInclude(await response.text(), "leaked");
+    }),
+  );
+});
+
+describe("GET /api/factory/runs/:id/github", () => {
+  it.effect("hands the loop's reader the run the ledger shows, and serves its answer", () =>
+    serving({}, async (call, { tokens, dir }) => {
+      seed(dir, run10, BUILDING);
+      gitHubReads.length = 0;
+      const response = await call("GET", `/api/factory/runs/${ID}/github`, tokens.read);
+      assert.strictEqual(response.status, 200);
+      assert.deepStrictEqual(await response.json(), { id: ID, issue: { kind: "gone" }, pr: null });
+      assert.deepStrictEqual(gitHubReads, [`${ID} 3`]);
+    }),
+  );
+
+  it.effect("reads nothing from GitHub for a run with no ledger or a bad id", () =>
+    serving({}, async (call, { tokens }) => {
+      gitHubReads.length = 0;
+      assert.strictEqual(
+        (await call("GET", `/api/factory/runs/${ID}/github`, tokens.read)).status,
+        404,
+      );
+      assert.strictEqual(
+        (await call("GET", "/api/factory/runs/not-a-run/github", tokens.read)).status,
+        400,
+      );
+      assert.deepStrictEqual(gitHubReads, []);
     }),
   );
 });
@@ -1297,6 +1409,20 @@ describe("POST /api/factory/attention/dismiss", () => {
   );
 });
 
+describe("POST /api/factory/attention/restore", () => {
+  it.effect("answers 200 with the ids it restored, ignoring ids that are not dismissed", () =>
+    serving({ dismissed: [attentionItem()] }, async (call, { tokens }) => {
+      const response = await call("POST", RESTORE_PATH, tokens.operate, {
+        ids: ["stuck:a/b#1", "gone"],
+      });
+      assert.strictEqual(response.status, 200);
+      assert.deepStrictEqual(await response.json(), { restored: ["stuck:a/b#1"] });
+      const bad = await call("POST", RESTORE_PATH, tokens.operate, { ids: "stuck:a/b#1" });
+      assert.strictEqual(bad.status, 400);
+    }),
+  );
+});
+
 describe("an auth failure inside T3", () => {
   it.effect("answers 500 internal_error, not 401, and never runs the handler", () => {
     let handled = false;
@@ -1361,6 +1487,8 @@ repos:
     max_concurrent_runs: 1,
     max_concurrent_gates: 2,
     feedback_seconds: 600,
+    min_free_gib: 10,
+    max_load_per_core: 1,
   };
   const configFile = (dir: string) => NodePath.join(dir, "config.yml");
   const fileText = (dir: string) => NodeFS.readFileSync(configFile(dir), "utf8");
@@ -1370,6 +1498,8 @@ repos:
     max_concurrent_runs: 2,
     max_concurrent_gates: 2,
     feedback_seconds: 120,
+    min_free_gib: 20,
+    max_load_per_core: 2,
   };
 
   it.effect(
@@ -1410,6 +1540,8 @@ repos:
           max_concurrent_runs: 1,
           max_concurrent_gates: 2,
           feedback_seconds: 600,
+          min_free_gib: 10,
+          max_load_per_core: 1,
         },
         defaults: DEFAULTS,
         errors: [],
@@ -1493,6 +1625,7 @@ repos:
                 interruption_resumes: 4,
               },
               autonomy: "pr",
+              owner: null,
             },
             errors: null,
           },

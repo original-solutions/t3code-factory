@@ -12,9 +12,12 @@ import {
   FactoryApiError,
   factoryApi,
   type FactoryRunDetail,
+  type FactoryReadyQueue,
+  type FactoryRunGitHub,
   type FactoryRunRow,
   type FactoryStatus,
 } from "./api";
+import { causeCount } from "./attentionCauses";
 
 /** How often an open page or badge reads again, while the window shows and the reader is about. */
 const POLL_MS = 30_000;
@@ -29,20 +32,38 @@ export const STATUS_POLL_MS = 5_000;
  */
 const TICK_SLACK_MS = 1_000;
 
+/**
+ * An answer no page reads any more is kept this long, so going back to a page paints what it said
+ * at once while it reads again; past this it is too old to show and the page loads afresh.
+ */
+const KEEP_MS = 10 * 60_000;
+
+/** At most this many answers are kept without a reader; the longest unread go first. */
+const KEEP_IDLE = 32;
+
+/** An answer younger than this is shown again without a read, as a poll would not read yet either. */
+const FRESH_MS = STATUS_POLL_MS;
+
 export interface FactoryResource<T> {
   readonly status: "loading" | "error" | "ready";
   readonly data: T | null;
   readonly error: Error | null;
   /** When the latest answer landed (0 before any): the pages' age labels move on with a poll. */
   readonly readAt: number;
+  /** When the data shown landed (0 before any): a failed read keeps both. */
+  readonly dataAt: number;
   readonly refresh: () => void;
 }
 
 type Loaded<T> = Omit<FactoryResource<T>, "refresh">;
 
-type Resource = "status" | "runs" | "runs:all" | `run:${string}`;
+type Resource = "status" | "runs" | "runs:all" | "queue" | `run:${string}` | `github:${string}`;
 
-const LOADING: Loaded<never> = { status: "loading", data: null, error: null, readAt: 0 };
+/** The resources read once when a reader opens them, never polled: costly, or read on demand. */
+const readOnce = (resource: Resource): boolean =>
+  resource === "runs:all" || resource === "queue" || resource.startsWith("github:");
+
+const LOADING: Loaded<never> = { status: "loading", data: null, error: null, readAt: 0, dataAt: 0 };
 
 interface Store {
   readonly environmentId: EnvironmentId;
@@ -54,13 +75,15 @@ interface Store {
   /** When the latest read started, so two readers' timers on one key cost one read per POLL_MS. */
   startedAt: number;
   readonly listeners: Set<() => void>;
+  /** When its last reader left, while it is kept for the next; null while read or never read. */
+  idleSince: number | null;
 }
 
 /**
- * One store per environment and resource while anyone reads it, so every reader sees one answer.
- * A poll tick joins a read in flight; a requested refresh supersedes it. The last reader's drop
- * waits a microtask: React tears down old subscriptions before building new ones in one flush,
- * and an earlier drop would lose the store's data to a refetch.
+ * One store per environment and resource, so every reader sees one answer. A poll tick joins a
+ * read in flight; a requested refresh supersedes it. A store whose last reader left keeps its
+ * answer for the next one (`KEEP_MS`, `KEEP_IDLE`); one with no answer is dropped. That drop
+ * waits a microtask: React tears down old subscriptions before building new ones in one flush.
  */
 const stores = new Map<string, Store>();
 
@@ -72,7 +95,11 @@ const load = ({ environmentId, resource }: Store): Promise<unknown> =>
     ? factoryApi.status(environmentId)
     : resource === "runs" || resource === "runs:all"
       ? factoryApi.runs(environmentId, { all: resource === "runs:all" })
-      : factoryApi.run(environmentId, resource.slice("run:".length));
+      : resource === "queue"
+        ? factoryApi.queue(environmentId)
+        : resource.startsWith("github:")
+          ? factoryApi.runGitHub(environmentId, resource.slice("github:".length))
+          : factoryApi.run(environmentId, resource.slice("run:".length));
 
 /** Whether `next` lacks a run that `previous` had: it finished, or the factory forgot it. */
 const droppedRun = (previous: FactoryStatus, next: FactoryStatus): boolean => {
@@ -102,13 +129,17 @@ const read = (key: string, store: Store): void => {
     }
   };
   load(store).then(
-    (data) => settle({ status: "ready", data, error: null, readAt: Date.now() }),
+    (data) => {
+      const now = Date.now();
+      settle({ status: "ready", data, error: null, readAt: now, dataAt: now });
+    },
     (cause: unknown) =>
       settle({
         status: "error",
         data: store.state.data,
         error: cause instanceof Error ? cause : new Error(String(cause)),
         readAt: Date.now(),
+        dataAt: store.state.dataAt,
       }),
   );
 };
@@ -118,6 +149,10 @@ const refresh = (key: string): void => {
   const store = stores.get(key);
   if (store !== undefined) read(key, store);
 };
+
+/** Reads an environment's status now, for a page that changed it from outside its readers. */
+export const refreshFactoryStatus = (environmentId: EnvironmentId): void =>
+  refresh(keyOf(environmentId, "status"));
 
 /**
  * A poll tick of a reader whose period is `periodMs`: not while a read is in flight, nor within a
@@ -132,23 +167,52 @@ const tick = (key: string, periodMs: number = POLL_MS): void => {
   read(key, store);
 };
 
+const newStore = (environmentId: EnvironmentId, resource: Resource): Store => ({
+  environmentId,
+  resource,
+  state: LOADING,
+  issued: 0,
+  inFlight: false,
+  startedAt: 0,
+  listeners: new Set(),
+  idleSince: null,
+});
+
+const tooOld = (store: Store, now: number): boolean =>
+  store.idleSince !== null && now - store.idleSince > KEEP_MS;
+
+/** Drops the kept stores past `KEEP_MS`, then the longest unread past `KEEP_IDLE`. */
+const evict = (): void => {
+  const now = Date.now();
+  const idle: Array<[string, Store]> = [];
+  for (const [key, store] of stores) {
+    if (store.idleSince === null) continue;
+    if (tooOld(store, now)) stores.delete(key);
+    else idle.push([key, store]);
+  }
+  idle.sort(([, a], [, b]) => a.idleSince! - b.idleSince!);
+  for (const [key] of idle.slice(0, Math.max(0, idle.length - KEEP_IDLE))) stores.delete(key);
+};
+
 const subscribe = (
   environmentId: EnvironmentId,
   resource: Resource,
   listener: () => void,
+  freshMs: number = FRESH_MS,
 ): (() => void) => {
   const key = keyOf(environmentId, resource);
   let store = stores.get(key);
+  if (store !== undefined && store.idleSince !== null) {
+    // A kept answer: shown already (see `snapshot`); read again unless it is fresh or on its way.
+    const now = Date.now();
+    if (tooOld(store, now)) store.state = LOADING;
+    store.idleSince = null;
+    if (!store.inFlight && (store.state.data === null || now - store.startedAt >= freshMs)) {
+      read(key, store);
+    }
+  }
   if (store === undefined) {
-    store = {
-      environmentId,
-      resource,
-      state: LOADING,
-      issued: 0,
-      inFlight: false,
-      startedAt: 0,
-      listeners: new Set(),
-    };
+    store = newStore(environmentId, resource);
     stores.set(key, store);
     read(key, store);
   }
@@ -157,12 +221,49 @@ const subscribe = (
   return () => {
     added.listeners.delete(listener);
     queueMicrotask(() => {
-      if (added.listeners.size === 0 && stores.get(key) === added) stores.delete(key);
+      if (added.listeners.size > 0 || stores.get(key) !== added) return;
+      if (added.state.data === null) {
+        stores.delete(key);
+        return;
+      }
+      added.idleSince = Date.now();
+      evict();
     });
   };
 };
 
-const snapshot = (key: string): Loaded<unknown> => stores.get(key)?.state ?? LOADING;
+/**
+ * Reads one run's ledger ahead of its page, so opening it paints at once: a link the pointer rests
+ * on or the keyboard reaches. Nothing is read for a run read within `FRESH_MS` or being read.
+ */
+export function readFactoryRunAhead(environmentId: EnvironmentId, runId: string): void {
+  const key = keyOf(environmentId, `run:${runId}`);
+  const kept = stores.get(key);
+  if (kept !== undefined) {
+    if (kept.inFlight || kept.listeners.size > 0 || Date.now() - kept.startedAt < FRESH_MS) return;
+    read(key, kept);
+    return;
+  }
+  const store = newStore(environmentId, `run:${runId}`);
+  store.idleSince = Date.now();
+  stores.set(key, store);
+  read(key, store);
+  evict();
+}
+
+const snapshot = (key: string): Loaded<unknown> => {
+  const store = stores.get(key);
+  return store === undefined || tooOld(store, Date.now()) ? LOADING : store.state;
+};
+
+/**
+ * A resource's answer as its store holds it now, without subscribing: for a value built in an
+ * earlier render that is read again later, such as a palette submenu the palette kept open.
+ */
+export const peekFactoryResource = <T>(
+  environmentId: EnvironmentId,
+  resource: Resource,
+): Omit<FactoryResource<T>, "refresh"> => snapshot(keyOf(environmentId, resource)) as Loaded<T>;
 
 /** For tests: drop every store, so the next reader starts over. */
 export function __resetFactoryStoresForTests(): void {
@@ -196,7 +297,7 @@ export function useFactoryResource<T>(
   useLiveRefresh(tickNow, {
     key: `factory:${environmentId}:${resource}`,
     intervalMs: POLL_MS,
-    enabled: key !== null && resource !== "runs:all",
+    enabled: key !== null && !readOnce(resource),
   });
   return { ...state, refresh: refreshNow };
 }
@@ -207,6 +308,13 @@ export const useFactoryRun = (
 ): FactoryResource<FactoryRunDetail> =>
   useFactoryResource<FactoryRunDetail>(environmentId, `run:${id}`);
 
+/** A run's issue and pull request from GitHub: read when the page opens, never polled. */
+export const useFactoryRunGitHub = (
+  environmentId: EnvironmentId | null,
+  id: string,
+): FactoryResource<FactoryRunGitHub> =>
+  useFactoryResource<FactoryRunGitHub>(environmentId, `github:${id}`);
+
 /**
  * The same resource of several environments, in the order of `environmentIds`. One subscription
  * covers them all, so the set may change between renders. The snapshot is the previous array
@@ -216,13 +324,15 @@ export const useFactoryRun = (
 function useFactoryResources<T>(
   environmentIds: ReadonlyArray<EnvironmentId>,
   resource: Resource,
-  options: { readonly pollMs?: number } = {},
+  options: { readonly pollMs?: number; readonly freshMs?: number } = {},
 ): Array<FactoryResource<T>> {
   const keys = environmentIds.map((id) => keyOf(id, resource));
   const last = useRef<ReadonlyArray<Loaded<unknown>>>([]);
   const states = useSyncExternalStore(
     (listener: () => void) => {
-      const unsubscribes = environmentIds.map((id) => subscribe(id, resource, listener));
+      const unsubscribes = environmentIds.map((id) =>
+        subscribe(id, resource, listener, options.freshMs),
+      );
       const stopPolling =
         options.pollMs === undefined ? noUnsubscribe : pollWhileVisible(keys, options.pollMs);
       return () => {
@@ -243,7 +353,7 @@ function useFactoryResources<T>(
   useLiveRefresh(() => keys.forEach((key) => tick(key)), {
     key: `factory:all:${resource}`,
     intervalMs: POLL_MS,
-    enabled: keys.length > 0 && resource !== "runs:all",
+    enabled: keys.length > 0 && !readOnce(resource),
   });
   return keys.map((key, i) => ({
     ...(states[i] as Loaded<T>),
@@ -310,6 +420,21 @@ export const useFactoryRunsOf = (
 ): Array<FactoryResource<{ readonly runs: ReadonlyArray<FactoryRunRow> }>> =>
   useFactoryResources(environmentIds, all ? "runs:all" : "runs");
 
+/**
+ * Every run of each environment for a reader opened often and briefly (the command palette): a
+ * kept list under `KEEP_MS` old is shown without reading again, so opening the palette all day
+ * costs one full read per environment every ten minutes at most, not one per open.
+ */
+export const useFactoryEveryRunKept = (
+  environmentIds: ReadonlyArray<EnvironmentId>,
+): Array<FactoryResource<{ readonly runs: ReadonlyArray<FactoryRunRow> }>> =>
+  useFactoryResources(environmentIds, "runs:all", { freshMs: KEEP_MS });
+
+/** Each environment's ready queue: read when the Queue view opens and on Refresh, never polled. */
+export const useFactoryQueues = (
+  environmentIds: ReadonlyArray<EnvironmentId>,
+): Array<FactoryResource<FactoryReadyQueue>> => useFactoryResources(environmentIds, "queue");
+
 /** An environment's name for people: the label it was saved under, else its id. */
 const labelOf = (
   presentationById: ReturnType<typeof useEnvironments>["presentationById"],
@@ -371,6 +496,23 @@ export function useFactoryEnvironments({
 }
 
 /**
+ * The same environments as `useFactoryEnvironments`, for the command palette, which mounts where
+ * the environment presentations are not yet built: the label comes from the environments list.
+ */
+export function useFactoryPaletteEnvironments(): ReadonlyArray<FactoryEnvironment> {
+  const { candidates, statuses } = useFactoryCandidates();
+  const { environments } = useEnvironments();
+  return candidates.flatMap((environmentId, i) => {
+    const status = statuses[i]!;
+    if (isNotFound(status.error)) return [];
+    const label =
+      environments.find((environment) => environment.environmentId === environmentId)?.label ??
+      environmentId;
+    return [{ environmentId, label, status }];
+  });
+}
+
+/**
  * False only once every candidate's status answered 404: no server here has a factory (an upstream
  * build), so the sidebar hides the item instead of leading to a page that cannot load. True before
  * every candidate has answered, and with no candidate.
@@ -380,13 +522,14 @@ export function useFactorySupported(): boolean {
   return statuses.length === 0 || !statuses.every((status) => isNotFound(status.error));
 }
 
-/** The open attention items over every listed environment, for the sidebar badge: 0 before any answer. */
+/** What the open attention items ask of a person over every listed environment, counted by cause, for the sidebar badge: 0 before any answer. */
 export function useFactoryAttentionCount(): number {
   // From the candidates, not `useFactoryEnvironments`: the badge needs no labels, so it does not
   // read the environments' presentations.
   const { statuses } = useFactoryCandidates();
   return statuses.reduce(
-    (sum, status) => sum + (isNotFound(status.error) ? 0 : (status.data?.attention.length ?? 0)),
+    (sum, status) =>
+      sum + (isNotFound(status.error) ? 0 : causeCount(status.data?.attention ?? [])),
     0,
   );
 }

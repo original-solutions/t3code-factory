@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { FactoryRunRow, FactoryStatus } from "./api";
 import {
+  beltColumns,
   deriveBelt,
   fitLane,
   formatClock,
@@ -16,6 +17,7 @@ import {
   type BeltEnvironment,
   type Place,
 } from "./belt";
+import { runActions } from "./runActions";
 
 const ENV_A = "env-a" as EnvironmentId;
 const ENV_B = "env-b" as EnvironmentId;
@@ -148,6 +150,25 @@ describe("fitLane", () => {
   });
 });
 
+describe("beltColumns", () => {
+  const weights = (template: string) =>
+    Array.from(template.matchAll(/minmax\(var\(--factory-post-min\), ([\d.]+)fr\)/g), (m) =>
+      Number(m[1]),
+    );
+
+  it("keeps one share per lane while its tiles fit the floor, so a run coming or going moves nothing", () => {
+    expect(weights(beltColumns({ claimed: 0, building: 1, gate: 2, pr: 0 }))).toEqual([
+      1, 1, 1, 1, 1.5,
+    ]);
+  });
+
+  it("widens a lane past two tiles, up to a cap, so one busy post cannot take the belt", () => {
+    expect(weights(beltColumns({ claimed: 1, building: 3, gate: 0, pr: 40 }))).toEqual([
+      1, 2, 1, 6, 1.5,
+    ]);
+  });
+});
+
 describe("nextPassText", () => {
   const passes = (overrides: Partial<FactoryStatus["passes"]> = {}): FactoryStatus["passes"] => ({
     at: iso(NOW - 12_000),
@@ -159,6 +180,11 @@ describe("nextPassText", () => {
   it("counts down to the end of the last pass plus the poll", () => {
     expect(nextPassText(passes(), NOW)).toBe("next pass in 48s");
     expect(nextPassText(passes(), NOW + 30_000)).toBe("next pass in 18s");
+  });
+
+  it("counts minutes and seconds once a minute or more is left", () => {
+    expect(nextPassText(passes({ poll_seconds: 600 }), NOW)).toBe("next pass in 9m 48s");
+    expect(nextPassText(passes({ poll_seconds: 72 }), NOW)).toBe("next pass in 1m 0s");
   });
 
   it("stops at 0 once the pass is due", () => {
@@ -295,26 +321,29 @@ describe("deriveBelt rail", () => {
     expect(byId(2)).toMatchObject({ title: "From status", prUrl: "https://s/2" });
   });
 
-  it("can stop exactly the runs the run page can: building and not finished", () => {
+  it("offers Stop exactly where the run page does: building and not finished, never on Done", () => {
     const belt = deriveBelt(
       [
         environment(ENV_A, {
           active: [
-            active({ id: id(1), state: "building" }),
+            active({ id: id(1), state: "building", thread_id: "t-1" }),
             active({ id: id(2), state: "building", last_event: "gate_command" }),
             active({ id: id(3), state: "pr-open" }),
             active({ id: id(4), state: "triage" }),
           ],
+          recent: [finished(5, "merged", at(10), 3_600_000)],
         }),
       ],
       NOW,
     );
-    const stoppable = Object.values(belt.runs)
-      .flat()
-      .filter((run) => run.stoppable)
+    const all = Object.values(belt.runs).flat();
+    expect(all.map((run) => run.id)).toContain(id(5));
+    const stoppable = all
+      .filter((run) => runActions(run).some((action) => action.kind === "stop"))
       .map((run) => run.id)
       .toSorted();
     expect(stoppable).toEqual([id(1), id(2)]);
+    expect(all.find((run) => run.id === id(1))?.threadId).toBe("t-1");
   });
 });
 
@@ -477,42 +506,6 @@ describe("deriveBelt bins", () => {
       NOW,
     );
     expect(belt.stuck.map((run) => run.environmentId)).toEqual([ENV_A]);
-  });
-});
-
-describe("deriveBelt counters", () => {
-  it("counts runs started today, merged today and stuck over every environment", () => {
-    const belt = deriveBelt(
-      [
-        environment(ENV_A, {
-          recent: [
-            row({ id: id(1), started_ts: iso(at(8)) }),
-            // An earlier attempt of the same issue still began today.
-            row({ id: id(1, 2), started_ts: iso(at(9)) }),
-            row({ id: id(2), started_ts: iso(at(10, 0, -1)) }),
-            finished(3, "merged", at(7), 600_000),
-            row({ id: id(4), state: "stuck", finished: true, started_ts: iso(at(6, 0, -3)) }),
-          ],
-        }),
-        environment(ENV_B, {
-          recent: [
-            row({ id: id(5, 1, "acme/gadgets"), started_ts: iso(at(11)) }),
-            finished(6, "closed", at(7), 600_000),
-            row({ id: id(7), state: "stuck", finished: true, started_ts: iso(at(12)) }),
-          ],
-        }),
-      ],
-      NOW,
-    );
-    expect(belt.counters).toEqual({ runsToday: 6, mergedToday: 1, stuck: 2 });
-  });
-
-  it("reads a run with no start time as not today", () => {
-    const belt = deriveBelt(
-      [environment(ENV_A, { recent: [row({ id: id(1), started_ts: null })] })],
-      NOW,
-    );
-    expect(belt.counters.runsToday).toBe(0);
   });
 });
 
@@ -815,10 +808,9 @@ describe("holdBins", () => {
     ).toBe(belt);
   });
 
-  it("keeps the lanes, the counters and the newest post", () => {
+  it("keeps the lanes and the newest post", () => {
     const held = holdBins(belt, placesOf(belt), new Set([key(2), key(4), key(6)]));
     expect(held.runs.pr).toBe(belt.runs.pr);
-    expect(held.counters).toBe(belt.counters);
     expect(held.newest).toBe(belt.newest);
     expect(held.info).toEqual([]);
   });
@@ -850,7 +842,6 @@ describe("summariseDone", () => {
 
   it("is what deriveBelt shows for Done", () => {
     expect(done.done).toEqual(summariseDone(done.runs.done));
-    expect(done.counters.mergedToday).toBe(3);
   });
 
   it("has nothing to say of no runs", () => {

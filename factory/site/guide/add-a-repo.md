@@ -61,7 +61,7 @@ The factory names the repo by the clone's `origin` remote. Watch out for these:
 
 ## 3. Check it is watched
 
-Open Settings → Factory. Each watched repo is listed with its workspace root and the factory block as the last pass read it, along with any config errors. A repo on the default is marked "Default config" and shows the block it resolved to, inferred gate included. If no gate could be inferred, the repo shows that error, the Factory page raises an attention item after a few passes, and its issues are not picked up until you commit a `factory` block. A clone with no `origin/HEAD` shows an error saying to run `git remote set-head origin --auto` in it. A repo the factory couldn't settle (an unreadable or half-merged `.dw/config.yml`, a checkout T3 can't name) appears under "Not settled on the last read". [Watch runs](/guide/watching-runs) has more on the page.
+Open Settings → Factory. Each watched repo is listed with its workspace root and the factory block as the last pass read it, along with any config errors. A repo on the default is marked "Defaults" and, opened, shows the block it resolved to, inferred gate included. If no gate could be inferred, the repo shows that error, the Factory page raises an attention item after a few passes, and its issues are not picked up until you commit a `factory` block. A clone with no `origin/HEAD` shows an error saying to run `git remote set-head origin --auto` in it. A repo the factory couldn't settle (an unreadable or half-merged `.dw/config.yml`, a checkout T3 can't name) appears under "Not settled on the last read". [Watch runs](/guide/watching-runs) has more on the page.
 
 ## 4. Create the labels
 

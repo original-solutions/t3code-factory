@@ -5,30 +5,42 @@ import { useEffect, useEffectEvent, useState } from "react";
 
 import { useSettingsScope } from "../../components/settings/SettingsScopeContext";
 import {
+  SettingResetButton,
   SettingsPageContainer,
   SettingsRow,
   SettingsSection,
 } from "../../components/settings/settingsLayout";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../../components/ui/input-group";
+import { cn } from "../../lib/utils";
 import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
 import {
   fetchFactoryConfig,
+  fetchMachineNow,
   saveFactoryConfig,
   type ConfigError,
   type MachineConfigReport,
   type MachineConfigValues,
 } from "./api";
+import { FactorySetup } from "./FactorySetup";
+import { SaveBar } from "./SaveBar";
+import {
+  FIELD_LABELS,
+  feedbackBudget,
+  HOURLY_POINTS,
+  limitNow,
+  pendingChanges,
+  readingOf,
+  type LimitNow,
+  type MachineNow,
+  type TuningForm,
+  type TuningKey,
+} from "./tuning";
 import { WatchedRepos } from "./WatchedRepos";
 
 /** The form keeps numbers as typed, so an empty or half-typed field is not coerced under the cursor. */
-interface FormState {
-  readonly gh_config_dir: string;
-  readonly poll_seconds: string;
-  readonly max_concurrent_runs: string;
-  readonly max_concurrent_gates: string;
-  readonly feedback_seconds: string;
-}
+type FormState = TuningForm;
 
 const EMPTY_FORM: FormState = {
   gh_config_dir: "",
@@ -36,7 +48,61 @@ const EMPTY_FORM: FormState = {
   max_concurrent_runs: "",
   max_concurrent_gates: "",
   feedback_seconds: "",
+  min_free_gib: "",
+  max_load_per_core: "",
 };
+
+const NUMBER_FIELDS: ReadonlyArray<{
+  readonly key: Exclude<TuningKey, "gh_config_dir">;
+  readonly description: string;
+  readonly unit: string;
+}> = [
+  { key: "poll_seconds", unit: "s", description: "How often the factory looks at GitHub." },
+  {
+    key: "max_concurrent_runs",
+    unit: "runs",
+    description: "Runs that may hold an issue at once, across every repo.",
+  },
+  {
+    key: "max_concurrent_gates",
+    unit: "gates",
+    description: "Gates that may check a branch at once.",
+  },
+  {
+    key: "min_free_gib",
+    unit: "GiB",
+    description:
+      "Free space below which nothing is claimed and no gate starts, so a build never fills the disk. 0 turns it off.",
+  },
+  {
+    key: "max_load_per_core",
+    unit: "/core",
+    description:
+      "1-minute load per core above which nothing is claimed and a second gate waits. 0 turns it off.",
+  },
+  {
+    key: "feedback_seconds",
+    unit: "s",
+    description:
+      "How often the factory looks for comments and reviews on a ready pull request. 0 reads on every pass.",
+  },
+];
+
+/** Keys an older server neither reports nor takes: the page leaves them to a hand edit there. */
+const NEWER_KEYS = ["min_free_gib", "max_load_per_core"] as const;
+
+const servesKey = (report: MachineConfigReport, key: TuningKey) => key in report.defaults;
+
+/** The keys the page does not edit; `editMachineConfig` keeps them through a save. */
+const HAND_EDITED_KEYS = [
+  "default_project",
+  "model_fallbacks",
+  "notify",
+  "deploy_wait_minutes",
+  "keep_versions",
+  "prune_branches_after_days",
+  "prune_branches_dry_run",
+];
 
 const text = (value: unknown) => (value === undefined || value === null ? "" : String(value));
 
@@ -49,18 +115,57 @@ const formOf = (report: MachineConfigReport): FormState => {
     max_concurrent_runs: text(source.max_concurrent_runs),
     max_concurrent_gates: text(source.max_concurrent_gates),
     feedback_seconds: text(source.feedback_seconds),
+    min_free_gib: text(source.min_free_gib),
+    max_load_per_core: text(source.max_load_per_core),
   };
 };
 
 const toNumber = (text: string) => (text.trim() === "" ? null : Number(text));
 
-const valuesOf = (form: FormState): MachineConfigValues => ({
+const valuesOf = (form: FormState, report: MachineConfigReport): MachineConfigValues => ({
   gh_config_dir: form.gh_config_dir,
   poll_seconds: toNumber(form.poll_seconds),
   max_concurrent_runs: toNumber(form.max_concurrent_runs),
   max_concurrent_gates: toNumber(form.max_concurrent_gates),
   feedback_seconds: toNumber(form.feedback_seconds),
+  ...Object.fromEntries(
+    NEWER_KEYS.filter((key) => servesKey(report, key)).map((key) => [key, toNumber(form[key])]),
+  ),
 });
+
+const BAR: Record<LimitNow["tone"], string> = {
+  ok: "bg-success",
+  warn: "bg-warning",
+  bad: "bg-destructive",
+};
+
+/** A limit against the machine now: the bar the Factory page's Machine dial draws, and a sentence. */
+function NowLine({ now }: { readonly now: LimitNow }) {
+  return (
+    <div data-now={now.tone} className="flex max-w-96 flex-col gap-1 pt-0.5">
+      <div aria-hidden className="relative h-1.5 overflow-hidden rounded-full bg-muted">
+        <div
+          className={cn("h-full rounded-full", BAR[now.tone])}
+          style={{ width: `${Math.max(2, now.fill * 100)}%` }}
+        />
+        {now.mark === null ? null : (
+          <div
+            className="absolute inset-y-0 w-0.5 bg-foreground/70"
+            style={{ left: `${now.mark * 100}%` }}
+          />
+        )}
+      </div>
+      <p
+        className={cn(
+          now.tone === "bad" && "text-destructive-foreground",
+          now.tone === "warn" && "text-warning-foreground",
+        )}
+      >
+        {now.text}
+      </p>
+    </div>
+  );
+}
 
 type Load =
   | { readonly status: "loading" }
@@ -88,18 +193,23 @@ function FieldErrors({
     ));
 }
 
-/** A machine config field is a fixed width. */
+/** A machine config field: a path is wide, a number is as narrow as its value and unit. */
 function Field({
   name,
   errors,
+  wide = false,
   children,
 }: {
   readonly name: string;
   readonly errors: ReadonlyArray<ConfigError>;
+  readonly wide?: boolean;
   readonly children: React.ReactNode;
 }) {
   return (
-    <div data-field={name} className="flex w-full min-w-0 flex-col gap-1 sm:w-144">
+    <div
+      data-field={name}
+      className={cn("flex w-full min-w-0 flex-col gap-1", wide ? "sm:w-144" : "sm:w-36")}
+    >
       {children}
       <FieldErrors name={name} errors={errors} />
     </div>
@@ -138,6 +248,7 @@ function MachineConfigForm({
 
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [saved, setSaved] = useState<FormState>(EMPTY_FORM);
   const [errors, setErrors] = useState<ReadonlyArray<ConfigError>>([]);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [saveFailure, setSaveFailure] = useState<string | null>(null);
@@ -145,6 +256,7 @@ function MachineConfigForm({
   const show = (report: MachineConfigReport) => {
     setLoad({ status: "ready", report });
     setForm(formOf(report));
+    setSaved(formOf(report));
     setErrors(report.errors);
   };
 
@@ -166,8 +278,13 @@ function MachineConfigForm({
     });
   };
   // The connection object is replaced when a credential renews; a reload then would drop edits.
-  const fetchOnMount = useEffectEvent(fetchConfig);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the factory config from the server once per mount
+  // What the machine does now, read once so each limit shows against it; a refused read shows none.
+  const [machineNow, setMachineNow] = useState<MachineNow | null>(null);
+  const fetchOnMount = useEffectEvent(() => {
+    fetchConfig();
+    void fetchMachineNow(prepared).then(setMachineNow);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the factory config and status from the server once per mount
   useEffect(() => {
     fetchOnMount();
   }, []);
@@ -183,11 +300,18 @@ function MachineConfigForm({
   const setText = (key: keyof FormState) => (event: { target: { value: string } }) =>
     edit((current) => ({ ...current, [key]: event.target.value }));
 
+  const discard = () => {
+    if (load.status === "ready") setErrors(load.report.errors);
+    setForm(saved);
+    setSaveStatus("idle");
+    setSaveFailure(null);
+  };
+
   const save = async () => {
-    if (!canWrite) return;
+    if (!canWrite || load.status !== "ready") return;
     setSaveStatus("saving");
     setSaveFailure(null);
-    const result = await saveFactoryConfig(prepared, valuesOf(form));
+    const result = await saveFactoryConfig(prepared, valuesOf(form, load.report));
     if (result.kind === "ok") {
       show(result.report);
       setSaveStatus("saved");
@@ -230,15 +354,10 @@ function MachineConfigForm({
 
   const { report } = load;
   // An error that names no rendered input would otherwise show nowhere.
-  const inputNames = new Set<string>([
-    "gh_config_dir",
-    "poll_seconds",
-    "max_concurrent_runs",
-    "max_concurrent_gates",
-    "feedback_seconds",
-  ]);
+  const inputNames = new Set<string>(Object.keys(FIELD_LABELS));
   const topErrors = errors.filter((error) => !inputNames.has(fieldKey(error) ?? ""));
   const saving = saveStatus === "saving";
+  const changes = pendingChanges(saved, form);
 
   return (
     <SettingsPageContainer>
@@ -268,92 +387,113 @@ function MachineConfigForm({
         ) : null}
       </div>
 
+      <FactorySetup
+        file={report.file}
+        ghConfigDir={report.config?.gh_config_dir ?? ""}
+        repos={report.repos}
+        watchError={report.watch_error}
+      />
+
       <SettingsSection title="Machine config">
         <SettingsRow
-          title="GitHub config directory"
+          title={FIELD_LABELS.gh_config_dir}
           description="Where the factory's gh credentials live."
           control={
-            <Field name="gh_config_dir" errors={errors}>
+            <Field name="gh_config_dir" errors={errors} wide>
               <Input
                 size="touch"
                 font="mono"
-                aria-label="GitHub config directory"
+                aria-label={FIELD_LABELS.gh_config_dir}
                 value={form.gh_config_dir}
                 onChange={setText("gh_config_dir")}
               />
             </Field>
           }
         />
-        <SettingsRow
-          title="Poll seconds"
-          description="How often the factory looks at GitHub."
-          control={
-            <Field name="poll_seconds" errors={errors}>
-              <Input
-                size="touch"
-                type="number"
-                aria-label="Poll seconds"
-                value={form.poll_seconds}
-                onChange={setText("poll_seconds")}
+        {NUMBER_FIELDS.filter(({ key }) => servesKey(report, key)).map(
+          ({ key, description, unit }) => {
+            const fallback = text(report.defaults[key]);
+            const reading = readingOf(key, form[key]);
+            const budget = key === "feedback_seconds" ? feedbackBudget(form) : null;
+            const now = limitNow(key, form, saved, machineNow);
+            return (
+              <SettingsRow
+                key={key}
+                title={FIELD_LABELS[key]}
+                description={description}
+                resetAction={
+                  fallback !== "" && form[key].trim() !== fallback ? (
+                    <SettingResetButton
+                      label={FIELD_LABELS[key]}
+                      tooltip={`Reset to the default, ${fallback}`}
+                      onClick={() => edit((current) => ({ ...current, [key]: fallback }))}
+                    />
+                  ) : undefined
+                }
+                status={
+                  reading === null && budget === null && now === null ? undefined : (
+                    <div data-reading={key} className="flex flex-col gap-0.5">
+                      {reading === null ? null : <p className="text-foreground/80">{reading}</p>}
+                      {now === null ? null : <NowLine now={now} />}
+                      {budget === null ? null : (
+                        <p
+                          data-budget={budget.tight ? "tight" : "ok"}
+                          className={budget.tight ? "text-warning-foreground" : undefined}
+                        >
+                          About {budget.pointsPerPullRequest.toLocaleString()} GraphQL points an
+                          hour per pull request waiting for review, so{" "}
+                          {budget.pullRequestsToSpendAll.toLocaleString()} waiting pull requests
+                          would spend the login's {HOURLY_POINTS.toLocaleString()}.
+                        </p>
+                      )}
+                    </div>
+                  )
+                }
+                control={
+                  <Field name={key} errors={errors}>
+                    <InputGroup>
+                      <InputGroupInput
+                        size="touch"
+                        type="number"
+                        aria-label={FIELD_LABELS[key]}
+                        value={form[key]}
+                        onChange={setText(key)}
+                      />
+                      <InputGroupAddon align="inline-end">
+                        <span className="text-xs text-muted-foreground">{unit}</span>
+                      </InputGroupAddon>
+                    </InputGroup>
+                  </Field>
+                }
               />
-            </Field>
-          }
-        />
-        <SettingsRow
-          title="Max concurrent runs"
-          control={
-            <Field name="max_concurrent_runs" errors={errors}>
-              <Input
-                size="touch"
-                type="number"
-                aria-label="Max concurrent runs"
-                value={form.max_concurrent_runs}
-                onChange={setText("max_concurrent_runs")}
-              />
-            </Field>
-          }
-        />
-        <SettingsRow
-          title="Max concurrent gates"
-          control={
-            <Field name="max_concurrent_gates" errors={errors}>
-              <Input
-                size="touch"
-                type="number"
-                aria-label="Max concurrent gates"
-                value={form.max_concurrent_gates}
-                onChange={setText("max_concurrent_gates")}
-              />
-            </Field>
-          }
-        />
-        <SettingsRow
-          title="Feedback seconds"
-          description="How often the factory looks for comments and reviews on a ready pull request. 0 reads on every pass."
-          control={
-            <Field name="feedback_seconds" errors={errors}>
-              <Input
-                size="touch"
-                type="number"
-                aria-label="Feedback seconds"
-                value={form.feedback_seconds}
-                onChange={setText("feedback_seconds")}
-              />
-            </Field>
-          }
+            );
+          },
+        )}
+        <div className="flex flex-col gap-2 px-3 py-3 text-xs text-muted-foreground sm:px-4">
+          <p>
+            The rest of the file is edited by hand, and a save keeps it as written. The server reads
+            the file only at start and on a save, so save here after a hand edit to apply it.
+          </p>
+          <p data-hand-edited className="flex flex-wrap gap-1">
+            {[...HAND_EDITED_KEYS, ...NEWER_KEYS.filter((key) => !servesKey(report, key))].map(
+              (key) => (
+                <code key={key} className="rounded bg-muted px-1 py-px font-mono text-2xs">
+                  {key}
+                </code>
+              ),
+            )}
+          </p>
+        </div>
+        <SaveBar
+          file={report.file}
+          changes={changes}
+          canWrite={canWrite}
+          saving={saving}
+          saved={saveStatus === "saved"}
+          onSave={() => void save()}
+          onDiscard={discard}
         />
       </SettingsSection>
-
-      <div className="flex items-center gap-3 px-3 sm:px-4">
-        <Button size="sm" disabled={!canWrite || saving} onClick={() => void save()}>
-          Save
-        </Button>
-        {saveStatus === "saved" ? (
-          <span role="status" className="text-sm text-muted-foreground">
-            Saved
-          </span>
-        ) : null}
-      </div>
 
       <WatchedRepos
         repos={report.repos}

@@ -1,34 +1,42 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { useState, useSyncExternalStore } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 
 import { Skeleton } from "~/components/ui/skeleton";
 import { Switch } from "~/components/ui/switch";
-import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
+import { cn } from "~/lib/utils";
 
 import { factoryApi, type FactoryRunRow, type FactoryStatus } from "./api";
-import { deriveBelt, nextPassText, type BeltRun, type Station } from "./belt";
+import { beltColumns, deriveBelt, nextPassText, type Station } from "./belt";
 import "./belt.css";
-import { BeltDot } from "./BeltDot";
 import { BeltLowerRow, type EnvironmentAttention } from "./BeltLowerRow";
 import { useBeltMotion } from "./beltMotion";
-import { BeltRail } from "./BeltRail";
+import { useBeltNews } from "./beltNews";
+import { BeltChanges } from "./BeltChanges";
+import { BeltRail, type ClaimsHeldWhy } from "./BeltRail";
+import { machineHold } from "./machineHealth";
+import { signedOutCause, stillTrue } from "./attentionCauses";
+import { MachineHealthPanel } from "./MachineHealthPanel";
+import { ControlFoldProvider, DIAL_CELL } from "./ControlFold";
+import { MachineRoster, useSecond } from "./MachineRoster";
+import type { QueueOrigin } from "./runQueue";
 import { DeployBanner } from "./DeployBanner";
+import { dayStrip, type DayStrip as Strip } from "./dayStrip";
+import { TodayStrip } from "./TodayStrip";
+import type { FirstRun } from "./firstRun";
+import { FirstRunGuide } from "./FirstRunGuide";
 import { FactoryReadFailure } from "./FactoryNotices";
 import { messageOf } from "./format";
+import { JUMP_TARGET_CLASS, jumpTarget } from "./pageSections";
+import { repoOfRun } from "./repoHealth";
+import { useRunStop } from "./RunActionBar";
 import { TouchLink } from "./TouchLink";
 import type { FactoryEnvironment, FactoryResource } from "./useFactoryData";
 
-const LABEL = "text-3xs font-semibold uppercase tracking-widest text-muted-foreground";
+const LABEL = "text-xs text-muted-foreground";
 
 const slotsText = ({ used, max }: FactoryStatus["slots"]) =>
   max === null ? `${used}` : `${used}/${max}`;
-
-const subscribeToSeconds = (onSecond: () => void) => {
-  const timer = setInterval(onSecond, 1000);
-  return () => clearInterval(timer);
-};
-const wholeSecond = () => Math.floor(Date.now() / 1000) * 1000;
 
 /** An accepted Update now: its build, what to say, and whether the server has since gone away. */
 interface Updating {
@@ -83,46 +91,35 @@ const withEntry = <K, V>(map: ReadonlyMap<K, V>, key: K, value: V | null): Reado
  * own timer, so nothing else on the page renders each second. Nothing before the factory has said.
  */
 function NextPass({ passes }: { passes: FactoryStatus["passes"] | undefined }) {
-  const nowMs = useSyncExternalStore(subscribeToSeconds, wholeSecond);
+  const nowMs = useSecond();
   const text = nextPassText(passes, nowMs);
   if (text === null) return null;
-  return (
-    <div className="flex flex-col justify-center gap-1.5 border-l px-5 py-2.5">
-      <span className={LABEL}>Pass loop</span>
-      <b className="text-sm font-semibold">{text}</b>
-    </div>
-  );
-}
-
-/** A counter; `-` is one that is not known yet. */
-function Stat({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="flex flex-col justify-center gap-1.5 border-l px-5 py-2.5">
-      <dt className={LABEL}>{label}</dt>
-      <dd className="font-mono text-2xl font-semibold leading-none">{value}</dd>
-    </div>
-  );
+  return <span className={LABEL}>{text}</span>;
 }
 
 /**
- * The claims switch of the selected environment and its state, the pass line, the environment's
- * slots, and the counters over every environment (`-` while a recent runs list they come from has
- * not answered). The switch is on while claims run; an environment with no status says nothing
+ * The roster of every machine when there are several, then one row of dials: the claims switch
+ * and pass of the one environment, the machine's health and what happened since the viewer caught
+ * up, each opening its detail below the row; then today's strip over every environment. A switch is on while claims run; an environment with no status says nothing
  * about its claims and cannot be switched.
  */
 function ControlBar({
+  environments,
   selected,
   busy,
-  counters,
+  digest,
+  strip,
+  onSelect,
   onTogglePause,
 }: {
+  environments: ReadonlyArray<FactoryEnvironment>;
   selected: FactoryEnvironment;
-  busy: boolean;
-  counters: {
-    readonly runsToday: number | string;
-    readonly mergedToday: number | string;
-    readonly stuck: number | string;
-  };
+  busy: ReadonlySet<EnvironmentId>;
+  onSelect: (environmentId: EnvironmentId) => void;
+  /** What happened since the viewer caught up, when the page has it to show. */
+  digest: ReactNode;
+  /** Today's runs on the clock, once the recent runs lists are known. */
+  strip: Strip | null;
   onTogglePause: (environment: FactoryEnvironment) => void;
 }) {
   const report = selected.status.data;
@@ -130,38 +127,71 @@ function ControlBar({
   return (
     <section
       aria-label="Controls"
-      className="flex flex-wrap items-stretch rounded-lg border bg-card"
+      className="flex flex-col overflow-hidden rounded-lg border bg-card"
     >
-      <div className="flex items-center gap-3 px-5 py-2.5">
-        {/* The switch has no coarse-pointer hit area of its own; the label is the 44 px target. */}
-        <label className="inline-flex items-center justify-center pointer-coarse:min-h-11 pointer-coarse:min-w-11">
-          <Switch
-            aria-label={`Claims on ${selected.label}`}
-            checked={report !== null && !paused}
-            disabled={report === null || busy}
-            onCheckedChange={() => onTogglePause(selected)}
-          />
-        </label>
-        <div className="flex flex-col gap-1">
-          <span className={LABEL}>Claims</span>
-          <b className="text-sm font-semibold">
-            {report === null
-              ? "-"
-              : paused
-                ? "Paused"
-                : report.state === "idle"
-                  ? "Idle"
-                  : "Running"}
-          </b>
+      {environments.length > 1 ? (
+        <MachineRoster
+          busy={busy}
+          environments={environments}
+          onSelect={onSelect}
+          onTogglePause={onTogglePause}
+          selectedId={selected.environmentId}
+        />
+      ) : null}
+      {/* One row of dials, the 1px gaps their dividers; an opened dial's detail spans the row below. */}
+      <ControlFoldProvider>
+        <div
+          className={cn("flex flex-wrap gap-px bg-border", environments.length > 1 && "border-t")}
+          data-part="dials"
+        >
+          {environments.length > 1 ? null : (
+            <div className={cn(DIAL_CELL, "basis-auto items-center gap-3 px-5 py-2.5")}>
+              {/* The switch has no coarse-pointer hit area of its own; the label is the 44 px target. */}
+              <label className="inline-flex items-center justify-center pointer-coarse:min-h-11 pointer-coarse:min-w-11">
+                <Switch
+                  aria-label={`Claims on ${selected.label}`}
+                  checked={report !== null && !paused}
+                  disabled={report === null || busy.has(selected.environmentId)}
+                  onCheckedChange={() => onTogglePause(selected)}
+                />
+              </label>
+              <div className="flex min-w-0 flex-col gap-1">
+                <span className={cn(LABEL, "min-w-0 break-words")} data-part="machine">
+                  {selected.label}
+                  {report === null ? null : (
+                    <span className="font-mono"> · {slotsText(report.slots)} slots</span>
+                  )}
+                </span>
+                <span className="flex items-baseline gap-2">
+                  <span className={LABEL}>Claims</span>
+                  <b className="text-sm font-semibold">
+                    {report === null
+                      ? "-"
+                      : paused
+                        ? "Paused"
+                        : report.state === "idle"
+                          ? "Idle"
+                          : "Running"}
+                  </b>
+                </span>
+                {/* A countdown from a read that has since failed would tick on a pass nobody can see. */}
+                <NextPass
+                  passes={selected.status.status === "error" ? undefined : report?.passes}
+                />
+              </div>
+            </div>
+          )}
+          {report === null ? null : (
+            <MachineHealthPanel
+              environmentId={selected.environmentId}
+              label={selected.label}
+              status={report}
+            />
+          )}
+          {digest}
         </div>
-      </div>
-      <NextPass passes={report?.passes} />
-      <dl className="m-0 flex flex-wrap items-stretch">
-        {report ? <Stat label="Slots" value={slotsText(report.slots)} /> : null}
-        <Stat label="Runs today" value={counters.runsToday} />
-        <Stat label="Merged today" value={counters.mergedToday} />
-        <Stat label="Stuck" value={counters.stuck} />
-      </dl>
+      </ControlFoldProvider>
+      <TodayStrip strip={strip} />
     </section>
   );
 }
@@ -178,8 +208,9 @@ function EnvironmentNote({
   if (report === null && status.status === "error") {
     return (
       <FactoryReadFailure
+        dataAt={status.dataAt}
+        error={status.error}
         label={label}
-        message={messageOf(status.error)}
         onRetry={status.refresh}
         verb="read"
       />
@@ -208,47 +239,28 @@ function EnvironmentNote({
   );
 }
 
-/** Every factory environment as a segmented control with its slots, and the notes that some need. */
-function Environments({
-  environments,
-  selectedId,
-  onSelect,
-}: {
-  environments: ReadonlyArray<FactoryEnvironment>;
-  selectedId: EnvironmentId;
-  onSelect: (environmentId: EnvironmentId) => void;
-}) {
+/** The note an environment may need while it loads, fails or idles; its place is the control bar. */
+function Environments({ environments }: { environments: ReadonlyArray<FactoryEnvironment> }) {
+  // With several machines the control bar's roster picks one and says which load or idle; only a
+  // first read that failed stays here, for its Retry.
+  if (environments.length > 1) {
+    const failed = environments.filter(
+      ({ status }) => status.data === null && status.status === "error",
+    );
+    return failed.length === 0 ? null : (
+      <section aria-label="Factories" className="flex flex-col gap-2">
+        {failed.map((environment) => (
+          <EnvironmentNote environment={environment} key={environment.environmentId} />
+        ))}
+      </section>
+    );
+  }
+  // One machine is named, with its slots, in the control bar's claims dial; only its note is here.
   const notes = environments.filter(
     ({ status }) => status.data === null || status.data.state === "idle",
   );
-  return (
+  return notes.length === 0 ? null : (
     <section aria-label="Factories" className="flex flex-col gap-2">
-      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-        <span className={LABEL}>Environment</span>
-        <div className="min-w-0 max-w-full overflow-x-auto">
-          <ToggleGroup
-            aria-label="Environments"
-            onValueChange={(next) => {
-              // Picking the picked one again would leave none picked.
-              const [id] = next;
-              if (id !== undefined) onSelect(id as EnvironmentId);
-            }}
-            value={[selectedId]}
-          >
-            {environments.map(({ environmentId, label, status }) => (
-              <Toggle key={environmentId} value={environmentId}>
-                <BeltDot selected={environmentId === selectedId} />
-                {label}
-                {status.data ? (
-                  <span className="font-mono text-muted-foreground">
-                    {slotsText(status.data.slots)} slots
-                  </span>
-                ) : null}
-              </Toggle>
-            ))}
-          </ToggleGroup>
-        </div>
-      </div>
       {notes.map((environment) => (
         <EnvironmentNote environment={environment} key={environment.environmentId} />
       ))}
@@ -269,8 +281,14 @@ export function FactoryBelt({
   nowMs,
   onTogglePause,
   attention,
+  dismissed,
   showEnvironment,
   onDismiss,
+  onRestore,
+  origin,
+  digest,
+  repo = null,
+  firstRun = false,
 }: {
   /** Every factory environment, the primary first. */
   environments: ReadonlyArray<FactoryEnvironment>;
@@ -285,16 +303,31 @@ export function FactoryBelt({
   onTogglePause: (environment: FactoryEnvironment) => void;
   /** The attention items to show, after the page's dismissals and filters. */
   attention: ReadonlyArray<EnvironmentAttention>;
+  /** The items a person dismissed whose cause still holds, after the same filters. */
+  dismissed: ReadonlyArray<EnvironmentAttention>;
   showEnvironment: boolean;
   onDismiss: (items: ReadonlyArray<EnvironmentAttention>) => void;
+  onRestore: (items: ReadonlyArray<EnvironmentAttention>) => void;
+  /** The page's filters, so a bin's run can step through its bin and come back. */
+  origin?: QueueOrigin | undefined;
+  /** What happened since the viewer caught up, shown in the control bar under the claims switch. */
+  digest?: ReactNode;
+  /** The page's repo filter: the rail, the strip and the bins show only its runs. */
+  repo?: string | null;
+  /**
+   * No environment has ever run anything: the steps to a first run stand in for the empty rail.
+   * While that is being checked, a placeholder stands there instead of an empty belt.
+   */
+  firstRun?: FirstRun;
 }) {
   const [pickedId, setPickedId] = useState<EnvironmentId | null>(null);
   // The open post: undefined until the rail first has something to look at, then the user's.
   const [open, setOpen] = useState<Station | null | undefined>(undefined);
-  // The runs with a stop in flight, and the answer of the latest stop, which names its run: they
-  // outlive the readout.
-  const [stopping, setStopping] = useState<ReadonlySet<string>>(() => new Set());
-  const [stopNote, setStopNote] = useState<string | null>(null);
+  const stopRun = useRunStop((environmentId) => {
+    environments
+      .find((environment) => environment.environmentId === environmentId)
+      ?.status.refresh();
+  });
   // The environments with a snooze or Update now in flight, the accepted Update nows, and each
   // environment's answer to its latest one that failed.
   const [deployBusy, setDeployBusy] = useState<ReadonlySet<EnvironmentId>>(() => new Set());
@@ -305,18 +338,29 @@ export function FactoryBelt({
   // The environment picked, else the first (the primary): one that has gone is no longer picked.
   const selected =
     environments.find(({ environmentId }) => environmentId === pickedId) ?? environments[0];
+  const inRepo = ({ id }: { readonly id: string }) =>
+    repo === null || repoOfRun(id)?.toLowerCase() === repo.toLowerCase();
+  const recentOf = (environmentId: EnvironmentId) =>
+    (recent.get(environmentId)?.data?.runs ?? []).filter(inRepo);
   const belt = deriveBelt(
     environments.map(({ environmentId, label, status }) => ({
       environmentId,
       label,
-      active: status.data?.runs ?? [],
-      recent: recent.get(environmentId)?.data?.runs ?? [],
+      active: (status.data?.runs ?? []).filter(inRepo),
+      recent: recentOf(environmentId),
     })),
     nowMs,
   );
   // The belt as drawn: a bin does not count a run until the run has slid into it.
   const { shown, tileRef, layerRef } = useBeltMotion(belt, open !== undefined);
-  // What the recent runs lists say (the counters, Done, the bins, and the rail's first pick) is known
+  const heard = useBeltNews(
+    belt,
+    open !== undefined,
+    `${repo ?? ""} ${environments.map(({ environmentId }) => environmentId).join(" ")}`,
+    showEnvironment,
+    nowMs,
+  );
+  // What the recent runs lists say (the strip, Done, the bins, and the rail's first pick) is known
   // once some status has answered and no answered environment's list is still loading. A list that
   // failed before its first answer adds nothing; the page names it. The rail's pick is made then,
   // once, and the rail stays after it, whatever an environment does later.
@@ -329,27 +373,6 @@ export function FactoryBelt({
   if (settled !== updating) setUpdating(settled);
   if (selected === undefined) return null;
 
-  const stop = async ({ key, environmentId, id, issue }: BeltRun) => {
-    const mark = (member: boolean) =>
-      setStopping((current) => {
-        const next = new Set(current);
-        if (member) next.add(key);
-        else next.delete(key);
-        return next;
-      });
-    mark(true);
-    let answer: string;
-    try {
-      answer = (await factoryApi.stopRun(environmentId, id)).message;
-    } catch (error) {
-      answer = messageOf(error);
-    }
-    setStopNote(`${issue}: ${answer}`);
-    mark(false);
-    environments
-      .find((environment) => environment.environmentId === environmentId)
-      ?.status.refresh();
-  };
   const deploy = async ({ environmentId, status }: FactoryEnvironment, now: boolean) => {
     const shown = status.data?.deploy_pending?.commit ?? null;
     setDeployBusy((current) => withMember(current, environmentId, true));
@@ -374,29 +397,58 @@ export function FactoryBelt({
   };
   // A hand pause names the hold before an update does.
   const report = selected.status.data;
-  const held = report?.paused_by_hand
-    ? { why: "paused by hand" as const, since: Date.parse(report.paused_by_hand.since) }
+  // A low disk has no since of its own; its attention item says when the pass first held for it.
+  const lowDiskSince = (report ? stillTrue(report) : []).find(
+    (item) => item.id === "low-disk",
+  )?.first_seen;
+  const held: { why: ClaimsHeldWhy; since: number | null } | null = report?.paused_by_hand
+    ? { why: "paused by hand", since: Date.parse(report.paused_by_hand.since) }
     : report?.deploy_pending && report.deploy_pending.snoozed_until === null
-      ? { why: "held for update" as const, since: Date.parse(report.deploy_pending.since) }
-      : null;
+      ? { why: "held for update", since: Date.parse(report.deploy_pending.since) }
+      : report && machineHold(report)?.word === "low disk"
+        ? {
+            why: "held for low disk",
+            since: lowDiskSince === undefined ? null : Date.parse(lowDiskSince),
+          }
+        : report && machineHold(report)?.word === "gh signed out"
+          ? {
+              why: "held for GitHub sign-in",
+              since: Date.parse(signedOutCause(stillTrue(report))!.firstSeen),
+            }
+          : null;
   const deployNote = deployNotes.get(selected.environmentId);
 
   return (
-    <div className="relative flex flex-col gap-4" data-factory-belt="">
+    <div
+      className="relative flex flex-col gap-4"
+      data-factory-belt=""
+      style={
+        {
+          "--factory-cols": beltColumns({
+            claimed: shown.runs.claimed.length,
+            building: shown.runs.building.length,
+            gate: shown.runs.gate.length,
+            pr: shown.runs.pr.length,
+          }),
+        } as CSSProperties
+      }
+    >
       <section
         aria-label="Production belt"
-        className="@container flex min-w-0 flex-col gap-4 rounded-lg border bg-card p-4"
+        className={cn(
+          "@container flex min-w-0 flex-col gap-4 rounded-xl border bg-card p-4",
+          JUMP_TARGET_CLASS,
+        )}
+        {...jumpTarget("belt")}
       >
-        <Environments
-          environments={environments}
-          onSelect={setPickedId}
-          selectedId={selected.environmentId}
-        />
+        <Environments environments={environments} />
         {report?.deploy_pending ? (
           <DeployBanner
             // A new build, or another environment, starts with its dialog closed.
             key={`${selected.environmentId} ${report.deploy_pending.since} ${report.deploy_pending.commit}`}
             busy={deployBusy.has(selected.environmentId)}
+            environmentId={selected.environmentId}
+            nowMs={nowMs}
             onDeployNow={() => void deploy(selected, true)}
             onSnooze={() => void deploy(selected, false)}
             status={report}
@@ -409,43 +461,75 @@ export function FactoryBelt({
           </p>
         ) : null}
         <ControlBar
-          busy={busy.has(selected.environmentId)}
-          counters={known ? belt.counters : { runsToday: "-", mergedToday: "-", stuck: "-" }}
+          busy={busy}
+          digest={digest}
+          environments={environments}
+          onSelect={setPickedId}
           onTogglePause={onTogglePause}
           selected={selected}
+          strip={
+            known
+              ? dayStrip(
+                  environments.map(({ environmentId, label }) => ({
+                    environmentId,
+                    label,
+                    recent: recentOf(environmentId),
+                  })),
+                  nowMs,
+                  held?.since ?? null,
+                )
+              : null
+          }
         />
-        {open !== undefined ? (
+        {firstRun === "checking" ? (
+          <Skeleton aria-label="Loading belt" className="h-40 w-full" role="status" />
+        ) : firstRun ? (
+          <FirstRunGuide
+            busy={busy.has(selected.environmentId)}
+            environmentId={selected.environmentId}
+            // A new environment reads its own config.
+            key={selected.environmentId}
+            onResume={() => onTogglePause(selected)}
+            paused={report?.paused_by_hand != null}
+          />
+        ) : open !== undefined ? (
           <BeltRail
             belt={shown}
             known={known}
             nowMs={nowMs}
             onOpenChange={setOpen}
-            onStop={(run) => void stop(run)}
             open={open}
-            claimsHeld={held !== null && !Number.isNaN(held.since) ? held : null}
+            claimsHeld={
+              held === null
+                ? null
+                : { ...held, since: Number.isNaN(held.since) ? null : held.since }
+            }
             selectedId={selected.environmentId}
-            stopping={stopping}
+            stopOf={(run) => stopRun(run.environmentId, run.id)}
             tileRef={tileRef}
           />
         ) : (
           <Skeleton aria-label="Loading belt" className="h-40 w-full" role="status" />
         )}
-        {stopNote ? (
-          <p className="break-words text-sm text-muted-foreground" role="status">
-            {stopNote}
-          </p>
+        {firstRun === false && open !== undefined ? (
+          <BeltChanges at={heard.at} news={heard.news} />
         ) : null}
       </section>
-      <BeltLowerRow
-        attention={attention}
-        known={known}
-        needsInfo={shown.info}
-        nowMs={nowMs}
-        onDismiss={onDismiss}
-        selectedId={selected.environmentId}
-        showEnvironment={showEnvironment}
-        stuck={shown.stuck}
-      />
+      {firstRun !== false && attention.length === 0 && dismissed.length === 0 ? null : (
+        <BeltLowerRow
+          attention={attention}
+          dismissed={dismissed}
+          known={known}
+          needsInfo={shown.info}
+          nowMs={nowMs}
+          onDismiss={onDismiss}
+          onRestore={onRestore}
+          origin={origin}
+          selectedId={selected.environmentId}
+          showEnvironment={showEnvironment}
+          stuck={shown.stuck}
+        />
+      )}
       {/* Where the tiles fly: last, so that it is laid over the rest and set after every tile. */}
       <div aria-hidden className="pointer-events-none absolute inset-0" ref={layerRef} />
     </div>

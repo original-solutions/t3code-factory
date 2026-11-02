@@ -255,6 +255,16 @@ describe("editMachineConfig", () => {
     );
   });
 
+  it("writes the disk floor and load limit the form sends", () => {
+    const parsed = parseMachineConfig(
+      edited(COMMENTED, { min_free_gib: 25, max_load_per_core: 2 }),
+      FILE,
+    );
+    assert.ok(Result.isSuccess(parsed));
+    assert.strictEqual(parsed.success.config.minFreeGib, 25);
+    assert.strictEqual(parsed.success.config.maxLoadPerCore, 2);
+  });
+
   it("makes a new file from nothing", () => {
     const text = edited(null, {
       gh_config_dir: "/gh",
@@ -280,6 +290,8 @@ const DEFAULTS = {
   max_concurrent_runs: 1,
   max_concurrent_gates: 2,
   feedback_seconds: 600,
+  min_free_gib: 10,
+  max_load_per_core: 1,
 };
 
 describe("readMachineConfigReport", () => {
@@ -437,6 +449,17 @@ describe("readMachineConfigReport", () => {
     }),
   );
 
+  it.effect("reports the disk floor and load limit the pass holds claims at", () =>
+    Effect.gen(function* () {
+      const without = yield* report(COMMENTED);
+      assert.strictEqual(without.report.config?.min_free_gib, 10);
+      assert.strictEqual(without.report.config?.max_load_per_core, 1);
+      const set = yield* report(`${COMMENTED}min_free_gib: 0\nmax_load_per_core: 3\n`);
+      assert.strictEqual(set.report.config?.min_free_gib, 0);
+      assert.strictEqual(set.report.config?.max_load_per_core, 3);
+    }),
+  );
+
   it.effect("gives the form its draft: the values an invalid file holds, as written", () =>
     Effect.gen(function* () {
       const { report: r } = yield* report(COMMENTED.replace("poll_seconds: 60", "poll_seconds: 5"));
@@ -514,12 +537,13 @@ describe("readMachineConfigReport", () => {
           interruptionResumes: 2,
         },
         autonomy: "pr" as const,
-        owner: null,
+        owner: "studio-mac",
       };
       const readings = new Map<string, RepoConfigReading>([["a/b", { kind: "ok", project }]]);
       const { report: r } = yield* report(COMMENTED, of(WATCHED.slice(0, 1)), readings);
       assert.strictEqual(r.repos[0]?.factory?.base, "main");
       assert.deepStrictEqual(r.repos[0]?.factory?.required_checks, ["ci"]);
+      assert.strictEqual(r.repos[0]?.factory?.owner, "studio-mac");
       assert.strictEqual(r.repos[0]?.errors, null);
       assert.isFalse(r.repos[0]?.default_config);
     }),
@@ -566,6 +590,7 @@ describe("readMachineConfigReport", () => {
             required_checks: [],
             limits: { minutes: 180, gate_retries: 2, checks_minutes: 30, interruption_resumes: 2 },
             autonomy: "pr",
+            owner: null,
           },
           errors: null,
         },

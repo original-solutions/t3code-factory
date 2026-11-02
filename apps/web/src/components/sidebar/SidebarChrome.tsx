@@ -40,6 +40,7 @@ import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUp
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
 import { FactorySidebarUtilityItem } from "~/factory/FactorySidebarUtilityItem";
+import { FactoryShoulderTap } from "~/factory/FactoryShoulderTap";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
@@ -279,7 +280,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               onClick={handlePullRequestsClick}
             />
           ) : null}
-          <FactorySidebarUtilityItem Item={SidebarUtilityItem} onNavigate={closeMobileSidebar} />
+          <FactorySidebarUtilityItem onNavigate={closeMobileSidebar} />
           <SidebarUtilityItem
             icon={<ChartNoAxesColumnIcon />}
             label="Usage"
@@ -289,6 +290,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
       )}
       <SidebarThreadUndoNotice />
       <SidebarUpdatePill />
+      <FactoryShoulderTap />
     </SidebarMenu>
   );
 });

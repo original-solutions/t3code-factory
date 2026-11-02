@@ -25,7 +25,7 @@ import {
   recordRateLimit,
   type Cooldown,
 } from "./cooldown.ts";
-import type { FreeSpace } from "./disk.ts";
+import { GIB, isLowDisk, type FreeSpace } from "./disk.ts";
 import { stateLabel, type State } from "./domain/lifecycle.ts";
 import { overload, type Load, type Overload } from "./load.ts";
 import type { LedgerError } from "./ledger/errors.ts";
@@ -852,7 +852,6 @@ const pruneStaleBranches = Effect.fn("Pass.pruneStaleBranches")(function* (
 
 /** The machine's attention item while a probed volume is below `min_free_gib`. */
 const LOW_DISK_ITEM_ID = "low-disk";
-const GIB = 1024 ** 3;
 
 /**
  * Whether the worktrees' or gate checkouts' volume has less free than `min_free_gib`. A full disk
@@ -881,7 +880,7 @@ const lowDisk = Effect.fn("Pass.lowDisk")(function* (
     return false;
   }
   const { path, freeBytes } = read.success;
-  if (freeBytes >= machine.minFreeGib * GIB) {
+  if (!isLowDisk(freeBytes, machine.minFreeGib)) {
     yield* clear;
     return false;
   }
@@ -2242,6 +2241,7 @@ const claim = Effect.fn("Pass.claim")(function* (
         null,
         passError("tracker", `${name}: cannot list the ready issues: `, listing.failure.message),
       );
+      yield* pass.record({ event: "claim_skipped", data: { repo: name, reason: "list-failed" } });
       continue;
     }
     pass.sayIfCut(name, "ready", listing.success.cut);
@@ -2251,11 +2251,13 @@ const claim = Effect.fn("Pass.claim")(function* (
     const postponed = new Set(items.filter(isPostponed).map((item) => item.number));
     queues.push({ repo, issues, postponed, held: 0 });
   }
+  if (queues.length > 0) {
+    yield* pass.record({ event: "ready_listed", data: { repos: queues.length } });
+  }
   // A model whose rate limit cools down with no fallback free takes no new session: a repo whose T3
   // project runs on it claims nothing (said once by `sayCooldowns`). Read only while one cools.
   const now = world.nowMs();
   if ([...world.cooldowns.values()].some((cooldown) => now < cooldown.untilMs)) {
-    let held = false;
     for (const queue of queues) {
       if (queue.issues.length === 0) continue;
       const read = yield* Effect.result(world.projectModel(queue.repo));
@@ -2263,15 +2265,21 @@ const claim = Effect.fn("Pass.claim")(function* (
         const what = `${queue.repo.watched.repo}: cannot read the T3 project's model: `;
         yield* pass.fail(null, passError(read.failure.kind, what, read.failure.message));
         queue.issues.length = 0;
+        yield* pass.record({
+          event: "claim_skipped",
+          data: { repo: queue.repo.watched.repo, reason: "model-unread" },
+        });
       } else if (
         read.success !== null &&
         launchModel(world.cooldowns, pass.fallbacks, read.success, now) === null
       ) {
         queue.issues.length = 0;
-        held = true;
+        yield* pass.record({
+          event: "claim_skipped",
+          data: { repo: queue.repo.watched.repo, reason: "cooling-down" },
+        });
       }
     }
-    if (held) yield* pass.record({ event: "claim_skipped", data: { reason: "cooling-down" } });
   }
   let active = count(known, queues);
   let late = false;
@@ -2332,8 +2340,13 @@ const claim = Effect.fn("Pass.claim")(function* (
       }
       continue;
     }
-    // A blocked issue takes no slot. Nothing is written for it, and a read that fails holds it
-    // back too. The `## Depends on` text is read only when no linked blocker is open.
+    // A blocked issue takes no slot, and a read that fails holds it back too, written as
+    // `read-failed` so the Queue keeps its wait. `## Depends on` is read only with no linked blocker open.
+    const unread = () =>
+      pass.record({
+        event: "claim_skipped",
+        data: { repo: name, issue: String(issue), reason: "read-failed" },
+      });
     const linked = yield* Effect.result(world.openBlockers(repo, issue));
     if (linked._tag === "Failure") {
       pass.trouble(
@@ -2343,6 +2356,7 @@ const claim = Effect.fn("Pass.claim")(function* (
         linked.failure.message,
       );
       yield* pass.flush(notes, null);
+      yield* unread();
       continue;
     }
     let blocked: string | null = null;
@@ -2358,6 +2372,7 @@ const claim = Effect.fn("Pass.claim")(function* (
           text.failure.message,
         );
         yield* pass.flush(notes, null);
+        yield* unread();
         continue;
       }
       if (text.success.length > 0) blocked = blockedBy(name, text.success, FROM_TEXT);

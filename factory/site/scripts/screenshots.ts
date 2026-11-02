@@ -9,6 +9,7 @@ import * as NodeUtil from "node:util";
 
 import { chromium, type Browser, type Locator, type Page } from "playwright";
 
+import { readReadyQueue, type ReadyQueue } from "../../../apps/server/src/factory/readyQueue.ts";
 import { demoRunId, seedDemoHome } from "./demo-data.ts";
 
 const SITE = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
@@ -22,8 +23,14 @@ const STOP_TIMEOUT_MS = 15_000;
 const PART_MARGIN = 12;
 /** Where the web client keeps its own settings (apps/web/src/clientPersistenceStorage.ts). */
 const CLIENT_SETTINGS_KEY = "t3code:client-settings:v1";
+/** The control bar's open dial (apps/web/src/factory/ControlFold.tsx); every shot opens folded. */
+const CONTROL_OPEN_KEY = "t3code:factory:control-open";
 /** The browser window, in CSS pixels; a shot may ask for a taller one. */
 const VIEWPORT = { width: 1440, height: 900 } as const;
+/** A phone's window, for the shot of the page in a phone's browser. */
+const PHONE = { width: 390, height: 844 } as const;
+/** JPEG quality: the text stays crisp at twice the pixels, at a fraction of a PNG's size. */
+const JPEG_QUALITY = 80;
 
 interface Shot {
   readonly name: string;
@@ -31,36 +38,97 @@ interface Shot {
   readonly path: (environmentId: string) => string;
   /** A window taller than `VIEWPORT`, in CSS pixels, for a page that must be shown whole. */
   readonly height?: number;
+  /** The window, in CSS pixels, when it is not a desktop's. */
+  readonly viewport?: { readonly width: number; readonly height: number };
   /** Waits for what the shot is of; answers the part of the page to capture, or none for all of it. */
   readonly ready: (page: Page) => Promise<Locator | void>;
 }
+
+/** Opens a run page's part from the bar under its lead. */
+const openPart = async (page: Page, part: string): Promise<void> => {
+  await page.locator(`[data-tab="${part}"]`).click();
+  await page.locator(`[data-panel="${part}"]`).waitFor();
+};
 
 const SHOTS: ReadonlyArray<Shot> = [
   {
     name: "factory-page",
     path: () => "/factory",
-    // Tall enough for the belt, the bins and the runs table under them.
+    // Tall enough for the repo tiles, the control bar and the belt with a post open.
     height: 1280,
     ready: async (page) => {
-      await page.getByText("acme/storefront#57").first().waitFor();
+      await page.locator('[data-post="building"]').waitFor();
       // The page opens the newest run's post, Claimed, whose run has no title until it launches.
       await page.locator('[data-post="building"]').click();
       await page.getByText("Retry failed webhook deliveries").first().waitFor();
     },
   },
   {
+    name: "machine-dial",
+    path: () => "/factory",
+    ready: async (page) => {
+      await page.getByRole("button", { name: /^Machine health of/ }).click();
+      // The dial row with the Machine dial's detail open under it.
+      const detail = page.getByRole("region", { name: /^Machine health of/ });
+      await detail.getByText("Disk").first().waitFor();
+      return detail.locator("xpath=..");
+    },
+  },
+  {
+    name: "factory-phone",
+    path: () => "/factory",
+    viewport: PHONE,
+    ready: async (page) => {
+      await page.locator('[data-post="building"]').first().waitFor();
+    },
+  },
+  {
+    name: "queue",
+    path: () => "/factory?view=queue",
+    height: 1100,
+    ready: async (page) => {
+      await page.getByText("ready issues wait to be claimed").waitFor();
+    },
+  },
+  {
+    name: "trends",
+    path: () => "/factory?view=trends",
+    height: 1200,
+    ready: async (page) => {
+      await page.getByText("Why runs got stuck").first().waitFor();
+    },
+  },
+  {
     name: "run-page",
     path: (environmentId) => `/factory/${environmentId}/${demoRunId("pr-open")}`,
     ready: async (page) => {
-      await page.getByText("Last gate output").waitFor();
-      await page.getByText("pr_opened").first().waitFor();
+      // A finished build opens on Issue & PR, which needs GitHub; the timeline needs nothing.
+      await openPart(page, "timeline");
     },
   },
   {
     name: "run-needs-info",
     path: (environmentId) => `/factory/${environmentId}/${demoRunId("needs-info")}`,
     ready: async (page) => {
-      await page.getByText("questions_posted").first().waitFor();
+      await page.getByRole("button", { name: "Copy the reply" }).waitFor();
+      // A question answered, so the shot shows what the reply box is for.
+      await page.getByRole("textbox").first().fill("The billing country's currency.");
+    },
+  },
+  {
+    name: "run-stuck",
+    path: (environmentId) => `/factory/${environmentId}/${demoRunId("stuck")}`,
+    ready: async (page) => {
+      await page.getByText("What to do next").waitFor();
+      await page.locator('[data-panel="gate"]').waitFor();
+    },
+  },
+  {
+    name: "run-merged",
+    path: (environmentId) => `/factory/${environmentId}/${demoRunId("merged")}`,
+    ready: async (page) => {
+      await page.getByText("How it went").waitFor();
+      await openPart(page, "timeline");
     },
   },
   {
@@ -69,15 +137,24 @@ const SHOTS: ReadonlyArray<Shot> = [
     ready: async (page) => {
       const list = page.getByRole("region", { name: "Needs attention" });
       await list.getByText("acme/storefront#52").first().waitFor();
-      // The row the list shares with the Needs info and Stuck bins.
-      return list.locator("xpath=..");
+      // The row the list shares with the Needs info and Stuck bins, scrolled into the window.
+      const row = list.locator("xpath=..");
+      await row.scrollIntoViewIfNeeded();
+      return row;
     },
   },
   {
     name: "settings-factory",
     path: () => "/settings/factory",
+    height: 1400,
     ready: async (page) => {
-      await page.getByText("poll", { exact: false }).first().waitFor();
+      // The form, not the first-run steps above it: no T3 project is seeded here.
+      const section = page.locator("section").filter({
+        has: page.getByRole("heading", { name: "Machine config" }),
+      });
+      await section.getByText("poll", { exact: false }).first().waitFor();
+      await section.scrollIntoViewIfNeeded();
+      return section;
     },
   },
 ];
@@ -223,19 +300,37 @@ const stopDevServer = async (child: NodeChildProcess.ChildProcess): Promise<void
   }
 };
 
-/** The id the server gives its environment; the run pages' URLs name it (/factory/<environmentId>/<runId>). */
-const fetchEnvironmentId = async (server: DevServer): Promise<string> => {
+/** The throwaway server's id (run page URLs name it), and the label it took from the host it runs on. */
+const fetchEnvironment = async (
+  server: DevServer,
+): Promise<{ readonly id: string; readonly label: string | null }> => {
   const response = await fetch(`${server.webOrigin}/.well-known/t3/environment`);
   if (!response.ok) throw new Error(`the environment descriptor answered ${response.status}`);
-  const descriptor = (await response.json()) as { readonly environmentId?: unknown };
+  const descriptor = (await response.json()) as {
+    readonly environmentId?: unknown;
+    readonly label?: unknown;
+  };
   if (typeof descriptor.environmentId !== "string" || descriptor.environmentId === "") {
     throw new Error("the environment descriptor has no environmentId");
   }
-  return descriptor.environmentId;
+  const label =
+    typeof descriptor.label === "string" && descriptor.label !== "" ? descriptor.label : null;
+  return { id: descriptor.environmentId, label };
 };
 
-const capture = async (browser: Browser, server: DevServer): Promise<void> => {
-  const environmentId = await fetchEnvironmentId(server);
+/** Where the docs say the demo machine keeps its T3 home, in place of the temp dir it really is in. */
+const SHOWN_HOME = "/Users/jo-park/.config/t3fac";
+/** The demo machine's name, in place of the host's own (demo-data.ts claims as it). */
+const SHOWN_MACHINE = "build-mac";
+
+const capture = async (
+  browser: Browser,
+  server: DevServer,
+  home: string,
+  queue: ReadyQueue,
+): Promise<void> => {
+  const environment = await fetchEnvironment(server);
+  const environmentId = environment.id;
   NodeFS.mkdirSync(OUT_DIR, { recursive: true });
   // One context for both themes: the pairing URL's token works once.
   const context = await browser.newContext({
@@ -245,21 +340,30 @@ const capture = async (browser: Browser, server: DevServer): Promise<void> => {
   });
   // A browser that has finished T3's first-run wizard, as anyone reading the docs has: with no
   // projects seeded, the app would otherwise open the wizard over every page.
-  await context.addInitScript((key) => {
-    if (window.localStorage.getItem(key) === null) {
-      window.localStorage.setItem(
-        key,
-        JSON.stringify({ onboardingCompletedAt: new Date().toISOString() }),
-      );
-    }
-  }, CLIENT_SETTINGS_KEY);
+  await context.addInitScript(
+    ([key, openKey]) => {
+      if (window.localStorage.getItem(key) === null) {
+        window.localStorage.setItem(
+          key,
+          JSON.stringify({ onboardingCompletedAt: new Date().toISOString() }),
+        );
+      }
+      window.localStorage.removeItem(openKey);
+    },
+    [CLIENT_SETTINGS_KEY, CONTROL_OPEN_KEY] as const,
+  );
+  // The queue as the seeded passes left it: the throwaway server's own passes read no repo, and
+  // the newest of them would otherwise say nothing waits.
+  await context.route("**/api/factory/queue", (route) => route.fulfill({ json: queue }));
   const page = await context.newPage();
   await page.goto(server.pairingUrl);
   await page.waitForURL((url) => !url.pathname.startsWith("/pair"), { timeout: 60_000 });
   for (const theme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: theme });
     for (const shot of SHOTS) {
-      await page.setViewportSize({ ...VIEWPORT, height: shot.height ?? VIEWPORT.height });
+      await page.setViewportSize(
+        shot.viewport ?? { ...VIEWPORT, height: shot.height ?? VIEWPORT.height },
+      );
       await page.goto(`${server.webOrigin}${shot.path(environmentId)}`);
       const part = await shot.ready(page).catch(async (error: unknown) => {
         await page.screenshot({ path: FAILURE_PNG }).catch(() => undefined);
@@ -269,11 +373,33 @@ const capture = async (browser: Browser, server: DevServer): Promise<void> => {
       });
       // Let the last fetch and the fonts settle so no shot catches a loading state.
       await page.waitForLoadState("networkidle");
+      // Settings names the config file it writes, and every page the machine: show the demo
+      // machine's home and name, not the temp dir and the host's.
+      await page.evaluate(
+        (swaps) => {
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+            for (const [from, to] of swaps) {
+              if (node.nodeValue?.includes(from)) {
+                node.nodeValue = node.nodeValue.replaceAll(from, to);
+              }
+            }
+          }
+        },
+        [
+          // The real path first: the tmpdir form is a prefix of it on macOS.
+          [NodeFS.realpathSync(home), SHOWN_HOME],
+          [home, SHOWN_HOME],
+          ...(environment.label === null ? [] : [[environment.label, SHOWN_MACHINE] as const]),
+        ] as ReadonlyArray<readonly [string, string]>,
+      );
       await page.evaluate(() => document.fonts.ready);
-      const file = NodePath.join(OUT_DIR, `${shot.name}-${theme}.png`);
+      const file = NodePath.join(OUT_DIR, `${shot.name}-${theme}.jpg`);
       const box = part ? await part.boundingBox() : null;
       await page.screenshot({
         path: file,
+        type: "jpeg",
+        quality: JPEG_QUALITY,
         ...(box === null
           ? {}
           : {
@@ -312,11 +438,13 @@ const main = async (): Promise<void> => {
   process.on("SIGINT", interrupted);
   process.on("SIGTERM", interrupted);
   try {
-    seedDemoHome(home, Date.now());
+    const now = Date.now();
+    seedDemoHome(home, now);
+    const queue = readReadyQueue(NodePath.join(home, "factory"), now);
     child = spawnDevServer(home, ghConfigDir, log);
     const server = await devServerReady(child, log);
     browser = await chromium.launch();
-    await capture(browser, server);
+    await capture(browser, server, home, queue);
   } catch (error) {
     if (NodeFS.existsSync(log)) {
       // The startup pairing URL's token is dead once the server stops, but keep it off screen.

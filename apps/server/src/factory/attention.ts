@@ -53,13 +53,15 @@ export type PassOutcome = { readonly ok: true } | { readonly ok: false; readonly
  * The open attention items: what the factory needs a person for. An item is raised when its
  * condition starts and cleared when it ends. A new item posts one macOS notification; open items
  * persist in `<factory dir>/attention.json`, so one is never notified twice. A dismissed item
- * leaves the list but is kept until its condition clears.
+ * leaves the list but is kept, and listed apart, until its condition clears; restoring lists it again.
  */
 export class Attention extends Context.Service<
   Attention,
   {
     /** The open items that are not dismissed. */
     readonly list: () => Effect.Effect<ReadonlyArray<AttentionItem>>;
+    /** The open items a person dismissed: their condition still holds, so a hold they cause stays real. */
+    readonly listDismissed: () => Effect.Effect<ReadonlyArray<AttentionItem>>;
     /** Opens the item unless one with its id is open, dismissed or not; a new item is persisted, then notified once. Never fails: a file or notifier problem is logged. */
     readonly raise: (item: NewItem) => Effect.Effect<void>;
     /** Removes every open item `matches` is true for, dismissed or not, and persists. */
@@ -70,6 +72,8 @@ export class Attention extends Context.Service<
     readonly setNotify: (on: boolean) => Effect.Effect<void>;
     /** Dismisses each listed item and persists; answers the ids it dismissed. Ids not listed are ignored. */
     readonly dismiss: (ids: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<string>>;
+    /** Lists each named dismissed item again, without a notification, and persists; answers the ids it restored. */
+    readonly restore: (ids: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<string>>;
   }
 >()("t3/factory/attention") {}
 
@@ -303,23 +307,33 @@ const make = Effect.fn("FactoryAttention.make")(function* (options: {
     });
   });
 
-  const dismiss = Effect.fn("FactoryAttention.dismiss")(function* (ids: ReadonlyArray<string>) {
-    const dismissed: Array<string> = [];
+  // Attention.dismiss and Attention.restore carry the span.
+  const setDismissed = Effect.fnUntraced(function* (
+    ids: ReadonlyArray<string>,
+    dismissed: boolean,
+  ) {
+    const changed: Array<string> = [];
     for (const id of ids) {
       const kept = items.get(id);
-      if (kept === undefined || kept.dismissed) continue;
-      items.set(id, { ...kept, dismissed: true });
-      dismissed.push(id);
+      if (kept === undefined || kept.dismissed === dismissed) continue;
+      items.set(id, { ...kept, dismissed });
+      changed.push(id);
     }
-    if (dismissed.length > 0) yield* persist;
-    return dismissed;
+    if (changed.length > 0) yield* persist;
+    return changed;
   });
+
+  const listWhere = (dismissed: boolean) =>
+    Effect.sync(() =>
+      [...items.values()].flatMap((kept) => (kept.dismissed === dismissed ? [kept.item] : [])),
+    );
 
   return Attention.of({
     list: Effect.fn("Attention.list")(function () {
-      return Effect.sync(() =>
-        [...items.values()].flatMap(({ item, dismissed }) => (dismissed ? [] : [item])),
-      );
+      return listWhere(false);
+    }),
+    listDismissed: Effect.fn("Attention.listDismissed")(function () {
+      return listWhere(true);
     }),
     raise,
     clear,
@@ -329,7 +343,8 @@ const make = Effect.fn("FactoryAttention.make")(function* (options: {
         notifying = on;
       });
     }),
-    dismiss,
+    dismiss: Effect.fn("Attention.dismiss")((ids) => setDismissed(ids, true)),
+    restore: Effect.fn("Attention.restore")((ids) => setDismissed(ids, false)),
   });
 });
 

@@ -5,6 +5,7 @@ import {
   currentStep,
   formatAge,
   issueRef,
+  issueTitleOf,
   labelForState,
   lastGateOutput,
   parseRunId,
@@ -14,9 +15,8 @@ import {
   runIsFinished,
   runState,
   shownState,
-  stateBadgeVariant,
   threadIdOf,
-  whyStopped,
+  withoutRepoPrefix,
 } from "./format";
 
 let tick = 0;
@@ -103,6 +103,8 @@ describe("threadIdOf", () => {
   it("is null when no session was launched", () => {
     expect(threadIdOf([entry("claimed", {})])).toBeNull();
     expect(threadIdOf([entry("session_launched", {})])).toBeNull();
+    expect(issueTitleOf([entry("session_launched", { title: "feat: x" })])).toBe("feat: x");
+    expect(issueTitleOf([entry("session_launched", { thread_id: "t-1" })])).toBeNull();
   });
 });
 
@@ -170,19 +172,10 @@ describe("formatAge", () => {
   });
 });
 
-describe("labelForState and stateBadgeVariant", () => {
+describe("labelForState", () => {
   it("labels known states and falls back for others", () => {
     expect(labelForState("pr-open")).toBe("pr-open");
     expect(labelForState(null)).toBe("unknown");
-  });
-
-  it("picks a badge variant per state", () => {
-    expect(stateBadgeVariant("building")).toBe("info");
-    expect(stateBadgeVariant("pr-open")).toBe("success");
-    expect(stateBadgeVariant("stuck")).toBe("error");
-    expect(stateBadgeVariant("needs-info")).toBe("warning");
-    expect(stateBadgeVariant("triage")).toBe("secondary");
-    expect(stateBadgeVariant(null)).toBe("secondary");
   });
 });
 
@@ -210,7 +203,6 @@ describe("shownState and prEndOf", () => {
     expect(shownState("building", "closed")).toBe("closed");
     expect(shownState("pr-open", null)).toBe("pr-open");
     expect(shownState("stuck", undefined)).toBe("stuck");
-    expect(stateBadgeVariant(shownState("pr-open", "merged"))).toBe("secondary");
   });
 
   it("reads the pull request's end from the finished entry", () => {
@@ -223,39 +215,6 @@ describe("shownState and prEndOf", () => {
     expect(prEndOf(finished(null))).toBeNull();
     expect(prEndOf(finished("reopened"))).toBeNull();
     expect(prEndOf([entry("state_changed", { from: "building", to: "pr-open" })])).toBeNull();
-  });
-});
-
-describe("whyStopped", () => {
-  it("gives a stuck run's whole reason, whatever it names", () => {
-    const reason = "the session stopped and said it was stuck\n\nThe machine is out of disk.";
-    expect(
-      whyStopped([
-        entry("stuck", { reason: "an earlier reason" }),
-        entry("stuck", { reason }),
-        entry("state_changed", { from: "building", to: "stuck" }),
-        entry("finished", { outcome: "stuck" }),
-      ]),
-    ).toEqual({ title: "Why it is stuck", text: reason });
-  });
-
-  it("gives the questions a needs-info run posted", () => {
-    expect(
-      whyStopped([
-        entry("questions_posted", { questions: "Which page?" }),
-        entry("state_changed", { from: "building", to: "needs-info" }),
-      ]),
-    ).toEqual({ title: "Questions on the issue", text: "Which page?" });
-  });
-
-  it("has nothing for a run in any other state, or with no reason recorded", () => {
-    expect(
-      whyStopped([
-        entry("stuck", { reason: "old" }),
-        entry("state_changed", { from: "stuck", to: "building" }),
-      ]),
-    ).toBeNull();
-    expect(whyStopped([entry("state_changed", { from: "building", to: "stuck" })])).toBeNull();
   });
 });
 
@@ -285,5 +244,23 @@ describe("issueRef, prRef and prUrlOf", () => {
     );
     expect(prUrlOf([opened(1), entry("finished", { pr_url: null })])).toBe("https://x.test/pull/1");
     expect(prUrlOf([entry("claimed", {})])).toBeNull();
+  });
+});
+
+describe("withoutRepoPrefix", () => {
+  it("drops the repo the item already names from the front of its message", () => {
+    expect(withoutRepoPrefix("acme/web: project config not loaded", "acme/web")).toBe(
+      "project config not loaded",
+    );
+    expect(withoutRepoPrefix("Acme/Web:  config", "acme/web")).toBe("config");
+  });
+
+  it("keeps a message that does not start with the repo, or names no repo", () => {
+    expect(withoutRepoPrefix("the pass failed: acme/web: x", "acme/web")).toBe(
+      "the pass failed: acme/web: x",
+    );
+    expect(withoutRepoPrefix("acme/webapp: x", "acme/web")).toBe("acme/webapp: x");
+    expect(withoutRepoPrefix("acme/web: x", null)).toBe("acme/web: x");
+    expect(withoutRepoPrefix("acme/web:", "acme/web")).toBe("acme/web:");
   });
 });

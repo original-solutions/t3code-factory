@@ -28,7 +28,7 @@ describe("readFreeSpace", () => {
 
 describe("readLowestFreeSpace", () => {
   it("answers the directory with the least free space", () => {
-    const space = (path: string, freeBytes: number) => ({ path, freeBytes });
+    const space = (path: string, freeBytes: number) => ({ path, freeBytes, totalBytes: 20 });
     const read = (path: string) => space(path, path === "/b" ? 5 : 9);
     expect(readLowestFreeSpace(["/a", "/b", "/c"], read)).toEqual(space("/b", 5));
     expect(readLowestFreeSpace(["/a"], read)).toEqual(space("/a", 9));

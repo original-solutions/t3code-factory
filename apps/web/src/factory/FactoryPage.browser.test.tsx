@@ -1,3 +1,4 @@
+import * as Option from "effect/Option";
 import { createElement, useSyncExternalStore, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page as browser, userEvent } from "vite-plus/test/browser";
@@ -20,6 +21,19 @@ const state = vi.hoisted(() => ({
   search: {} as Record<string, string>,
   listeners: new Set<() => void>(),
   navigations: [] as Array<{ to: string; search: Record<string, string>; replace?: boolean }>,
+  // The history state the page was opened with: a run page coming back sets `factoryReturn`.
+  history: {} as Record<string, unknown>,
+  // The machine config the first-run guide reads.
+  config: null as unknown,
+}));
+
+vi.mock("~/state/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/state/session")>()),
+  usePreparedConnection: () => Option.some({}),
+}));
+vi.mock("./settings/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./settings/api")>()),
+  fetchFactoryConfig: () => Promise.resolve(state.config),
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
@@ -28,12 +42,16 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
     to,
     params,
     search,
+    state: linkState,
     children,
+    "data-run-link": runLink,
   }: {
     to: string;
     params?: Record<string, string>;
     search?: Record<string, string>;
+    state?: Record<string, unknown>;
     children?: ReactNode;
+    "data-run-link"?: string;
   }) =>
     createElement(
       "a",
@@ -41,9 +59,15 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
         "data-to": to,
         "data-params": JSON.stringify(params ?? {}),
         "data-search": JSON.stringify(search ?? {}),
+        "data-state": JSON.stringify(linkState ?? {}),
+        "data-run-link": runLink,
+        // A real link has an href, which makes it focusable.
+        tabIndex: 0,
       },
       children,
     ),
+  useRouterState: ({ select }: { select: (s: { location: { state: unknown } }) => unknown }) =>
+    select({ location: { state: state.history } }),
   useSearch: () =>
     useSyncExternalStore(
       (listener) => {
@@ -61,6 +85,8 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
     },
 }));
 vi.mock("./useFactoryData", () => ({
+  readFactoryRunAhead: () => {},
+  refreshFactoryStatus: () => {},
   STATUS_POLL_MS: 5_000,
   useFactoryEnvironments: () =>
     state.listed
@@ -75,6 +101,15 @@ vi.mock("./useFactoryData", () => ({
       : [],
   // Nothing listed means every candidate answered 404.
   useFactorySupported: () => state.listed,
+  useFactoryQueues: (environmentIds: ReadonlyArray<string>) =>
+    environmentIds.map(() => ({
+      status: "loading",
+      data: null,
+      error: null,
+      readAt: 0,
+      dataAt: 0,
+      refresh: () => {},
+    })),
   useFactoryRunsOf: (environmentIds: ReadonlyArray<string>, all: boolean) =>
     environmentIds.map((id) =>
       id === "env-2"
@@ -93,6 +128,7 @@ const resource = <T,>(overrides: Partial<FactoryResource<T>>): FactoryResource<T
   data: null,
   error: null,
   readAt: NOW,
+  dataAt: NOW,
   refresh: vi.fn(),
   ...overrides,
 });
@@ -125,6 +161,10 @@ const runRow = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+/** The page's text without the repo board, whose tiles name repos in their own order. */
+const ledgerText = (page: { text: () => string; all: (selector: string) => Array<Element> }) =>
+  page.text().replace(page.all('section[aria-label="Repos"]')[0]?.textContent ?? "", "");
+
 const api = (overrides: Partial<FactoryApi>): FactoryApi => ({
   status: vi.fn(),
   runs: vi.fn(),
@@ -133,6 +173,9 @@ const api = (overrides: Partial<FactoryApi>): FactoryApi => ({
   pauseClaims: vi.fn(),
   resumeClaims: vi.fn(),
   dismissAttention: vi.fn(),
+  restoreAttention: vi.fn(),
+  runGitHub: vi.fn(),
+  queue: vi.fn(),
   snoozeDeploy: vi.fn(),
   deployNow: vi.fn(),
   ...overrides,
@@ -146,8 +189,9 @@ const clock = (iso: string) => {
   const date = new Date(iso);
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 };
-/** The environments the belt offers, in its segmented control. */
-const environmentChoices = (page: Page) => page.all('[aria-label="Environments"] button');
+/** The machines the belt offers to pick, in the control bar's roster. */
+const environmentChoices = (page: Page) =>
+  page.all('ul[aria-label="Machines"] button[aria-pressed]');
 /** The tables that are not the belt's readout: the runs table. */
 const runsTables = (page: Page) =>
   page.all("table").filter((table) => table.closest("[data-readout]") === null);
@@ -162,6 +206,8 @@ function setup(): Disposable {
   state.listed = true;
   state.search = {};
   state.navigations = [];
+  state.history = {};
+  state.config = { kind: "ok", report: { repos: [], watch_error: null } };
   return {
     [Symbol.dispose]() {
       __setFactoryApiForTests();
@@ -171,14 +217,71 @@ function setup(): Disposable {
 }
 
 describe("FactoryPage", () => {
-  it("says there are no runs yet when the factory has none", async () => {
+  it("opens on the way to a first run, in place of the empty belt, when nothing has ever run", async () => {
     using _state = setup();
     await using page = await render(createElement(FactoryPage));
-    expect(page.text()).toContain("Factory");
+    await vi.waitFor(() => expect(page.text()).toContain("Step 1 of 4"));
+    expect(page.all('section[aria-label="First run"]')).toHaveLength(1);
+    expect(page.text()).toContain("Watch a repo");
+    // No empty posts, bins, digest or runs list.
+    expect(page.all('section[aria-label="Stuck"]')).toHaveLength(0);
+    expect(page.text()).not.toContain("No runs");
+    expect(page.text()).not.toContain("Nothing at Claimed");
+  });
+
+  it("walks a first run to labelling an issue, turning claims on from the guide", async () => {
+    using _state = setup();
+    state.status = resource({
+      data: statusData({
+        paused_by_hand: { since: "2026-10-17T11:00:00.000Z", for_ms: 3_600_000 },
+      }),
+    });
+    state.config = {
+      kind: "ok",
+      report: {
+        watch_error: null,
+        repos: [
+          {
+            title: "Factory",
+            repo: "acme/factory",
+            path: "/work/factory",
+            errors: null,
+            factory: {
+              instructors: ["tom"],
+              base: "main",
+              provision: [],
+              gate: ["vp test"],
+              required_checks: [],
+              limits: { minutes: 90, gate_retries: 1, checks_minutes: 30, interruption_resumes: 2 },
+              autonomy: "pr",
+            },
+          },
+        ],
+      },
+    };
+    const resumeClaims = vi.fn(async () => ({
+      paused: false as const,
+      already: false,
+      message: "claims resumed",
+    }));
+    __setFactoryApiForTests(api({ resumeClaims }));
+    await using page = await render(createElement(FactoryPage));
+    await vi.waitFor(() => expect(page.text()).toContain("Step 3 of 4"));
+    expect(page.text()).toContain("Ready to build: acme/factory.");
+    expect(page.text()).toContain("vp test must pass");
+    await page.click(page.button("Turn claims on")!);
+    expect(resumeClaims).toHaveBeenCalledWith("env-2");
+  });
+
+  it("keeps the belt for a quiet week on a factory that has run before", async () => {
+    using _state = setup();
+    state.allRuns = resource({
+      data: { runs: [runRow({ started_ts: "2026-09-01T10:00:00.000Z", finished: true })] },
+    });
+    await using page = await render(createElement(FactoryPage));
+    expect(page.all('section[aria-label="First run"]')).toHaveLength(0);
     expect(page.text()).toContain("No runs in the last week");
     expect(page.text()).toContain("Nothing needs a person.");
-    await page.click(page.button("Show all runs")!);
-    expect(page.text()).toContain("No runs yet");
   });
 
   it("shows a loading state while either read is loading", async () => {
@@ -200,9 +303,11 @@ describe("FactoryPage", () => {
       refresh: refreshRuns,
     });
     await using page = await render(createElement(FactoryPage));
-    expect(page.text()).toContain(
-      "Could not refresh Mac Studio: Missing permission orchestration:read",
+    expect(page.text()).toContain("Mac Studio won't show this browser its factory");
+    expect(page.all("a").some((a) => a.getAttribute("data-to") === "/settings/connections")).toBe(
+      true,
     );
+    expect(page.text()).toContain("Missing permission orchestration:read");
     expect(page.text()).toContain("Running");
     await page.click(page.button("Retry")!);
     expect(refreshStatus).toHaveBeenCalledTimes(1);
@@ -222,8 +327,9 @@ describe("FactoryPage", () => {
     });
     await using page = await render(createElement(FactoryPage));
     expect(page.text()).toContain("original-solutions/t3code-factory");
-    expect(page.text()).toContain("Could not refresh Mac Studio: fetch failed");
-    expect(page.text()).not.toContain("Could not load the factory");
+    expect(page.text()).toContain("Can't reach Mac Studio");
+    expect(page.text()).toContain("fetch failed");
+    expect(page.text()).toContain("Showing what it said at");
     await page.click(page.button("Retry")!);
     expect(refreshStatus).toHaveBeenCalledTimes(1);
     expect(refreshRuns).toHaveBeenCalledTimes(1);
@@ -239,8 +345,15 @@ describe("FactoryPage", () => {
     state.runs = resource({ data: { runs: [runRow()] } });
     state.allRuns = resource({ data: { runs: [runRow(), old] } });
     await using page = await render(createElement(FactoryPage));
+    // The ledger's links, not the Today strip's.
     const runLinks = () =>
-      page.all("a").filter((a) => a.getAttribute("data-to") === "/factory/$environmentId/$runId");
+      page
+        .all("a")
+        .filter(
+          (a) =>
+            a.getAttribute("data-to") === "/factory/$environmentId/$runId" &&
+            !a.closest('[aria-label="Today"]'),
+        );
     expect(runLinks()).toHaveLength(1);
     await page.click(page.button("Show all runs")!);
     expect(runLinks()).toHaveLength(2);
@@ -249,6 +362,55 @@ describe("FactoryPage", () => {
     expect(page.button("Show all runs")).toBeUndefined();
     await page.click(page.button("Show recent runs")!);
     expect(runLinks()).toHaveLength(1);
+  });
+
+  it("charts every run by week under Trends, in the URL, and Live brings the belt back", async () => {
+    using _state = setup();
+    state.runs = resource({ data: { runs: [runRow()] } });
+    state.allRuns = resource({
+      data: {
+        runs: [
+          runRow({ state: "stuck", reason: "the run passed its time limit", finished: true }),
+          runRow({
+            id: "o__r__1__1",
+            started_ts: "2026-10-06T10:00:00.000Z",
+            state: "pr-open",
+            pr_end: "merged",
+            finished: true,
+            total_ms: 3_600_000,
+          }),
+        ],
+      },
+    });
+    await using page = await render(createElement(FactoryPage));
+    await page.click(page.button("Trends")!);
+    expect(state.search).toEqual({ view: "trends" });
+    const trends = () => page.all('section[aria-label="Trends"]')[0]?.textContent ?? "";
+    expect(trends()).toContain("The last 2 weeks");
+    expect(trends()).toContain("2 runs");
+    expect(trends()).toContain("The run passed its time limit");
+    // A cause opens on its runs, each linking to its page with the cause's runs to step through.
+    const cause = page.all('[data-cause="The run passed its time limit"]')[0]!;
+    await page.click(cause.querySelector("button")!);
+    const link = cause.querySelector('a[data-to="/factory/$environmentId/$runId"]')!;
+    expect(link.textContent).toBe("#20");
+    expect(JSON.parse(link.getAttribute("data-state")!).factoryRunQueue).toMatchObject({
+      search: { view: "trends" },
+      runs: [{ runId: RUN_ID }],
+    });
+    // Picking the first week narrows the causes to it; picking it again lets it go.
+    const firstWeek = () => page.all('ol[aria-label="Runs per week"] button')[0]!;
+    await page.click(firstWeek());
+    expect(firstWeek().getAttribute("aria-pressed")).toBe("true");
+    expect(trends()).toMatch(/No run claimed the week of .+ got stuck\./);
+    expect(trends()).not.toContain("The run passed its time limit");
+    await page.click(firstWeek());
+    expect(trends()).toContain("The run passed its time limit");
+    expect(page.button("Show all runs")).toBeUndefined();
+    await page.click(page.button("Live")!);
+    expect(state.search).toEqual({});
+    expect(trends()).toBe("");
+    expect(page.button("Show all runs")).toBeDefined();
   });
 
   it("keeps a run stuck for more than a week out of the Stuck bin when every run is shown", async () => {
@@ -274,6 +436,7 @@ describe("FactoryPage", () => {
 
   it("says when the week holds no runs and still offers every run", async () => {
     using _state = setup();
+    state.allRuns = resource({ data: { runs: [runRow({ finished: true })] } });
     await using page = await render(createElement(FactoryPage));
     expect(page.text()).toContain("No runs in the last week");
     expect(page.button("Show all runs")).toBeDefined();
@@ -344,7 +507,7 @@ describe("FactoryPage", () => {
       },
     });
     await using page = await render(createElement(FactoryPage));
-    const text = page.text();
+    const text = ledgerText(page);
     expect(text.indexOf("original-solutions/t3code-factory")).toBeLessThan(
       text.indexOf("acme/old"),
     );
@@ -370,9 +533,9 @@ describe("FactoryPage", () => {
         .all("tr")
         .find((row) => row.textContent?.includes(repo))
         ?.querySelector('[data-slot="badge"]')?.textContent;
-    expect(badgeOf("acme/merged")).toBe("merged");
-    expect(badgeOf("acme/closed")).toBe("closed");
-    expect(badgeOf("acme/older")).toBe("pr-open");
+    expect(badgeOf("acme/merged")).toBe("Merged");
+    expect(badgeOf("acme/closed")).toBe("Closed");
+    expect(badgeOf("acme/older")).toBe("PR open");
   });
 
   it("marks an unreadable run", async () => {
@@ -459,6 +622,8 @@ describe("FactoryPage", () => {
     state.status = resource({
       data: statusData({ paused_by_hand: { since, for_ms: 3_600_000 } }),
     });
+    // Claimed names the pause on the belt of a factory that has run before.
+    state.allRuns = resource({ data: { runs: [runRow({ finished: true })] } });
     const resumeClaims = vi.fn(async () => ({
       paused: false as const,
       already: false,
@@ -653,8 +818,11 @@ describe("FactoryPage environments", () => {
       },
     ];
     await using page = await render(createElement(FactoryPage));
-    expect(page.text()).toContain("Could not refresh Laptop: timed out");
-    expect(page.text()).toContain("Idle: no repos");
+    expect(page.text()).toContain("Can't reach Laptop");
+    expect(page.text()).toContain("timed out");
+    const laptop = page.all('[data-machine="env-3"]')[0]!.textContent;
+    expect(laptop).toContain("Idle");
+    expect(laptop).toContain("no repos");
     await page.click(page.button("Retry")!);
     expect(refreshOther).toHaveBeenCalledTimes(1);
     expect(refreshOwn).not.toHaveBeenCalled();
@@ -732,8 +900,9 @@ describe.each([375, 1280])("FactoryPage at %i px", (width) => {
     const text = page.text();
     expect(text.indexOf("run ended stuck")).toBeGreaterThan(-1);
     expect(text.indexOf("run ended stuck")).toBeLessThan(text.indexOf("launch-sending"));
-    expect(text.indexOf("Could not refresh")).toBeGreaterThan(text.indexOf("run ended stuck"));
-    expect(text.indexOf("Could not refresh")).toBeLessThan(text.indexOf("launch-sending"));
+    // A failed read sits above the belt, whose data it may have left stale.
+    expect(text.indexOf("Can't reach")).toBeGreaterThan(-1);
+    expect(text.indexOf("Can't reach")).toBeLessThan(text.indexOf("run ended stuck"));
     await page.unmount();
   });
 
@@ -797,15 +966,55 @@ describe("FactoryPage run cards at 375 px", () => {
       .find(
         (a) =>
           a.getAttribute("data-to") === "/factory/$environmentId/$runId" &&
-          a.getAttribute("data-params")!.includes(RUN_ID),
+          a.getAttribute("data-params")!.includes(RUN_ID) &&
+          !a.closest('[aria-label="Today"]'),
       );
     expect(link).toBeDefined();
-    const text = link!.textContent ?? "";
-    for (const part of ["original-solutions/t3code-factory", "building", "launch-sending", "2h"]) {
+    expect(link!.textContent).toContain("Building");
+    const text = link!.closest("li")!.textContent ?? "";
+    for (const part of ["t3code-factory", "launch-sending", "2h"]) {
       expect(text).toContain(part);
     }
     // A card is one link: nothing inside it is another link.
     expect(link!.querySelectorAll("a")).toHaveLength(0);
+    await page.unmount();
+  });
+
+  it("fits a finished run in one title line over one row of repo, age and links", async () => {
+    using _state = setup();
+    state.runs = resource({
+      data: {
+        runs: [
+          runRow({
+            title: "Fix the claim guard",
+            state: "pr-open",
+            pr_end: "merged",
+            step: "finished",
+            finished: true,
+          }),
+        ],
+      },
+    });
+    await using page = await renderAt(375, createElement(FactoryPage));
+    const card = page
+      .all('[data-layout="cards"] a')
+      .find((a) => a.getAttribute("data-to") === "/factory/$environmentId/$runId")!
+      .closest("li")!;
+    expect(card.getBoundingClientRect().height).toBeLessThanOrEqual(80);
+    const text = card.textContent ?? "";
+    expect(text).toContain("t3code-factory");
+    expect(text).not.toContain("original-solutions/");
+    // The badge already says how it ended; "finished" would repeat it.
+    expect(text).not.toContain("finished");
+    const middle = (node: Element) => {
+      const box = node.getBoundingClientRect();
+      return box.top + box.height / 2;
+    };
+    const meta = card.querySelector("[data-run-meta]")!;
+    const issue = Array.from(card.querySelectorAll("a")).find((a) =>
+      a.textContent?.startsWith("Issue"),
+    )!;
+    expect(Math.abs(middle(meta) - middle(issue))).toBeLessThan(4);
     await page.unmount();
   });
 
@@ -847,13 +1056,14 @@ describe("FactoryPage run cards at 375 px", () => {
       },
     });
     await using page = await renderAt(375, createElement(FactoryPage));
-    const text = page.text();
+    const text = ledgerText(page);
     expect(text.indexOf("original-solutions/t3code-factory")).toBeLessThan(
       text.indexOf("acme/old"),
     );
     expect(page.button("Show all runs")).toBeDefined();
     await page.unmount();
     state.runs = resource({ data: { runs: [] } });
+    state.allRuns = resource({ data: { runs: [runRow({ finished: true })] } });
     await using empty = await renderAt(375, createElement(FactoryPage));
     expect(empty.text()).toContain("No runs in the last week");
     expect(empty.button("Show all runs")).toBeDefined();
@@ -906,8 +1116,36 @@ describe("FactoryPage dismissing attention items", () => {
     );
   const itemOf = (page: Awaited<ReturnType<typeof render>>, message: string) =>
     Array.from(section(page)?.querySelectorAll("li") ?? []).find((li) => holdsText(li, message));
+  const dismissedFold = (page: Awaited<ReturnType<typeof render>>, count: number) =>
+    page.all("button").find((button) => button.textContent?.startsWith(`Dismissed (${count})`)) as
+      | HTMLButtonElement
+      | undefined;
+  // A run's item is dismissed; a condition (no run) is quieted.
   const dismissIn = (item: HTMLElement) =>
-    Array.from(item.querySelectorAll("button")).find((button) => holdsText(button, "Dismiss"))!;
+    Array.from(item.querySelectorAll("button")).find(
+      (button) => holdsText(button, "Dismiss") || holdsText(button, "Quiet"),
+    )!;
+
+  it("a quieted condition waits under Dismissed, still true, and Bring back lists it again", async () => {
+    using _state = setup();
+    state.status = resource({ data: statusData({ attention: [ATTENTION], dismissed: [CONFIG] }) });
+    const restoreAttention = vi.fn(async () => ({ restored: [CONFIG.id] }));
+    __setFactoryApiForTests(api({ restoreAttention }));
+    await using page = await render(createElement(FactoryPage));
+    expect(holdsText(dismissIn(itemOf(page, ATTENTION.message)!), "Dismiss")).toBe(true);
+    expect(page.text()).not.toContain(CONFIG.message);
+    const fold = dismissedFold(page, 1)!;
+    expect(fold.textContent).toContain("1 still true");
+    await page.click(fold);
+    const quieted = itemOf(page, CONFIG.message)!;
+    expect(quieted.textContent).toContain("Still true");
+    await page.click(
+      Array.from(quieted.querySelectorAll("button")).find((b) => holdsText(b, "Bring back"))!,
+    );
+    expect(restoreAttention).toHaveBeenCalledWith("env-2", [CONFIG.id]);
+    expect(dismissedFold(page, 1)).toBeUndefined();
+    expect(holdsText(dismissIn(itemOf(page, CONFIG.message)!), "Quiet")).toBe(true);
+  });
 
   it("Dismiss removes that item at once and sends its id", async () => {
     using _state = setup();
@@ -929,6 +1167,8 @@ describe("FactoryPage dismissing attention items", () => {
   it("Dismiss all sends exactly the ids shown, and the section goes", async () => {
     using _state = setup();
     state.status = resource({ data: statusData({ attention: [ATTENTION, CONFIG, PASS] }) });
+    // A factory that has run before: on a first run the bins go with the last item.
+    state.allRuns = resource({ data: { runs: [runRow({ finished: true })] } });
     const dismissAttention = vi.fn(async (_environmentId: string, ids: ReadonlyArray<string>) => ({
       dismissed: ids,
     }));
@@ -937,8 +1177,9 @@ describe("FactoryPage dismissing attention items", () => {
     await page.click(dismissIn(itemOf(page, CONFIG.message)!));
     await page.click(page.button("Dismiss all")!);
     expect(dismissAttention).toHaveBeenLastCalledWith("env-2", [ATTENTION.id, PASS.id]);
-    expect(section(page)?.textContent).toContain("Nothing needs a person.");
+    expect(section(page)?.textContent).toContain("Nothing new needs a person.");
     expect(page.button("Dismiss all")).toBeUndefined();
+    expect(dismissedFold(page, 3)?.textContent).toContain("2 still true");
   });
 
   it("keeps the claims switch disabled when a dismiss finishes while the pause is pending", async () => {
@@ -1047,12 +1288,13 @@ describe("FactoryPage filters", () => {
   // The runs table's links only; an attention item's View run links to the same route.
   const runLinks = (page: Awaited<ReturnType<typeof render>>) =>
     page
-      .all("table a")
-      .filter((a) => a.getAttribute("data-to") === "/factory/$environmentId/$runId")
+      .all("table a[data-run-link]")
       .map((a) => JSON.parse(a.getAttribute("data-params")!).runId as string);
   const pick = async (select: string, option: string) => {
     await userEvent.click(browser.getByRole("combobox", { name: select }));
-    await userEvent.click(browser.getByRole("option", { name: option, exact: true }));
+    // An option's name is its label, then how it is doing ("acme/widgets, 1 stuck").
+    const escaped = option.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    await userEvent.click(browser.getByRole("option", { name: new RegExp(`^${escaped}(,|$)`) }));
   };
 
   it("keeps a string search value and drops one that is not a string", () => {
@@ -1103,6 +1345,35 @@ describe("FactoryPage filters", () => {
     expect(environmentChoices(page)).toHaveLength(2);
   });
 
+  it("a repo tile, worst first, picks its repo for the whole page, the belt's bins too, and again clears it", async () => {
+    using _state = setup();
+    twoEnvironments();
+    state.others[0]!.runs = resource({
+      data: { runs: [runRow({ id: LAPTOP_RUN, state: "stuck", finished: true, reason: "x" })] },
+    });
+    await using page = await render(createElement(FactoryPage));
+    const tiles = () => page.all('section[aria-label="Repos"] button[aria-pressed]');
+    const tile = (repo: string) =>
+      tiles().find((node) => node.getAttribute("aria-label")?.startsWith(`${repo}:`))!;
+    const stuckBin = () =>
+      page.all("section").find((node) => node.getAttribute("aria-label") === "Stuck")!;
+    expect(tiles().map((node) => node.getAttribute("aria-label"))).toEqual([
+      "acme/widgets: 1 stuck",
+      "original-solutions/t3code-factory: Quiet",
+    ]);
+    expect(stuckBin().textContent).not.toContain("Nothing is stuck");
+
+    await userEvent.click(tile("original-solutions/t3code-factory"));
+    expect(state.navigations.at(-1)?.search).toEqual({ repo: "original-solutions/t3code-factory" });
+    expect(tile("original-solutions/t3code-factory").getAttribute("aria-pressed")).toBe("true");
+    expect(runLinks(page)).toEqual([RUN_ID]);
+    expect(stuckBin().textContent).toContain("Nothing is stuck");
+
+    await userEvent.click(tile("original-solutions/t3code-factory"));
+    expect(state.navigations.at(-1)?.search).toEqual({});
+    expect(stuckBin().textContent).not.toContain("Nothing is stuck");
+  });
+
   it("lists the repos of the runs and items once each, sorted without regard to case", async () => {
     using _state = setup();
     twoEnvironments();
@@ -1111,10 +1382,16 @@ describe("FactoryPage filters", () => {
     });
     await using _page = await render(createElement(FactoryPage));
     await userEvent.click(browser.getByRole("combobox", { name: "Repo" }));
-    const options = Array.from(document.querySelectorAll('[role="option"]')).map(
-      (option) => option.textContent,
-    );
-    expect(options).toEqual(["All repos", "acme/widgets", "original-solutions/t3code-factory"]);
+    const options = Array.from(document.querySelectorAll('[role="option"]')).map((option) => {
+      const note = option.querySelector("[data-scope-note]")?.textContent ?? "";
+      return [option.textContent!.slice(0, option.textContent!.length - note.length), note];
+    });
+    // Each repo the board knows carries its verdict, as its tile does.
+    expect(options).toEqual([
+      ["All repos", ""],
+      ["acme/widgets", "Quiet"],
+      ["original-solutions/t3code-factory", "Quiet"],
+    ]);
   });
 
   it("opens filtered from the URL, matching the repo without regard to case", async () => {
@@ -1167,7 +1444,7 @@ describe("FactoryPage filters", () => {
     state.search = { environment: "env-3" };
     await using page = await render(createElement(FactoryPage));
     await page.click(page.button("Show all runs")!);
-    expect(page.text()).not.toContain("Could not refresh Mac Studio");
+    expect(page.text()).not.toContain("Can't reach Mac Studio");
   });
 
   it("names a filtered-out environment whose status the belt still shows when it fails", async () => {
@@ -1180,7 +1457,8 @@ describe("FactoryPage filters", () => {
     });
     state.search = { environment: "env-3" };
     await using page = await render(createElement(FactoryPage));
-    expect(page.text()).toContain("Could not refresh Mac Studio: fetch failed");
+    expect(page.text()).toContain("Can't reach Mac Studio");
+    expect(page.text()).toContain("fetch failed");
   });
 
   it("names a filtered-out environment whose recent runs the belt still counts when they fail", async () => {
@@ -1193,7 +1471,8 @@ describe("FactoryPage filters", () => {
     });
     state.search = { environment: "env-3" };
     await using page = await render(createElement(FactoryPage));
-    expect(page.text()).toContain("Could not refresh Mac Studio: fetch failed");
+    expect(page.text()).toContain("Can't reach Mac Studio");
+    expect(page.text()).toContain("fetch failed");
   });
 
   describe("when an environment's recent runs failed before their first answer", () => {
@@ -1203,8 +1482,11 @@ describe("FactoryPage filters", () => {
       finished: true,
       reason: "gate failed",
     });
-    const stat = (page: Awaited<ReturnType<typeof render>>, label: string) =>
-      page.all("dt").find((dt) => dt.textContent === label)?.nextElementSibling?.textContent;
+    const stuckCount = (page: Awaited<ReturnType<typeof render>>) =>
+      page
+        .all("section[data-bin]")
+        .find((node) => node.dataset.bin === "stuck")
+        ?.querySelector("[data-part=count]")?.textContent;
     const failing = () => {
       twoEnvironments();
       state.runs = resource({ status: "error", error: new Error("timed out") });
@@ -1212,10 +1494,11 @@ describe("FactoryPage filters", () => {
     };
     const expectBelt = (page: Awaited<ReturnType<typeof render>>) => {
       const stuck = page.all("section").find((s) => s.getAttribute("aria-label") === "Stuck")!;
-      expect(stuck.textContent).toContain("gate failed");
+      expect(stuck.textContent).toContain("Gate failed");
       expect(page.all('[aria-label="Loading Stuck"]')).toHaveLength(0);
-      expect(stat(page, "Stuck")).toBe("1");
-      expect(page.text()).toContain("Could not refresh Mac Studio: timed out");
+      expect(stuckCount(page)).toBe("1");
+      expect(page.text()).toContain("Can't reach Mac Studio");
+      expect(page.text()).toContain("timed out");
       expect(page.all('[aria-label="Retry Mac Studio"]')).toHaveLength(1);
     };
 
@@ -1275,7 +1558,8 @@ describe("FactoryPage filters", () => {
     state.others[0]!.runs = resource({ status: "error", error: new Error("timed out") });
     state.search = { environment: "env-3" };
     await using failed = await render(createElement(FactoryPage));
-    expect(failed.text()).toContain("Could not refresh Laptop: timed out");
+    expect(failed.text()).toContain("Can't reach Laptop");
+    expect(failed.text()).toContain("timed out");
     expect(failed.text()).not.toContain("No runs match the filter");
     await failed.unmount();
     state.others[0]!.runs = resource({ data: { runs: [] } });
@@ -1294,6 +1578,25 @@ describe("FactoryPage filters", () => {
     expect(runLinks(page)).toEqual([RUN_ID]);
     await pick("Repo", "All repos");
     expect(runLinks(page).toSorted()).toEqual([RUN_ID, "unparsed"].toSorted());
+  });
+
+  it("says what the page shows above Live and Trends, each machine with its state, and Show everything keeps the view", async () => {
+    using _state = setup();
+    twoEnvironments();
+    state.search = { environment: "env-3", repo: "acme/widgets", view: "trends" };
+    await using page = await render(createElement(FactoryPage));
+    const scope = () => page.all('nav[aria-label="What the page shows"]')[0]?.textContent ?? "";
+    expect(scope()).toContain("Showing");
+    expect(scope()).toContain("acme/widgets");
+    expect(scope()).toContain("Laptop");
+    await userEvent.click(browser.getByRole("combobox", { name: "Environment" }));
+    const machines = Array.from(document.querySelectorAll('[role="option"]')).map(
+      (option) => option.querySelector("[data-scope-note]")?.textContent ?? null,
+    );
+    expect(machines).toEqual([null, "Running", "Running"]);
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(browser.getByRole("button", { name: "Show everything" }));
+    expect(state.navigations.at(-1)?.search).toEqual({ view: "trends" });
   });
 
   it("renders everything for an environment or repo that names nothing listed", async () => {
@@ -1322,6 +1625,41 @@ describe("FactoryPage filters", () => {
     expect(page.button("Clear filters")).toBeUndefined();
   });
 
+  it("narrows the runs by state chip, kept in the URL, and by search, and Clear filters drops both", async () => {
+    using _state = setup();
+    state.runs = resource({
+      data: {
+        runs: [
+          runRow({ title: "Claim guard" }),
+          runRow({ id: "acme__w__7__1", state: "stuck", finished: true, title: "Export CSV" }),
+          runRow({ id: "acme__w__8__1", state: "stuck", finished: true, title: "Sign PDF" }),
+        ],
+      },
+    });
+    await using page = await render(createElement(FactoryPage));
+    const chip = (name: string) =>
+      page.all('[aria-label="Run state"] button').find((b) => b.textContent?.startsWith(name))!;
+    expect(chip("Needs a person").textContent).toContain("2");
+    expect(chip("Merged")).toBeUndefined();
+    await page.click(chip("Needs a person"));
+    expect(state.navigations.at(-1)).toEqual({
+      to: "/factory",
+      search: { runs: "attention" },
+      replace: true,
+    });
+    expect(runLinks(page).toSorted()).toEqual(["acme__w__7__1", "acme__w__8__1"]);
+    await userEvent.type(browser.getByRole("searchbox", { name: "Search runs" }), "csv");
+    expect(runLinks(page)).toEqual(["acme__w__7__1"]);
+    await userEvent.type(browser.getByRole("searchbox", { name: "Search runs" }), " nothing");
+    expect(page.text()).toContain("No runs match the filter");
+    await page.click(page.button("Clear filters")!);
+    expect(runLinks(page)).toHaveLength(3);
+    expect(validateFactorySearch({ runs: "attention" })).toEqual({ runs: "attention" });
+    expect(validateFactorySearch({ runs: "bogus" })).toEqual({});
+    expect(validateFactorySearch({ view: "trends" })).toEqual({ view: "trends" });
+    expect(validateFactorySearch({ view: "live" })).toEqual({});
+  });
+
   it("has no Environment select with one environment and no Repo select with one repo", async () => {
     using _state = setup();
     state.status = resource({ data: statusData({ attention: [ATTENTION] }) });
@@ -1338,5 +1676,144 @@ describe("FactoryPage filters", () => {
     expect(
       both.all('[role="combobox"]').map((select) => select.getAttribute("aria-label")),
     ).toEqual(["Environment"]);
+  });
+});
+
+describe("FactoryPage from the keyboard", () => {
+  const RUNS = [
+    runRow({ id: "acme__w__7__1", state: "stuck", finished: true, title: "Export CSV" }),
+    runRow({ title: "Claim guard" }),
+    runRow({
+      id: "acme__w__8__1",
+      started_ts: "2026-10-16T10:00:00.000Z",
+      state: "stuck",
+      finished: true,
+      title: "Sign PDF",
+    }),
+  ];
+  const ledgerLinks = () =>
+    Array.from(document.querySelectorAll<HTMLElement>("[data-ledger] [data-run-link]"));
+  const focused = () => (document.activeElement as HTMLElement | null)?.dataset.runLink;
+
+  it("gives each run the list as shown, with the page's filters and search", async () => {
+    using _state = setup();
+    state.runs = resource({ data: { runs: RUNS } });
+    state.search = { runs: "attention" };
+    await using _page = await render(createElement(FactoryPage));
+    await userEvent.type(browser.getByRole("searchbox", { name: "Search runs" }), "acme");
+    const queues = ledgerLinks().map((a) => JSON.parse(a.dataset.state!).factoryRunQueue);
+    expect(queues).toHaveLength(2);
+    expect(queues[0]).toEqual({
+      search: { runs: "attention" },
+      query: "acme",
+      runs: [
+        { environmentId: "env-2", runId: "acme__w__7__1", title: "Export CSV" },
+        { environmentId: "env-2", runId: "acme__w__8__1", title: "Sign PDF" },
+      ],
+    });
+    expect(queues[1]).toEqual(queues[0]);
+  });
+
+  it("steps the focus through the runs with j and k, and / goes to the search and Escape leaves it", async () => {
+    using _state = setup();
+    state.runs = resource({ data: { runs: RUNS } });
+    await using _page = await render(createElement(FactoryPage));
+    const keys = ledgerLinks().map((a) => a.dataset.runLink);
+    await userEvent.keyboard("j");
+    expect(focused()).toBe(keys[0]);
+    await userEvent.keyboard("jj");
+    expect(focused()).toBe(keys[2]);
+    await userEvent.keyboard("j");
+    expect(focused()).toBe(keys[2]);
+    await userEvent.keyboard("k");
+    expect(focused()).toBe(keys[1]);
+    await userEvent.keyboard("/");
+    const search = browser.getByRole("searchbox", { name: "Search runs" }).element();
+    expect(document.activeElement).toBe(search);
+    // The "/" that moved the focus was not typed into the box.
+    await userEvent.keyboard("sign");
+    expect((search as HTMLInputElement).value).toBe("sign");
+    await userEvent.keyboard("{Escape}");
+    expect((search as HTMLInputElement).value).toBe("");
+    expect(document.activeElement).toBe(search);
+    await userEvent.keyboard("{Escape}j");
+    expect(focused()).toBe(keys[0]);
+  });
+
+  it("jumps to a section by its letter or a skip link, and ? lists every key", async () => {
+    using _state = setup();
+    state.runs = resource({ data: { runs: RUNS } });
+    await using _page = await render(createElement(FactoryPage));
+    const jumpedTo = () => (document.activeElement as HTMLElement).dataset.factoryJump;
+    await userEvent.keyboard("r");
+    expect(jumpedTo()).toBe("runs");
+    // From the Runs heading, j starts at the first run.
+    await userEvent.keyboard("j");
+    expect(focused()).toBe(ledgerLinks()[0]!.dataset.runLink);
+    await userEvent.keyboard("s");
+    expect(jumpedTo()).toBe("stuck");
+    await userEvent.keyboard("a");
+    expect(jumpedTo()).toBe("attention");
+    await userEvent.keyboard("b");
+    expect(jumpedTo()).toBe("belt");
+
+    const skip = browser.getByRole("navigation", { name: "Jump to" });
+    await userEvent.click(skip.getByRole("button", { name: /^Runs/ }));
+    expect(jumpedTo()).toBe("runs");
+
+    await userEvent.keyboard("?");
+    const dialog = browser.getByRole("dialog", { name: "Keyboard shortcuts" });
+    await expect.element(dialog.getByText("Step through runs")).toBeVisible();
+    await expect.element(dialog.getByText("Stuck")).toBeVisible();
+    // Keys inside the list are its own: Escape closes it and s does not jump.
+    await userEvent.keyboard("s{Escape}");
+    await expect.element(dialog).not.toBeInTheDocument();
+    expect(jumpedTo()).not.toBe("stuck");
+  });
+
+  it("coming back from a run, keeps the search typed before and focuses that run", async () => {
+    using _state = setup();
+    state.runs = resource({ data: { runs: RUNS } });
+    state.history = { factoryReturn: { query: "pdf", focus: "env-2 acme__w__8__1" } };
+    await using _page = await render(createElement(FactoryPage));
+    const search = browser.getByRole("searchbox", { name: "Search runs" }).element();
+    expect((search as HTMLInputElement).value).toBe("pdf");
+    expect(ledgerLinks()).toHaveLength(1);
+    expect(focused()).toBe("env-2 acme__w__8__1");
+    expect(document.activeElement?.closest("[data-ledger]")).not.toBeNull();
+  });
+
+  // 120 runs, a minute apart, newest first: acme__w__1__1 down to acme__w__120__1.
+  const MANY = Array.from({ length: 120 }, (_, i) =>
+    runRow({
+      id: `acme__w__${i + 1}__1`,
+      started_ts: new Date(Date.UTC(2026, 9, 17, 10) - i * 60_000).toISOString(),
+      title: `Run ${i + 1}`,
+    }),
+  );
+
+  it("renders the first 50 runs, shows more on request, and j past the last shows the next ones", async () => {
+    using _state = setup();
+    state.runs = resource({ data: { runs: MANY } });
+    await using page = await render(createElement(FactoryPage));
+    expect(ledgerLinks()).toHaveLength(50);
+    // Every run is still in the queue a run page steps through.
+    expect(JSON.parse(ledgerLinks()[0]!.dataset.state!).factoryRunQueue.runs).toHaveLength(120);
+    ledgerLinks()[49]!.focus();
+    await userEvent.keyboard("j");
+    expect(focused()).toBe("env-2 acme__w__51__1");
+    expect(ledgerLinks()).toHaveLength(100);
+    await page.click(page.button("Show 20 more")!);
+    expect(ledgerLinks()).toHaveLength(120);
+    expect(page.button("Show 20 more")).toBeUndefined();
+  });
+
+  it("coming back to a run past the first 50, renders down to it and focuses it", async () => {
+    using _state = setup();
+    state.runs = resource({ data: { runs: MANY } });
+    state.history = { factoryReturn: { query: "", focus: "env-2 acme__w__90__1" } };
+    await using _page = await render(createElement(FactoryPage));
+    expect(ledgerLinks()).toHaveLength(90);
+    expect(focused()).toBe("env-2 acme__w__90__1");
   });
 });

@@ -4,8 +4,13 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, fakeTimers } from "../../test/render";
 import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
+import { __resetStopDeskForTests, STOP_GRACE_MS } from "./stopDesk";
 import { render, setDocumentVisible } from "./testing";
-import { __resetFactoryStoresForTests, useFactorySupported } from "./useFactoryData";
+import {
+  __resetFactoryStoresForTests,
+  useFactoryAttentionCount,
+  useFactorySupported,
+} from "./useFactoryData";
 
 // The real hooks and pages over a fake API with one world per environment: which environments the
 // pages read, show and call is the behavior under test.
@@ -39,6 +44,9 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
   // The page's filters read the URL; these tests open it unfiltered and never change them.
   useSearch: () => ({}),
   useNavigate: () => () => Promise.resolve(),
+  // Opened directly: no list to step through, nothing to come back to.
+  useRouterState: ({ select }: { select: (s: { location: { state: object } }) => unknown }) =>
+    select({ location: { state: {} } }),
 }));
 
 import { FactoryNavIcon } from "./FactoryNavIcon";
@@ -124,6 +132,7 @@ const calls = {
   dismiss: [] as Array<[string, ReadonlyArray<string>]>,
   stop: [] as Array<[string, string]>,
   runRead: [] as Array<[string, string]>,
+  gitHubRead: [] as Array<[string, string]>,
   runs: [] as Array<[string, boolean]>,
 };
 
@@ -147,6 +156,18 @@ const fakeApi: FactoryApi = {
     calls.runRead.push([env, id]);
     return runDetail(id) as never;
   },
+  runGitHub: async (env, id) => {
+    calls.gitHubRead.push([env, id]);
+    return { id, issue: { kind: "signed-out", message: "not signed in" }, pr: null };
+  },
+  queue: async () => ({
+    last_pass_at: null,
+    holds: [],
+    checked_at: null,
+    waiting: [],
+    turned_away: [],
+    skipped_repos: [],
+  }),
   stopRun: async (env, id) => {
     calls.stop.push([env, id]);
     return { message: "stopping" } as never;
@@ -163,6 +184,7 @@ const fakeApi: FactoryApi = {
     calls.dismiss.push([env, ids]);
     return { dismissed: ids };
   },
+  restoreAttention: async (_env, ids) => ({ restored: ids }),
   snoozeDeploy: async () => ({ snoozed_until: "2026-10-17T13:00:00.000Z" }),
   deployNow: async () => ({ commit: "abc", kicked: true, message: "installing" }),
 };
@@ -187,16 +209,18 @@ const show = async (element: Parameters<typeof render>[0]) => {
   return page;
 };
 
-/** The belt's one claims switch, for the environment picked in its segmented control. */
+/** The first claims switch on the page: with one environment, its only one. */
 const claimsSwitch = (page: Page) => page.all('[role="switch"]')[0]!;
+/** One machine's claims switch in the control bar's roster. */
+const switchOf = (page: Page, label: string) =>
+  page.all(`[role="switch"][aria-label="Claims on ${label}"]`)[0]!;
+/** One machine's row in the roster, by environment. */
+const machineRow = (page: Page, environmentId: string) =>
+  page.all(`[data-machine="${environmentId}"]`)[0]!.textContent ?? "";
 const isDisabled = (node: Element) => node.hasAttribute("data-disabled");
-/** Picks an environment in the belt's segmented control. */
+/** Picks a machine in the roster, which the rail and the update banner follow. */
 const pick = (page: Page, label: string) =>
-  page.click(
-    page
-      .all('[aria-label="Environments"] button')
-      .find((button) => button.textContent?.startsWith(label))!,
-  );
+  page.click(page.all(`button[aria-label="Show ${label} on the belt"]`)[0]!);
 const clock = (iso: string) => {
   const date = new Date(iso);
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
@@ -224,6 +248,7 @@ function setup(): AsyncDisposable {
   __setFactoryApiForTests(fakeApi);
   stack.defer(() => {
     __resetFactoryStoresForTests();
+    __resetStopDeskForTests();
     __setFactoryApiForTests();
     worlds.clear();
     for (const list of Object.values(calls)) list.length = 0;
@@ -290,20 +315,21 @@ describe("the Factory page shows every environment that runs a factory", () => {
         attentionItem("c", "three", "2026-10-17T10:40:00.000Z"),
       ],
     });
-    const badge = await show(createElement(FactoryNavIcon));
+    const Badge = () => createElement(FactoryNavIcon, { attention: useFactoryAttentionCount() });
+    const badge = await show(createElement(Badge));
     expect(badge.text()).toBe("3");
   });
 
-  it("pauses only the environment picked in the belt", async () => {
+  it("shows a claims switch per machine and pauses only the one switched", async () => {
     await using _state = setup();
     const page = await show(createElement(FactoryPage));
-    expect(claimsSwitch(page).getAttribute("aria-label")).toBe("Claims on Desktop");
-    await pick(page, "Studio");
-    expect(claimsSwitch(page).getAttribute("aria-label")).toBe("Claims on Studio");
-    await page.click(claimsSwitch(page));
+    expect(page.all('[role="switch"]').map((node) => node.getAttribute("aria-label"))).toEqual([
+      "Claims on Desktop",
+      "Claims on Studio",
+    ]);
+    await page.click(switchOf(page, "Studio"));
     expect(calls.pause).toEqual([ENV_2]);
-    await pick(page, "Desktop");
-    expect(isDisabled(claimsSwitch(page))).toBe(false);
+    expect(isDisabled(switchOf(page, "Desktop"))).toBe(false);
   });
 
   it("disables only the environment whose pause is in flight, and enables it again when that settles", async () => {
@@ -325,30 +351,32 @@ describe("the Factory page shows every environment that runs a factory", () => {
       },
     });
     const page = await show(createElement(FactoryPage));
-    await pick(page, "Studio");
-    await page.click(claimsSwitch(page));
+    await page.click(switchOf(page, "Studio"));
     expect(calls.pause).toEqual([ENV_2]);
-    expect(isDisabled(claimsSwitch(page))).toBe(true);
-    await pick(page, "Desktop");
-    expect(isDisabled(claimsSwitch(page))).toBe(false);
+    expect(isDisabled(switchOf(page, "Studio"))).toBe(true);
+    expect(isDisabled(switchOf(page, "Desktop"))).toBe(false);
     await act(async () => finish());
     await settle();
-    await pick(page, "Studio");
-    expect(isDisabled(claimsSwitch(page))).toBe(false);
+    expect(isDisabled(switchOf(page, "Studio"))).toBe(false);
   });
 
-  it("resumes a paused environment and says since when for that one only", async () => {
+  it("says a machine is paused, and since when, without picking it, and resumes that one", async () => {
     await using _state = setup();
     worlds.get(ENV_2)!.status = statusBody("running", { paused: true });
     const page = await show(createElement(FactoryPage));
+    expect(machineRow(page, ENV_2)).toContain("Paused");
+    expect(machineRow(page, ENV_2)).toContain(`since ${clock("2026-10-17T11:00:00.000Z")}`);
+    expect(machineRow(page, ENV_1)).toContain("Running");
+    expect(page.text()).toContain("1 of 2 claiming");
+    expect(switchOf(page, "Desktop").getAttribute("aria-checked")).toBe("true");
+    expect(switchOf(page, "Studio").getAttribute("aria-checked")).toBe("false");
+    // The rail's Claimed post follows the picked machine.
     expect(page.text()).not.toContain("claims paused by hand");
-    expect(claimsSwitch(page).getAttribute("aria-checked")).toBe("true");
     await pick(page, "Studio");
     expect(page.text()).toContain(
       `claims paused by hand since ${clock("2026-10-17T11:00:00.000Z")}`,
     );
-    expect(claimsSwitch(page).getAttribute("aria-checked")).toBe("false");
-    await page.click(claimsSwitch(page));
+    await page.click(switchOf(page, "Studio"));
     expect(calls.resume).toEqual([ENV_2]);
     expect(calls.pause).toEqual([]);
   });
@@ -383,7 +411,9 @@ describe("the Factory page shows every environment that runs a factory", () => {
     expect(itemOf("third one").textContent).not.toContain("Desktop");
     const item = itemOf("third one");
     await page.click(
-      Array.from(item.querySelectorAll("button")).find((b) => b.textContent === "Dismiss")!,
+      Array.from(item.querySelectorAll("button")).find(
+        (b) => b.textContent === "Dismiss" || b.textContent === "Quiet",
+      )!,
     );
     expect(calls.dismiss).toEqual([[ENV_2, ["b1"]]]);
     await page.click(page.button("Dismiss all")!);
@@ -413,7 +443,9 @@ describe("the Factory page shows every environment that runs a factory", () => {
     const page = await show(createElement(FactoryPage));
     const item = page.all("li").find((li) => li.textContent?.includes("on desktop"))!;
     await page.click(
-      Array.from(item.querySelectorAll("button")).find((b) => b.textContent === "Dismiss")!,
+      Array.from(item.querySelectorAll("button")).find(
+        (b) => b.textContent === "Dismiss" || b.textContent === "Quiet",
+      )!,
     );
     expect(calls.dismiss).toEqual([[ENV_1, ["same"]]]);
     expect(page.text()).not.toContain("on desktop");
@@ -478,11 +510,10 @@ describe("the Factory page shows every environment that runs a factory", () => {
     await using _state = setup();
     worlds.set(ENV_1, { status: statusBody("idle", { reason: "no repos" }), runs: [] });
     const page = await show(createElement(FactoryPage));
-    expect(page.text()).toContain("Idle: no repos");
-    const controls = () => page.all('section[aria-label="Controls"]')[0]!.textContent;
-    expect(controls()).not.toContain("Running");
-    await pick(page, "Studio");
-    expect(controls()).toContain("Running");
+    expect(machineRow(page, ENV_1)).toContain("Idle");
+    expect(machineRow(page, ENV_1)).toContain("no repos");
+    expect(machineRow(page, ENV_1)).not.toContain("Running");
+    expect(machineRow(page, ENV_2)).toContain("Running");
     expect(page.text()).toContain("acme/widgets");
   });
 
@@ -495,7 +526,9 @@ describe("the Factory page shows every environment that runs a factory", () => {
     expect(page.text()).not.toContain("Desktop");
     expect(page.all('[role="switch"]')).toHaveLength(1);
     expect(claimsSwitch(page).getAttribute("aria-label")).toBe("Claims on Studio");
-    expect(page.all('[aria-label="Environments"] button')).toHaveLength(1);
+    expect(page.all('[data-part="machine"]').map((node) => node.textContent)).toEqual([
+      "Studio · 0/1 slots",
+    ]);
   });
 
   it("shows the runs of the others while a candidate has not answered, and reads no runs of it yet", async () => {
@@ -522,8 +555,9 @@ describe("the Factory page shows every environment that runs a factory", () => {
       },
     });
     const page = await show(createElement(FactoryPage));
-    expect(page.text()).toContain("Could not read Desktop: state file locked");
-    expect(page.text()).not.toContain("Could not refresh Desktop");
+    expect(page.text()).toContain("Desktop's factory failed to answer");
+    expect(page.text()).toContain("state file locked");
+    expect(page.text().split("Desktop's factory failed to answer")).toHaveLength(2);
     expect(page.text()).toContain("acme/widgets");
     expect(calls.runs.map(([env]) => env)).toEqual([ENV_2]);
     statusReads.length = 0;
@@ -542,10 +576,10 @@ describe("the Factory page shows every environment that runs a factory", () => {
       },
     });
     const page = await show(createElement(FactoryPage));
-    // The picked environment has no status to switch claims on; the other's is still there.
-    expect(isDisabled(claimsSwitch(page))).toBe(true);
-    await pick(page, "Studio");
-    expect(isDisabled(claimsSwitch(page))).toBe(false);
+    // The failed machine has no status to switch claims on; the other's is still there.
+    expect(machineRow(page, ENV_1)).toContain("No answer");
+    expect(isDisabled(switchOf(page, "Desktop"))).toBe(true);
+    expect(isDisabled(switchOf(page, "Studio"))).toBe(false);
   });
 
   it("names the environment whose runs could not be read, and keeps the rest", async () => {
@@ -559,7 +593,8 @@ describe("the Factory page shows every environment that runs a factory", () => {
       },
     });
     const page = await show(createElement(FactoryPage));
-    expect(page.text()).toContain("Could not refresh Desktop: ledger exploded");
+    expect(page.text()).toContain("Desktop's factory failed to answer");
+    expect(page.text()).toContain("ledger exploded");
     expect(page.text()).toContain("acme/widgets");
     expect(page.button("Retry")).toBeDefined();
   });
@@ -653,11 +688,18 @@ describe("the run page follows its environment", () => {
     const page = await show(createElement(FactoryRunPage, { environmentId: ENV_2, runId: RUN_2 }));
     expect(calls.runRead.length).toBeGreaterThan(0);
     expect(calls.runRead.every(([env, id]) => env === ENV_2 && id === RUN_2)).toBe(true);
-    expect(page.text()).toContain("Studio");
+    // The header's thread link and the timeline's session link.
     expect(linksTo(page, "/$environmentId/$threadId")).toEqual([
       { environmentId: ENV_2, threadId: "thread-9" },
+      { environmentId: ENV_2, threadId: "thread-9" },
     ]);
+    // A building run opens on its timeline; GitHub is read only once its tab is opened.
+    expect(calls.gitHubRead).toEqual([]);
+    await page.click(page.all('button[data-tab="github"]')[0]!);
+    await vi.waitFor(() => expect(page.text()).toContain("GitHub can't be read from Studio"));
+    expect(calls.gitHubRead).toEqual([[ENV_2, RUN_2]]);
     await page.click(page.button("Stop")!);
+    await act(() => vi.advanceTimersByTimeAsync(STOP_GRACE_MS));
     expect(calls.stop).toEqual([[ENV_2, RUN_2]]);
   });
 });

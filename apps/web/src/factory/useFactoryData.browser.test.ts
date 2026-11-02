@@ -12,9 +12,11 @@ import {
 } from "./api";
 import {
   __resetFactoryStoresForTests,
+  readFactoryRunAhead,
   useFactoryAttentionCount,
   useFactoryEnvironmentLabel,
   useFactoryEnvironments,
+  useFactoryEveryRunKept,
   useFactoryResource,
   useFactoryRun,
   useFactoryRunsOf,
@@ -88,6 +90,9 @@ const api = (overrides: Partial<FactoryApi>): FactoryApi => ({
   pauseClaims: vi.fn(),
   resumeClaims: vi.fn(),
   dismissAttention: vi.fn(),
+  restoreAttention: vi.fn(),
+  runGitHub: vi.fn(),
+  queue: vi.fn(),
   snoozeDeploy: vi.fn(),
   deployNow: vi.fn(),
   ...overrides,
@@ -212,7 +217,7 @@ describe("useFactoryStatus", () => {
     expect(result.current.data?.attention).toHaveLength(2);
   });
 
-  it("stamps when each answer landed, failed or not, and not in between", async () => {
+  it("stamps when each answer landed, failed or not, and when its data did", async () => {
     await using _state = setup();
     let fail = false;
     __setFactoryApiForTests(
@@ -230,6 +235,7 @@ describe("useFactoryStatus", () => {
     fail = true;
     await settle(20_000);
     expect(result.current.readAt).toBe(day + 30_000);
+    expect(result.current.dataAt).toBe(day);
   });
 
   it("fetches again every 30 seconds and on refresh, and not in between", async () => {
@@ -262,19 +268,129 @@ describe("useFactoryStatus", () => {
     errors.mockRestore();
   });
 
-  it("drops the store once its last reader is gone, so the next reader starts over", async () => {
+  it("keeps the answer once its last reader is gone: the next reader shows it at once and reads again", async () => {
     await using _state = setup();
-    const fetchStatus = vi.fn(async () => status(2));
+    const fetchStatus = vi
+      .fn<FactoryApi["status"]>()
+      .mockResolvedValueOnce(status(2))
+      .mockResolvedValue(status(3));
     __setFactoryApiForTests(api({ status: fetchStatus }));
     const first = await mount(() => useFactoryStatus(ENV_1));
     expect(first.current.data?.attention).toHaveLength(2);
     await unmountAll();
     // The drop waits a microtask (see `subscribe`), so an unmount that is not followed by a
-    // resubscribe in the same flush must still let it go.
-    await settle();
-    const again = await mount(() => useFactoryStatus(ENV_1));
+    // resubscribe in the same flush must still let its reader go.
+    await settle(6_000);
+    const seen: Array<number | undefined> = [];
+    await mount(() => {
+      const read = useFactoryStatus(ENV_1);
+      seen.push(read.data?.attention.length);
+      return read;
+    });
+    expect(seen[0]).toBe(2);
     expect(fetchStatus).toHaveBeenCalledTimes(2);
+    await settle();
+    expect(seen.at(-1)).toBe(3);
+  });
+
+  it("does not read again for a reader back within 5 seconds", async () => {
+    await using _state = setup();
+    const fetchStatus = vi.fn(async () => status(2));
+    __setFactoryApiForTests(api({ status: fetchStatus }));
+    await mount(() => useFactoryStatus(ENV_1));
+    await unmountAll();
+    await settle(2_000);
+    const again = await mount(() => useFactoryStatus(ENV_1));
     expect(again.current.status).toBe("ready");
+    expect(fetchStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads every run for the palette again only once the list it keeps is 10 minutes old", async () => {
+    await using _state = setup();
+    const fetchRuns = vi.fn<FactoryApi["runs"]>(async () => ({ runs: [] }));
+    __setFactoryApiForTests(api({ runs: fetchRuns }));
+    await mount(() => useFactoryEveryRunKept([ENV_1]));
+    expect(fetchRuns).toHaveBeenLastCalledWith(ENV_1, { all: true });
+    await unmountAll();
+    await settle(6 * 60_000);
+    const again = await mount(() => useFactoryEveryRunKept([ENV_1]));
+    expect(again.current[0]?.status).toBe("ready");
+    expect(fetchRuns).toHaveBeenCalledTimes(1);
+    await unmountAll();
+    await settle(5 * 60_000);
+    await mount(() => useFactoryEveryRunKept([ENV_1]));
+    expect(fetchRuns).toHaveBeenCalledTimes(2);
+  });
+
+  it("starts over for a reader back after 10 minutes, and drops a store that never answered", async () => {
+    await using _state = setup();
+    const fetchStatus = vi.fn(async () => status(2));
+    __setFactoryApiForTests(api({ status: fetchStatus }));
+    await mount(() => useFactoryStatus(ENV_1));
+    await unmountAll();
+    await settle(10 * 60_000 + 1_000);
+    const seen: Array<string> = [];
+    await mount(() => {
+      const read = useFactoryStatus(ENV_1);
+      seen.push(read.status);
+      return read;
+    });
+    expect(seen[0]).toBe("loading");
+    expect(fetchStatus).toHaveBeenCalledTimes(2);
+
+    const pending = deferred<ReturnType<typeof status>>();
+    const fetchRun = vi.fn(() =>
+      pending.promise.then(() => ({ id: "r", entries: [], truncated: false, skipped: 0 })),
+    );
+    __setFactoryApiForTests(api({ status: fetchStatus, run: fetchRun }));
+    await mount(() => useFactoryRun(ENV_1, "r"));
+    await unmountAll();
+    await settle();
+    await mount(() => useFactoryRun(ENV_1, "r"));
+    expect(fetchRun).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("reading a run ahead of its page", () => {
+  it("reads it once, and its page then opens ready without reading again", async () => {
+    await using _state = setup();
+    const fetchRun = vi.fn(async (_env: EnvironmentId, id: string) => ({
+      id,
+      entries: [],
+      truncated: false,
+      skipped: 7,
+    }));
+    __setFactoryApiForTests(api({ run: fetchRun }));
+    readFactoryRunAhead(ENV_1, "o__r__1__1");
+    readFactoryRunAhead(ENV_1, "o__r__1__1");
+    await settle();
+    expect(fetchRun).toHaveBeenCalledTimes(1);
+    const seen: Array<string> = [];
+    await mount(() => {
+      const read = useFactoryRun(ENV_1, "o__r__1__1");
+      seen.push(read.status);
+      return read;
+    });
+    expect(seen[0]).toBe("ready");
+    expect(fetchRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps at most 32 answers no page reads, the longest unread going first", async () => {
+    await using _state = setup();
+    const fetchRun = vi.fn(async (_env: EnvironmentId, id: string) => ({
+      id,
+      entries: [],
+      truncated: false,
+      skipped: 0,
+    }));
+    __setFactoryApiForTests(api({ run: fetchRun }));
+    for (let i = 0; i <= 32; i++) {
+      readFactoryRunAhead(ENV_1, `o__r__${i}__1`);
+      await settle(10);
+    }
+    await mount(() => useFactoryRun(ENV_1, "o__r__32__1"));
+    await mount(() => useFactoryRun(ENV_1, "o__r__0__1"));
+    expect(fetchRun).toHaveBeenCalledTimes(34);
   });
 });
 

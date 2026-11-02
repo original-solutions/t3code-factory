@@ -112,6 +112,10 @@ const samples: ReadonlyArray<{ readonly event: MachineEvent; readonly line: stri
     line: lineAtT0("claim_skipped", `{"reason":"paused"}`),
   },
   {
+    event: { event: "ready_listed", data: { repos: 2 } },
+    line: lineAtT0("ready_listed", `{"repos":2}`),
+  },
+  {
     event: {
       event: "claim_repaired",
       data: { repo: "rawphp/softfac", issue: "12", outcome: "finished" },
@@ -449,9 +453,9 @@ describe("append", () => {
       seen.add(event.event);
       expect(readText(logFile(dataDir)), event.event).toBe(expected);
     }
-    // Every one of the 20 event types has at least one exact line.
+    // Every one of the 21 event types has at least one exact line.
     expect([...seen].sort()).toEqual(Object.keys(MACHINE_EVENT_FIELDS).sort());
-    expect(seen.size).toBe(20);
+    expect(seen.size).toBe(21);
   });
 
   it("the claims paused line has a reason and nothing else", () => {

@@ -48,7 +48,7 @@ Without `default_project`, only repos with a `factory` block are watched.
 
 ## Changing it
 
-Settings → Factory edits `gh_config_dir`, `poll_seconds`, `max_concurrent_runs`, `max_concurrent_gates` and `feedback_seconds`. Edit `default_project`, `notify`, `min_free_gib`, `max_load_per_core`, `keep_versions`, `deploy_wait_minutes`, `model_fallbacks` and the `prune_branches_*` keys in the file by hand. A save checks the whole file with the same rules the server uses at start and refuses one that would fail, so a bad value never reaches disk from the page.
+Settings → Factory edits `gh_config_dir`, `poll_seconds`, `max_concurrent_runs`, `max_concurrent_gates`, `min_free_gib` (Disk floor), `max_load_per_core` (Load limit) and `feedback_seconds`. Each limit shows what the machine is doing now, such as the free space under the floor you type, and says when a value would hold claims before you save it. Edit `default_project`, `notify`, `keep_versions`, `deploy_wait_minutes`, `model_fallbacks` and the `prune_branches_*` keys in the file by hand. A save checks the whole file with the same rules the server uses at start and refuses one that would fail, so a bad value never reaches disk from the page.
 
 The server reads the file when it starts and each time Settings → Factory saves it. It doesn't watch the file, so a hand edit takes effect at the next save from the page or the next restart.
 

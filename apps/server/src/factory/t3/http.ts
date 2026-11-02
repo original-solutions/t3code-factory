@@ -41,6 +41,7 @@ import { listRuns, type RunReadCache, type RunSummary } from "../ledger/listRuns
 import { runIdToString } from "../ledger/runId.ts";
 import { formatTs } from "../ledger/time.ts";
 import { readMachineConfigReport } from "../settings.ts";
+import { readReadyQueue } from "../readyQueue.ts";
 import { buildStatus } from "../status.ts";
 import { route } from "./auth.ts";
 import { DeployKick } from "./deployKick.ts";
@@ -51,9 +52,12 @@ export const STATUS_PATH = "/api/factory/status";
 const RUNS_PATH = "/api/factory/runs";
 const RUN_PATH = "/api/factory/runs/:id";
 const STOP_PATH = "/api/factory/runs/:id/stop";
+const RUN_GITHUB_PATH = "/api/factory/runs/:id/github";
+const QUEUE_PATH = "/api/factory/queue";
 const PAUSE_PATH = "/api/factory/claims/pause";
 const RESUME_PATH = "/api/factory/claims/resume";
 export const DISMISS_PATH = "/api/factory/attention/dismiss";
+export const RESTORE_PATH = "/api/factory/attention/restore";
 export const CONFIG_PATH = "/api/factory/config";
 export const RESTART_PATH = "/api/factory/restart";
 export const CLIENTS_PATH = "/api/factory/auth/clients";
@@ -129,12 +133,15 @@ const statusRoute = Layer.unwrap(
       Effect.gen(function* () {
         const loop = yield* FactoryLoop;
         const paths = yield* FactoryPaths;
-        const attention = yield* (yield* Attention).list();
+        const store = yield* Attention;
+        const attention = yield* store.list();
+        const dismissed = yield* store.listDismissed();
         const passRunning = yield* loop.passRunning;
         const runningThreads = yield* loop.runningThreads.pipe(
           Effect.tapError((error) => Effect.logWarning(`status: ${error.message}`, error.cause)),
           Effect.orElseSucceed(() => null),
         );
+        const health = yield* loop.health;
         const nowMs = yield* Clock.currentTimeMillis;
         const report = yield* guarded(() =>
           buildStatus({
@@ -147,6 +154,8 @@ const statusRoute = Layer.unwrap(
             passRunning,
             runningThreads,
             attention,
+            dismissed,
+            health,
             cache,
           }),
         );
@@ -212,6 +221,46 @@ const runRoute = factoryRoute(
   }),
 );
 
+/**
+ * The ready issues the claim step held back, from the machine log alone (`readyQueue.ts`). Read
+ * scope, as the runs list: it names only repos and issue numbers the factory already works on.
+ */
+const queueRoute = factoryRoute(
+  "GET",
+  QUEUE_PATH,
+  AuthOrchestrationReadScope,
+  Effect.gen(function* () {
+    const { factoryDir } = yield* FactoryPaths;
+    const nowMs = yield* Clock.currentTimeMillis;
+    return respond(yield* guarded(() => readReadyQueue(factoryDir, nowMs)));
+  }),
+);
+
+/**
+ * The run's issue and pull request as GitHub has them now, read with the factory's own `gh`. Read
+ * scope, as the run route: a caller who can read the run's thread already sees the agent read the
+ * issue there. Only a run the ledger has is read, and only its own issue and pull request.
+ */
+const runGitHubRoute = factoryRoute(
+  "GET",
+  RUN_GITHUB_PATH,
+  AuthOrchestrationReadScope,
+  Effect.gen(function* () {
+    const loop = yield* FactoryLoop;
+    const { factoryDir } = yield* FactoryPaths;
+    const idText = yield* idParam;
+    const shown = yield* guarded(() => showRun(factoryDir, idText));
+    switch (shown.kind) {
+      case "ok":
+        return respond(yield* loop.runGitHub(shown));
+      case "invalid":
+        return invalidRunId(shown.message);
+      case "not-found":
+        return runNotFound(shown.id);
+    }
+  }),
+);
+
 const stopRoute = factoryRoute(
   "POST",
   STOP_PATH,
@@ -265,17 +314,31 @@ const idsOf = (body: unknown): ReadonlyArray<string> | null => {
   return Array.isArray(ids) && ids.every((id) => typeof id === "string") ? ids : null;
 };
 
-const dismissRoute = factoryRoute(
-  "POST",
-  DISMISS_PATH,
-  AuthOrchestrationOperateScope,
-  Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const body = yield* Effect.result(request.json);
-    const ids = Result.isSuccess(body) ? idsOf(body.success) : null;
-    if (ids === null) return invalidBody("the body must be { ids: [<id>, ...] }");
-    return respond({ dismissed: yield* (yield* Attention).dismiss(ids) });
-  }),
+/** A POST that takes `{ ids }` and answers what `act` changed, under `key`. */
+const attentionIdsRoute = (
+  path: `/${string}`,
+  key: "dismissed" | "restored",
+  act: (attention: Attention["Service"], ids: ReadonlyArray<string>) => Effect.Effect<unknown>,
+) =>
+  factoryRoute(
+    "POST",
+    path,
+    AuthOrchestrationOperateScope,
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const body = yield* Effect.result(request.json);
+      const ids = Result.isSuccess(body) ? idsOf(body.success) : null;
+      if (ids === null) return invalidBody("the body must be { ids: [<id>, ...] }");
+      return respond({ [key]: yield* act(yield* Attention, ids) });
+    }),
+  );
+
+const dismissRoute = attentionIdsRoute(DISMISS_PATH, "dismissed", (attention, ids) =>
+  attention.dismiss(ids),
+);
+
+const restoreRoute = attentionIdsRoute(RESTORE_PATH, "restored", (attention, ids) =>
+  attention.restore(ids),
 );
 
 const toFileError = Effect.mapError((cause: unknown) => new FactoryFileError({ cause }));
@@ -474,10 +537,13 @@ export const FactoryRoutes = Layer.mergeAll(
   statusRoute,
   runsRoute,
   runRoute,
+  runGitHubRoute,
+  queueRoute,
   stopRoute,
   pauseRoute,
   resumeRoute,
   dismissRoute,
+  restoreRoute,
   configRoute,
   saveConfigRoute,
   restartRoute,
