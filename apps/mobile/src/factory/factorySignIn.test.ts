@@ -273,6 +273,17 @@ describe("mintPairingToken", () => {
     }
   });
 
+  it("tells a pairing without the permission how to pair again", async () => {
+    const result = await mintPairingToken(server, async () =>
+      json(403, scopeRequired("access:write")),
+    );
+    expect(result).toEqual({
+      ok: false,
+      reason:
+        "This pairing cannot sign in the Factory pages: it lacks access:write. Pair again with a new link (run ~/.local/share/t3fac/current/t3 pair --base-dir ~/.config/t3fac on the server's machine).",
+    });
+  });
+
   it("reports an unreachable server on a network error", async () => {
     const result = await mintPairingToken(server, async () => {
       throw new TypeError(`Network request failed for ${BEARER}`);

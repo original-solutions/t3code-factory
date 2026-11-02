@@ -96,6 +96,32 @@ export const parseJson = (text: string): unknown => {
   }
 };
 
-/** The server's own `message` for a non-2xx answer, else the status. */
-export const failureMessage = (status: number, body: unknown): string =>
-  textField(body, "message") ?? `The factory answered ${status}.`;
+/** Why a non-2xx answer failed, and the fix failureMessage gives after it, null when none. */
+export interface FailureParts {
+  readonly reason: string;
+  readonly fix: string | null;
+}
+
+/**
+ * The server's own `message` for a non-2xx answer. A refusal for a missing scope without one (older
+ * servers send none) says which permission this session was paired without. Else the status.
+ */
+export const failureParts = (status: number, body: unknown): FailureParts => {
+  const message = textField(body, "message");
+  if (message !== null) return { reason: message, fix: null };
+  if (textField(body, "code") === "insufficient_scope") {
+    const permission = textField(body, "requiredPermission") ?? textField(body, "requiredScope");
+    if (permission !== null) {
+      return {
+        reason: `This session cannot do that: it needs the ${permission} permission, and this session was paired without it.`,
+        fix: "Pair the app again to get it.",
+      };
+    }
+  }
+  return { reason: `The factory answered ${status}.`, fix: null };
+};
+
+export const failureMessage = (status: number, body: unknown): string => {
+  const { reason, fix } = failureParts(status, body);
+  return fix === null ? reason : `${reason} ${fix}`;
+};

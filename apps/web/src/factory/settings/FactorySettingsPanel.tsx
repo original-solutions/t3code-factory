@@ -1,5 +1,6 @@
 import { AuthSettingsWriteScope, type EnvironmentId } from "@t3tools/contracts";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
+import { LEGACY_SESSION_PAIR_AGAIN } from "@t3tools/shared/legacySession";
 import * as Option from "effect/Option";
 import { useEffect, useEffectEvent, useState } from "react";
 
@@ -15,6 +16,8 @@ import { Input } from "../../components/ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../../components/ui/input-group";
 import { cn } from "../../lib/utils";
 import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
+
+import { useLegacySessionNotices } from "../useLegacySessionNotices";
 import {
   fetchFactoryConfig,
   fetchMachineNow,
@@ -245,6 +248,7 @@ function MachineConfigForm({
   readonly prepared: PreparedConnection;
 }) {
   const canWrite = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
+  const [legacySession] = useLegacySessionNotices(environmentId === null ? [] : [environmentId]);
 
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
@@ -370,7 +374,9 @@ function MachineConfigForm({
         ) : null}
         {!canWrite ? (
           <p className="text-muted-foreground">
-            This session is read-only: it cannot change the factory settings.
+            {legacySession
+              ? `This session is read-only: it cannot change the factory settings (it lacks ${AuthSettingsWriteScope}). ${LEGACY_SESSION_PAIR_AGAIN}`
+              : "This session is read-only: it cannot change the factory settings."}
           </p>
         ) : null}
         {topErrors.length > 0 ? (

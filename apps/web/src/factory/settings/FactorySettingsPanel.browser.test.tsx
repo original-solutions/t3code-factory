@@ -4,6 +4,7 @@ import {
   type AuthEnvironmentScope,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import { AsyncResult, Atom } from "effect/reactivity";
 import type { ReactElement, ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -13,6 +14,8 @@ import type { FactoryConfigResult, MachineConfigReport } from "./api";
 
 const mocks = vi.hoisted(() => ({
   canWrite: true,
+  // The permissions the session reports, or null for none read yet.
+  permissions: null as ReadonlyArray<string> | null,
   environmentId: "env-1" as string | null,
   prepared: { httpBaseUrl: "http://t3.test", httpAuthorization: null },
   fetchFactoryConfig: vi.fn(),
@@ -32,6 +35,20 @@ vi.mock("~/state/session", () => ({
   useEnvironmentScope: (_id: EnvironmentId | null, scope: AuthEnvironmentScope) =>
     scope === AuthSettingsWriteScope && mocks.canWrite,
   usePreparedConnection: () => Option.some(mocks.prepared),
+  environmentSessionStatesAtom: (key: string) =>
+    Atom.make(
+      key === ""
+        ? []
+        : key.split("\n").map(() =>
+            mocks.permissions === null
+              ? AsyncResult.initial()
+              : AsyncResult.success({
+                  authenticated: true,
+                  auth: {},
+                  permissions: mocks.permissions,
+                }),
+          ),
+    ),
 }));
 vi.mock("../../components/settings/SettingsScopeContext", () => ({
   useSettingsScope: () => ({
@@ -175,6 +192,7 @@ const textOf = (node: Node): string =>
 describe("FactorySettingsPanel", () => {
   const resetMocks = () => {
     mocks.canWrite = true;
+    mocks.permissions = null;
     mocks.environmentId = "env-1";
     mocks.fetchFactoryConfig.mockReset();
     mocks.saveFactoryConfig.mockReset();
@@ -753,6 +771,31 @@ describe("FactorySettingsPanel", () => {
     expect(button(root, "Save").disabled).toBe(true);
     expect(textOf(root)).toContain("read-only");
   });
+  it("tells a session paired before the permissions existed what it lacks and how to get it", async () => {
+    resetMocks();
+    mocks.canWrite = false;
+    mocks.permissions = ["orchestration:read", "orchestration:operate", "terminal:operate"];
+    mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
+    await using panel = await open();
+    const text = textOf(panel.container).replace(/\s+/g, " ");
+
+    expect(text).toContain(
+      "This session is read-only: it cannot change the factory settings (it lacks settings:write). Pair again with a new link (run ~/.local/share/t3fac/current/t3 pair --base-dir ~/.config/t3fac on the server's machine).",
+    );
+  });
+
+  it("keeps the short line for a session that lacks settings:write on purpose", async () => {
+    resetMocks();
+    mocks.canWrite = false;
+    mocks.permissions = ["orchestration:read", "orchestration:operate", "providers:manage"];
+    mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
+    await using panel = await open();
+    const text = textOf(panel.container).replace(/\s+/g, " ");
+
+    expect(text).toContain("This session is read-only: it cannot change the factory settings.");
+    expect(text).not.toContain("it lacks settings:write");
+  });
+
   it("gives the path a wide field and each number a narrow one with its unit", async () => {
     resetMocks();
     mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));

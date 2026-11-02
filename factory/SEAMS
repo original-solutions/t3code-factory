@@ -28,6 +28,7 @@ apps/desktop/src/ipc/methods/window.ts
 apps/desktop/src/preload.ts
 apps/mobile/app.config.ts
 apps/mobile/src/Stack.tsx
+apps/mobile/src/features/home/HomeScreen.tsx
 apps/mobile/src/features/settings/SettingsRouteScreen.tsx
 apps/mobile/src/state/use-remote-environment-registry.ts
 apps/server/src/cloud/bootService.test.ts
@@ -55,6 +56,8 @@ packages/shared/src/codexAuthHandoff.test.ts
 packages/shared/src/codexAuthHandoff.ts
 packages/shared/src/forkIdentity.test.ts
 packages/shared/src/forkIdentity.ts
+packages/shared/src/legacySession.test.ts
+packages/shared/src/legacySession.ts
 packages/shared/src/placeholderNames.ts
 packages/shared/src/promptLinks.test.ts
 packages/shared/src/promptLinks.ts

@@ -864,6 +864,30 @@ describe("a waiting deploy: snooze and update now", () => {
       assert.strictEqual(wakes.kicks, 0);
     }),
   );
+
+  // A session paired before environment:maintain existed holds only the legacy scopes.
+  it.effect("update now tells a legacy-scope session what it lacks, in a message", () =>
+    serving({}, async (call, { tokens, dir }) => {
+      writePending(dir);
+      const response = await call("POST", DEPLOY_NOW_PATH, tokens.operate);
+      assert.strictEqual(response.status, 403);
+      const body = await json(response);
+      assert.strictEqual(body.code, "insufficient_scope");
+      assert.strictEqual(body.requiredPermission, "environment:maintain");
+      assert.strictEqual(
+        body.message,
+        "This request needs the environment:maintain scope, which this client does not have.",
+      );
+    }),
+  );
+
+  it.effect("a legacy-scope session can still snooze, and a maintain session updates now", () =>
+    serving({}, async (call, { tokens, dir }) => {
+      writePending(dir);
+      assert.strictEqual((await call("POST", DEPLOY_SNOOZE_PATH, tokens.operate)).status, 200);
+      assert.strictEqual((await call("POST", DEPLOY_NOW_PATH, tokens.maintain)).status, 202);
+    }),
+  );
 });
 
 describe("GET /api/factory/runs", () => {

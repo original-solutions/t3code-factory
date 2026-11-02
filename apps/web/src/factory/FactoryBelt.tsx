@@ -6,7 +6,9 @@ import { Skeleton } from "~/components/ui/skeleton";
 import { Switch } from "~/components/ui/switch";
 import { cn } from "~/lib/utils";
 
-import { factoryApi, type FactoryRunRow, type FactoryStatus } from "./api";
+import { LEGACY_SESSION_PAIR_AGAIN } from "@t3tools/shared/legacySession";
+
+import { factoryApi, FactoryApiError, type FactoryRunRow, type FactoryStatus } from "./api";
 import { beltColumns, deriveBelt, nextPassText, type Station } from "./belt";
 import "./belt.css";
 import { BeltLowerRow, type EnvironmentAttention } from "./BeltLowerRow";
@@ -21,6 +23,8 @@ import { ControlFoldProvider, DIAL_CELL } from "./ControlFold";
 import { MachineRoster, useSecond } from "./MachineRoster";
 import type { QueueOrigin } from "./runQueue";
 import { DeployBanner } from "./DeployBanner";
+import { LegacySessionBanner } from "./LegacySessionBanner";
+import { useLegacySessionNotices } from "./useLegacySessionNotices";
 import { dayStrip, type DayStrip as Strip } from "./dayStrip";
 import { TodayStrip } from "./TodayStrip";
 import type { FirstRun } from "./firstRun";
@@ -335,6 +339,9 @@ export function FactoryBelt({
   const [deployNotes, setDeployNotes] = useState<ReadonlyMap<EnvironmentId, string>>(
     () => new Map(),
   );
+  const legacyNotices = useLegacySessionNotices(
+    environments.map(({ environmentId }) => environmentId),
+  );
   // The environment picked, else the first (the primary): one that has gone is no longer picked.
   const selected =
     environments.find(({ environmentId }) => environmentId === pickedId) ?? environments[0];
@@ -390,7 +397,15 @@ export function FactoryBelt({
         await factoryApi.snoozeDeploy(environmentId, shown);
       }
     } catch (error) {
-      setDeployNotes((current) => withEntry(current, environmentId, messageOf(error)));
+      // A refusal for a missing permission to a session that predates the permissions ends with the fix.
+      const note =
+        now &&
+        error instanceof FactoryApiError &&
+        error.code === "insufficient_scope" &&
+        legacyNotices[environments.findIndex((e) => e.environmentId === environmentId)] != null
+          ? `${error.reason} ${LEGACY_SESSION_PAIR_AGAIN}`
+          : messageOf(error);
+      setDeployNotes((current) => withEntry(current, environmentId, note));
     }
     setDeployBusy((current) => withMember(current, environmentId, false));
     status.refresh();
@@ -442,6 +457,7 @@ export function FactoryBelt({
         {...jumpTarget("belt")}
       >
         <Environments environments={environments} />
+        <LegacySessionBanner environments={environments} />
         {report?.deploy_pending ? (
           <DeployBanner
             // A new build, or another environment, starts with its dialog closed.

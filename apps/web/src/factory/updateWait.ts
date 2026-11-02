@@ -3,7 +3,10 @@ import { issueOf, stationOf, type Station } from "./belt";
 import { parseRunId } from "./format";
 import { runsInProgress } from "./updateInterrupts";
 
-/** One thing a waiting install waits for, as `factory/scripts/autodeploy.sh` asks the status. */
+/**
+ * One thing a waiting install waits for, as `factory/scripts/autodeploy.sh` asks the status. A
+ * running pass is none: autodeploy waits for it to end within the tick.
+ */
 export type UpdateBlocker =
   | {
       readonly kind: "run";
@@ -14,7 +17,6 @@ export type UpdateBlocker =
       /** Its post on the belt; null for an unreadable run, which is on none. */
       readonly station: Exclude<Station, "done"> | null;
     }
-  | { readonly kind: "pass" }
   | { readonly kind: "threads"; readonly running: number | null };
 
 export interface UpdateWait {
@@ -47,7 +49,6 @@ export function updateWait(status: FactoryStatus, nowMs: number): UpdateWait {
       station: run.unreadable ? null : stationOf(run),
     };
   });
-  if (status.passes.running) blockers.push({ kind: "pass" });
   const threads = status.threads === undefined ? 0 : status.threads.running;
   if (threads !== 0) blockers.push({ kind: "threads", running: threads });
   return { track, blockers };

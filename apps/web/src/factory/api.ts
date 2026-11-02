@@ -11,6 +11,7 @@ import {
   FactoryHttpError,
   factoryRequest,
   failureMessage,
+  failureParts,
   parseJson,
   timeoutMessage,
 } from "./http";
@@ -257,13 +258,25 @@ export interface FactoryResumeResult {
 export class FactoryApiError extends Error {
   readonly status: number;
   readonly code: string | null;
-  constructor(status: number, code: string | null, message: string) {
+  /** The message without the fix it ends with, for a caller that has a better fix to give. */
+  readonly reason: string;
+  constructor(status: number, code: string | null, message: string, reason = message) {
     super(message);
     this.name = "FactoryApiError";
     this.status = status;
     this.code = code;
+    this.reason = reason;
   }
 }
+
+/** The error for a non-2xx answer, from its parsed body. */
+export const failureError = (status: number, body: unknown): FactoryApiError =>
+  new FactoryApiError(
+    status,
+    textField(body, "code"),
+    failureMessage(status, body),
+    failureParts(status, body).reason,
+  );
 
 export interface FactoryApi {
   readonly status: (environmentId: EnvironmentId) => Promise<FactoryStatus>;
@@ -384,11 +397,7 @@ const call = async <T>(
   }
   const body = parseJson(result.text);
   if (result.status < 200 || result.status >= 300) {
-    throw new FactoryApiError(
-      result.status,
-      textField(body, "code"),
-      failureMessage(result.status, body),
-    );
+    throw failureError(result.status, body);
   }
   return body as T;
 };

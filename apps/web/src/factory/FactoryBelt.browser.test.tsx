@@ -1,4 +1,9 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthStandardClientScopes,
+  type AuthEnvironmentScope,
+  type EnvironmentId,
+} from "@t3tools/contracts";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { createElement, type ComponentProps, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page as browser, userEvent } from "vite-plus/test/browser";
@@ -6,7 +11,7 @@ import { page as browser, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
 import { act, fakeTimers } from "../../test/render";
-import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
+import { __setFactoryApiForTests, FactoryApiError, failureError, type FactoryApi } from "./api";
 import type { FactoryRunRow, FactoryStatus } from "./api";
 import { __resetStopDeskForTests, STOP_GRACE_MS } from "./stopDesk";
 import { render } from "./testing";
@@ -39,6 +44,25 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
       },
       children,
     ),
+}));
+
+// The sessions the belt reads, by environment: none until a test sets one. An atom per key, kept so
+// a render reads the same one again.
+const sessions = vi.hoisted(() => ({
+  byId: new Map<string, unknown>(),
+  atoms: new Map<string, unknown>(),
+}));
+vi.mock("~/state/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/state/session")>()),
+  environmentSessionStatesAtom: (key: string) => {
+    const kept = sessions.atoms.get(key);
+    if (kept) return kept;
+    const made = Atom.make(
+      key === "" ? [] : key.split("\n").map((id) => sessions.byId.get(id) ?? AsyncResult.initial()),
+    );
+    sessions.atoms.set(key, made);
+    return made;
+  },
 }));
 
 import { FactoryBelt } from "./FactoryBelt";
@@ -203,11 +227,33 @@ const api = (overrides: Partial<FactoryApi>): FactoryApi => ({
   ...overrides,
 });
 
+const LEGACY_PERMISSIONS: ReadonlyArray<AuthEnvironmentScope> = [
+  "orchestration:read",
+  "orchestration:operate",
+  "terminal:operate",
+  "review:write",
+  "relay:read",
+];
+
+/** The session an environment answers with, until the test ends. */
+const signedIn = (
+  environmentId: EnvironmentId,
+  permissions: ReadonlyArray<AuthEnvironmentScope>,
+) => {
+  sessions.atoms.clear();
+  sessions.byId.set(
+    environmentId,
+    AsyncResult.success({ authenticated: true, auth: {}, permissions }),
+  );
+};
+
 async function setup(width = 1440): Promise<Disposable> {
   vi.setSystemTime(NOW);
   await browser.viewport(width, 900);
   return {
     [Symbol.dispose]() {
+      sessions.byId.clear();
+      sessions.atoms.clear();
       __setFactoryApiForTests();
       __resetStopDeskForTests();
       vi.useRealTimers();
@@ -896,19 +942,89 @@ describe("a waiting update", () => {
     expect(banner(page)?.textContent).toContain("Update waiting.");
   });
 
-  it("asks before Update now interrupts a running factory pass", async () => {
+  it("does not count a running factory pass as in the way", async () => {
     using _state = await setup();
-    const deployNow = vi.fn();
+    const deployNow = vi.fn(async () => ({ commit: SHA, kicked: false, message: "next tick" }));
     __setFactoryApiForTests(api({ deployNow }));
     const desktop = withUpdate([], {
       threads: { running: 0 },
       passes: { at: iso(NOW), poll_seconds: 60, running: true },
     });
     await using page = await render(createElement(FactoryBelt, props({ environments: [desktop] })));
+    expect(banner(page)?.textContent).toContain("Nothing is in the way");
+    expect(banner(page)?.textContent).toContain(
+      "A factory pass is running: a check waits up to 2 minutes for it to end, and leaves the install to the next check if it runs longer.",
+    );
+    expect(banner(page)?.textContent).not.toContain("Installs sooner once");
     await page.click(page.button("Update now")!);
-    await expect.poll(() => dialog()).not.toBeNull();
-    expect(dialog()!.textContent).toContain("The factory pass running now will be interrupted.");
-    expect(deployNow).not.toHaveBeenCalled();
+    expect(dialog()).toBeNull();
+    expect(deployNow).toHaveBeenCalledWith(DESKTOP, SHA);
+  });
+
+  // An Update now refused as the server answers it: the body goes through the same failureError
+  // the API client uses.
+  const refusedWith = (body: unknown) => async () => {
+    throw failureError(403, body);
+  };
+  const forbidden = {
+    code: "insufficient_scope",
+    requiredScope: "orchestration:operate",
+    requiredPermission: "environment:maintain",
+    traceId: "trace-1",
+  };
+  const notes = (page: Page) => page.all('[role="status"]').map((p) => p.textContent);
+
+  it("tells a session paired without the permission why Update now failed", async () => {
+    using _state = await setup();
+    __setFactoryApiForTests(api({ deployNow: refusedWith(forbidden) }));
+    await using page = await render(
+      createElement(FactoryBelt, props({ environments: [withUpdate([])] })),
+    );
+    await page.click(page.button("Update now")!);
+    expect(notes(page)).toContain(
+      "This session cannot do that: it needs the environment:maintain permission, and this session was paired without it. Pair the app again to get it.",
+    );
+    expect(page.button("Snooze 1 hour")!.disabled).toBe(false);
+  });
+
+  it("shows the server's own message when the refusal carries one", async () => {
+    using _state = await setup();
+    __setFactoryApiForTests(
+      api({ deployNow: refusedWith({ ...forbidden, message: "Needs the maintain permission." }) }),
+    );
+    await using page = await render(
+      createElement(FactoryBelt, props({ environments: [withUpdate([])] })),
+    );
+    await page.click(page.button("Update now")!);
+    expect(notes(page)).toContain("Needs the maintain permission.");
+  });
+
+  it("ends a failed Update now with the fix, once, when the session predates the permissions", async () => {
+    using _state = await setup();
+    signedIn(DESKTOP, LEGACY_PERMISSIONS);
+    __setFactoryApiForTests(api({ deployNow: refusedWith(forbidden) }));
+    await using page = await render(
+      createElement(FactoryBelt, props({ environments: [withUpdate([])] })),
+    );
+    await page.click(page.button("Update now")!);
+    expect(notes(page)).toContain(
+      "This session cannot do that: it needs the environment:maintain permission, and this session was paired without it. Pair again with a new link (run ~/.local/share/t3fac/current/t3 pair --base-dir ~/.config/t3fac on the server's machine).",
+    );
+  });
+
+  it("ends the server's own refusal message with the fix when the session predates the permissions", async () => {
+    using _state = await setup();
+    signedIn(DESKTOP, LEGACY_PERMISSIONS);
+    const message =
+      "This request needs the environment:maintain scope, which this client does not have.";
+    __setFactoryApiForTests(api({ deployNow: refusedWith({ ...forbidden, message }) }));
+    await using page = await render(
+      createElement(FactoryBelt, props({ environments: [withUpdate([])] })),
+    );
+    await page.click(page.button("Update now")!);
+    expect(notes(page)).toContain(
+      `${message} Pair again with a new link (run ~/.local/share/t3fac/current/t3 pair --base-dir ~/.config/t3fac on the server's machine).`,
+    );
   });
 
   it("posts Update now with no dialog when nothing is in progress, and says when the update starts", async () => {
@@ -2265,5 +2381,44 @@ describe("tile motion", () => {
       expect(ghostsOf(page)).toEqual([]);
       expect(page.all(".factory-tile-enter")).toEqual([]);
     });
+  });
+});
+
+describe("a session paired before the current permissions", () => {
+  const legacyBanner = (page: Page) =>
+    page.all("[data-factory-legacy-session]").map((node) => node.textContent ?? "");
+
+  it("says what it cannot do and how to pair again, and stays", async () => {
+    using _state = await setup();
+    signedIn(DESKTOP, LEGACY_PERMISSIONS);
+    await using page = await render(createElement(FactoryBelt, props()));
+    const [text] = legacyBanner(page);
+    expect(legacyBanner(page)).toHaveLength(1);
+    for (const scope of ["settings:write", "environment:maintain", "access:write"]) {
+      expect(text).toContain(scope);
+    }
+    expect(text).toContain(
+      "run `~/.local/share/t3fac/current/t3 pair --base-dir ~/.config/t3fac` on the server's machine",
+    );
+    expect(text).not.toContain("Desktop");
+    expect(page.all("[data-factory-legacy-session] button")).toHaveLength(0);
+
+    await page.rerender(createElement(FactoryBelt, props()));
+    expect(legacyBanner(page)).toHaveLength(1);
+  });
+
+  it("names the environment only when more than one is connected", async () => {
+    using _state = await setup();
+    signedIn(STUDIO, LEGACY_PERMISSIONS);
+    await using page = await render(createElement(FactoryBelt, twoEnvironments()));
+    expect(legacyBanner(page)).toHaveLength(1);
+    expect(legacyBanner(page)[0]).toContain("Studio");
+  });
+
+  it("shows nothing for a session that holds every permission", async () => {
+    using _state = await setup();
+    signedIn(DESKTOP, AuthStandardClientScopes);
+    await using page = await render(createElement(FactoryBelt, props()));
+    expect(legacyBanner(page)).toHaveLength(0);
   });
 });

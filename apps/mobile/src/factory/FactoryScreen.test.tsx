@@ -12,6 +12,7 @@ const { Children, mocks } = vi.hoisted(() => ({
       savedConnectionsById: {} as Record<string, SavedRemoteConnection>,
     },
     insetBottom: 0,
+    legacy: [] as ReadonlyArray<{ environmentId: string; label: string | null; sentence: string }>,
   },
 }));
 
@@ -61,6 +62,10 @@ vi.mock("../components/ui/EmptyState", () => ({
 vi.mock("../components/ui/AppActivityIndicator", () => ({
   AppActivityIndicator: () => <progress />,
 }));
+vi.mock("../components/ui/Notice", () => ({
+  Notice: (props: { message: string }) => <aside data-notice="">{props.message}</aside>,
+}));
+vi.mock("./legacySessionNotices", () => ({ useLegacySessionNotices: () => mocks.legacy }));
 vi.mock("../state/use-remote-environment-registry", () => ({
   useSavedRemoteConnections: () => mocks.registry,
 }));
@@ -90,6 +95,7 @@ const page = (body: string) => `<section data-screen="Factory">${body}</section>
 beforeEach(() => {
   save();
   mocks.insetBottom = 0;
+  mocks.legacy = [];
 });
 
 describe("FactoryScreen", () => {
@@ -126,5 +132,24 @@ describe("FactoryScreen", () => {
 
     save(connection("alpha", "Alpha"));
     expect(renderToStaticMarkup(<FactoryScreen />)).toBe(page("<progress></progress>"));
+  });
+
+  it("shows a banner on top of the page for a session paired before the permissions", () => {
+    mocks.legacy = [{ environmentId: "alpha", label: null, sentence: "Pair again." }];
+    expect(renderToStaticMarkup(<FactoryScreen />)).toBe(
+      page(
+        `<aside data-notice="">Pair again.</aside><p data-empty="Factory">${FACTORY_NO_ENVIRONMENT_MESSAGE}</p>`,
+      ),
+    );
+  });
+
+  it("names the environment on each banner when the notice carries a label", () => {
+    mocks.legacy = [
+      { environmentId: "a", label: "Alpha", sentence: "Pair again." },
+      { environmentId: "b", label: "Beta", sentence: "Pair again." },
+    ];
+    const markup = renderToStaticMarkup(<FactoryScreen />);
+    expect(markup).toContain('<aside data-notice="">Alpha: Pair again.</aside>');
+    expect(markup).toContain('<aside data-notice="">Beta: Pair again.</aside>');
   });
 });

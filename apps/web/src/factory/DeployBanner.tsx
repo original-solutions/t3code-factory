@@ -60,7 +60,6 @@ export function DeployBanner({
   }
 
   const inProgress = runsInProgress(status.runs);
-  const passRunning = status.passes.running;
   // A count T3 could not read may hide threads at work, so it asks as one would; an older server
   // that sends no count asks only for runs.
   const threads = status.threads === undefined ? 0 : status.threads.running;
@@ -83,7 +82,14 @@ export function DeployBanner({
         <AlertTitle>{title}</AlertTitle>
         <AlertDescription>
           <p>{description}</p>
-          {wait ? <WaitDetail environmentId={environmentId} nowMs={nowMs} wait={wait} /> : null}
+          {wait ? (
+            <WaitDetail
+              environmentId={environmentId}
+              nowMs={nowMs}
+              passRunning={status.passes.running}
+              wait={wait}
+            />
+          ) : null}
           {/* Under the detail rather than beside it, so a phone keeps the full width for it. */}
           <div className="flex flex-wrap gap-2">
             <Button disabled={busy} onClick={onSnooze} size="xs" variant="outline">
@@ -92,9 +98,7 @@ export function DeployBanner({
             <Button
               disabled={busy}
               onClick={() =>
-                inProgress.length > 0 || passRunning || threads !== 0
-                  ? setConfirming(true)
-                  : onDeployNow()
+                inProgress.length > 0 || threads !== 0 ? setConfirming(true) : onDeployNow()
               }
               size="xs"
             >
@@ -119,11 +123,6 @@ export function DeployBanner({
                   </li>
                 ))}
               </ul>
-            ) : null}
-            {passRunning ? (
-              <p className="text-sm text-muted-foreground">
-                The factory pass running now will be interrupted.
-              </p>
             ) : null}
             {threads !== 0 ? (
               <p className="text-sm text-muted-foreground">
@@ -155,10 +154,12 @@ export function DeployBanner({
 function WaitDetail({
   environmentId,
   nowMs,
+  passRunning,
   wait,
 }: {
   environmentId: EnvironmentId;
   nowMs: number;
+  passRunning: boolean;
   wait: ReturnType<typeof updateWait>;
 }) {
   const { track, blockers } = wait;
@@ -188,9 +189,18 @@ function WaitDetail({
         </div>
       ) : null}
       {blockers.length === 0 ? (
-        <p className="text-xs">
-          Nothing is in the way: autodeploy installs it at its next check, within 10 minutes.
-        </p>
+        <>
+          <p className="text-xs">
+            Nothing is in the way: autodeploy installs it at its next check, within 10 minutes.
+          </p>
+          {/* autodeploy.sh's T3FAC_PASS_WAIT. */}
+          {passRunning ? (
+            <p className="text-xs text-muted-foreground">
+              A factory pass is running: a check waits up to 2 minutes for it to end, and leaves the
+              install to the next check if it runs longer.
+            </p>
+          ) : null}
+        </>
       ) : (
         <div className="flex flex-col gap-1">
           <p className="text-xs font-medium text-warning-foreground">
@@ -222,11 +232,9 @@ function Blocker({
     return (
       <li className="flex items-center gap-2 text-xs">
         <span aria-hidden className="size-2 shrink-0 rounded-xs bg-muted-foreground" />
-        {blocker.kind === "pass"
-          ? "The factory pass running now"
-          : blocker.running === null
-            ? "Threads T3 could not count"
-            : `${blocker.running} ${blocker.running === 1 ? "thread" : "threads"} with an agent at work`}
+        {blocker.running === null
+          ? "Threads T3 could not count"
+          : `${blocker.running} ${blocker.running === 1 ? "thread" : "threads"} with an agent at work`}
       </li>
     );
   }

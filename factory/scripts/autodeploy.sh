@@ -68,6 +68,9 @@ job=$autodeploy_job
 port=${T3FAC_PORT:-3876}
 # How long a build may take. T3FAC_BUILD_LIMIT exists only so tests can make a build time out.
 build_limit=${T3FAC_BUILD_LIMIT:-3600}
+# How long a tick waits for a factory pass to end before it leaves the build for the next tick.
+# T3FAC_PASS_WAIT exists only so tests can shorten it.
+pass_wait=${T3FAC_PASS_WAIT:-120}
 # Seconds between touches of the pending marker while a build runs. T3FAC_PENDING_REFRESH exists
 # only so tests can shorten it.
 pending_refresh=${T3FAC_PENDING_REFRESH:-300}
@@ -213,78 +216,114 @@ read_deploy_limit() {
   fi
 }
 
-# Returns 0 when nothing would be cut off by the restart. Otherwise prints why it is not deploying
-# and returns 1: a run that may have a session or gate at work (any unfinished run not waiting on a
-# person, including one whose file cannot be read), a pass running, a thread with an agent at
-# work, or a status it cannot read. The pending marker is rewritten each tick that reads the status,
-# busy or not, so the server drains through the build too. A tick that cannot ask leaves the file
-# as it is: the server ignores one that is older than 30 minutes, which covers an autodeploy that
-# cannot fetch, has no token, or is not running at all, and a blip does not lose the
-# first-wait time. Once the build has waited past the limit this returns 0 whatever is in the way,
-# a thread count T3 could not read included: the status cannot tell a person's thread from a
-# factory run's, so it cannot spare one. Factory runs resume through the pass; a person's thread
-# shows as interrupted in T3 and the person continues it.
-factory_idle() {
-  local body busy end asked=""
-  # A person snoozed the build: keep the marker fresh so the status still shows it, and wait.
-  end=$(snooze_end)
-  if [[ -n $end ]] && ((end > $(date +%s))); then
-    mark_pending
-    say "not deploying $short: snoozed until $(fmt_time "$end")"
-    return 1
-  fi
-  if [[ -z $token ]]; then
-    say "not deploying $short: T3FAC_AUTODEPLOY_TOKEN is not set in $env_file"
-    return 1
-  fi
+# Reads the factory status into $body; says so and returns 1 when it cannot.
+read_status() {
   # The header goes on stdin, so the token never shows in ps.
   if ! body=$(curl -fsS -m 10 -H @- "http://127.0.0.1:$port/api/factory/status" \
     <<< "Authorization: Bearer $token" 2> /dev/null); then
     say "not deploying $short: cannot read http://127.0.0.1:$port/api/factory/status"
     return 1
   fi
-  # A server from before the thread count has no `threads`; it counts as none, so a rollback to
-  # one does not stop autodeploy for good. A count T3 could not read is null, and waits like a
-  # thread at work: until deploy_wait_minutes. The Factory page's Update now asks first by the same
-  # rule (apps/web/src/factory/updateInterrupts.ts).
-  if ! busy=$(jq -r 'if .passes.running == true or any(.runs[];
+}
+
+# Sets busy (what is in the way, else empty) and pass (true while a factory pass runs) from the
+# status in $body, and returns 1 after saying so when it cannot be read. A server from before the
+# thread count has no `threads`; it counts as none, so a rollback to one does not stop autodeploy
+# for good. A count T3 could not read is null, and waits like a thread at work: until
+# deploy_wait_minutes. The Factory page's Update now asks first by the same rule
+# (apps/web/src/factory/updateInterrupts.ts).
+read_busy() {
+  if ! busy=$(jq -r 'if any(.runs[];
       .unreadable or ((.state // "") | IN("pr-open", "needs-info", "stuck") | not))
     then "a factory run is in progress"
     elif .threads != null and .threads.running != 0 then "an agent is at work in a thread"
-    else "" end' <<< "$body" 2> /dev/null); then
+    else "" end' <<< "$body" 2> /dev/null) ||
+    ! pass=$(jq -r '.passes.running == true' <<< "$body" 2> /dev/null); then
     say "not deploying $short: cannot read the factory status"
     return 1
   fi
-  mark_pending
-  # Asked from the Factory page: as if the build had waited past the limit. The request names the
-  # build the person saw; a newer one waits as normal.
-  read -r asked _ 2> /dev/null < "$now_file" || true
-  if [[ -n $asked && $asked != "$target" ]]; then
-    rm -f "$now_file"
-    say "not taking the update now asked for ${asked:0:9}: main has moved to $short"
+}
+
+# Seconds since the first build left waiting, from the pending file.
+pending_waited() {
+  local since="" now
+  read -r since _ 2> /dev/null < "$pending_file" || true
+  now=$(date +%s)
+  [[ $since =~ ^[0-9]+$ ]] || since=$now
+  echo $((now - since))
+}
+
+# Returns 0 when nothing would be cut off by the restart. Otherwise prints why it is not deploying
+# and returns 1: a run that may have a session or gate at work (any unfinished run not waiting on a
+# person, including one whose file cannot be read), a thread with an agent at work, a status it
+# cannot read, or a factory pass still running after $pass_wait seconds. A pass alone is not work
+# in the way: it runs about half of every cycle and has no session to cut off, so the tick
+# re-reads the status every 5 s until the pass ends and goes on in the same tick. Each re-read
+# applies every rule again, so a snooze, an Update now, a run or a thread that starts during the
+# wait, or the limit passing, counts at once. The pending marker is rewritten each tick that reads
+# the status, busy or not, so the server drains through the build too. A tick that cannot ask
+# leaves the file as it is: the server ignores one that is older than 30 minutes, which covers an
+# autodeploy that cannot fetch, has no token, or is not running at all, and a blip does not lose
+# the first-wait time. Once the build has waited past the limit this returns 0 whatever is in the
+# way, a thread count T3 could not read included: the status cannot tell a person's thread from a
+# factory run's, so it cannot spare one. Factory runs resume through the pass; a person's thread
+# shows as interrupted in T3 and the person continues it.
+factory_idle() {
+  local body busy pass end asked waited left start=$SECONDS
+  while true; do
+    # A person snoozed the build: keep the marker fresh so the status still shows it, and wait.
+    end=$(snooze_end)
+    if [[ -n $end ]] && ((end > $(date +%s))); then
+      mark_pending
+      say "not deploying $short: snoozed until $(fmt_time "$end")"
+      return 1
+    fi
+    if [[ -z $token ]]; then
+      say "not deploying $short: T3FAC_AUTODEPLOY_TOKEN is not set in $env_file"
+      return 1
+    fi
+    read_status || return 1
+    read_busy || return 1
+    mark_pending
+    # Asked from the Factory page: as if the build had waited past the limit. The request names the
+    # build the person saw; a newer one waits as normal.
     asked=""
-  fi
-  if [[ -n $asked ]]; then
-    [[ -n $said_overdue ]] || say "deploying $short now, as asked from the Factory page${busy:+, although $busy}"
-    said_overdue=1
-    return 0
-  fi
-  if [[ -n $busy ]]; then
-    local since="" now waited
-    read -r since _ 2> /dev/null < "$pending_file" || true
-    now=$(date +%s)
-    [[ $since =~ ^[0-9]+$ ]] || since=$now
-    waited=$((now - since))
-    read_deploy_limit
-    if ((waited >= deploy_limit * 60)); then
-      # factory_idle runs again after the build; the line is said once.
-      [[ -n $said_overdue ]] || say "deploying $short although $busy: the build has waited $(fmt_duration "$waited"), past deploy_wait_minutes $deploy_limit; factory runs in progress resume on the new build, a person's thread is interrupted$deploy_limit_note"
+    read -r asked _ 2> /dev/null < "$now_file" || true
+    if [[ -n $asked && $asked != "$target" ]]; then
+      rm -f "$now_file"
+      say "not taking the update now asked for ${asked:0:9}: main has moved to $short"
+      asked=""
+    fi
+    if [[ -n $asked ]]; then
+      [[ -n $said_overdue ]] || say "deploying $short now, as asked from the Factory page${busy:+, although $busy}"
       said_overdue=1
       return 0
     fi
-    say "waiting to deploy $short: $busy; waited $(fmt_duration "$waited") of deploy_wait_minutes $deploy_limit$deploy_limit_note"
-    return 1
-  fi
+    [[ -n $busy || $pass == true ]] || return 0
+    waited=$(pending_waited)
+    read_deploy_limit
+    if ((waited >= deploy_limit * 60)); then
+      # factory_idle runs again after the build; the line is said once. A pass is interrupted too,
+      # and resumes on the new build.
+      if [[ -z $said_overdue && -n $busy ]]; then
+        say "deploying $short although $busy: the build has waited $(fmt_duration "$waited"), past deploy_wait_minutes $deploy_limit; factory runs in progress resume on the new build, a person's thread is interrupted$deploy_limit_note"
+      elif [[ -z $said_overdue ]]; then
+        say "deploying $short although a factory pass is still running: the build has waited $(fmt_duration "$waited"), past deploy_wait_minutes $deploy_limit$deploy_limit_note"
+      fi
+      said_overdue=1
+      return 0
+    fi
+    if [[ -n $busy ]]; then
+      say "waiting to deploy $short: $busy; waited $(fmt_duration "$waited") of deploy_wait_minutes $deploy_limit$deploy_limit_note"
+      return 1
+    fi
+    left=$((pass_wait - (SECONDS - start)))
+    if ((left <= 0)); then
+      say "waiting to deploy $short: a factory pass is still running after ${pass_wait}s; waited $(fmt_duration "$waited") of deploy_wait_minutes $deploy_limit$deploy_limit_note"
+      return 1
+    fi
+    sleep $((left < 5 ? left : 5))
+  done
 }
 
 failed() {

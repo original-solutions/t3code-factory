@@ -1,6 +1,11 @@
-import { EnvironmentAuthenticatedPrincipal, type AuthEnvironmentScope } from "@t3tools/contracts";
+import {
+  EnvironmentAuthenticatedPrincipal,
+  EnvironmentScopeRequiredError,
+  type AuthEnvironmentScope,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest, type HttpServerResponse } from "effect/http";
+import * as Schema from "effect/Schema";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpRouter from "effect/http/HttpRouter";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
@@ -13,10 +18,13 @@ import * as AuthHttp from "../../auth/http.ts";
  * upstream's OTLP proxy route. Contract errors render themselves as 401, 403 or 500 JSON.
  */
 
+const encodeScopeRequired = Schema.encodeSync(EnvironmentScopeRequiredError);
+
 /**
  * Runs `handler` for an authenticated request whose session holds `scope`. A request without a
- * session fails 401 and one without the scope fails 403. The handler may read
- * `EnvironmentAuthenticatedPrincipal`.
+ * session fails 401 and one without the scope fails 403, whose body also carries the error's
+ * `message` (a getter upstream, so its own JSON lacks it) for clients that show the server's words.
+ * The handler may read `EnvironmentAuthenticatedPrincipal`.
  */
 const withScope = Effect.fn("FactoryAuth.withScope")(function* <E, R>(
   scope: AuthEnvironmentScope,
@@ -36,6 +44,14 @@ const withScope = Effect.fn("FactoryAuth.withScope")(function* <E, R>(
     ),
   );
   return yield* Effect.andThen(AuthHttp.requireEnvironmentScope(scope), handler).pipe(
+    Effect.catchIf(Schema.is(EnvironmentScopeRequiredError), (error) =>
+      Effect.succeed(
+        HttpServerResponse.jsonUnsafe(
+          { ...encodeScopeRequired(error), message: error.message },
+          { status: 403 },
+        ),
+      ),
+    ),
     Effect.provideService(EnvironmentAuthenticatedPrincipal, {
       ...session,
       scopes: new Set(session.scopes),
