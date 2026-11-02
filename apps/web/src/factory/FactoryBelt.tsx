@@ -402,7 +402,7 @@ export function FactoryBelt({
         now &&
         error instanceof FactoryApiError &&
         error.code === "insufficient_scope" &&
-        legacyNotices[environments.findIndex((e) => e.environmentId === environmentId)] != null
+        legacyNotices.has(environmentId)
           ? `${error.reason} ${LEGACY_SESSION_PAIR_AGAIN}`
           : messageOf(error);
       setDeployNotes((current) => withEntry(current, environmentId, note));

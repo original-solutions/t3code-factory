@@ -1027,6 +1027,38 @@ describe("a waiting update", () => {
     );
   });
 
+  // The short fix, as failureMessage ends a refusal for a session that is not legacy.
+  const shortFix =
+    "This session cannot do that: it needs the environment:maintain permission, and this session was paired without it. Pair the app again to get it.";
+
+  it("keeps the short fix on a refused snooze, even for a session that predates the permissions", async () => {
+    using _state = await setup();
+    signedIn(DESKTOP, LEGACY_PERMISSIONS);
+    __setFactoryApiForTests(api({ snoozeDeploy: refusedWith(forbidden) }));
+    await using page = await render(
+      createElement(FactoryBelt, props({ environments: [withUpdate([])] })),
+    );
+    await page.click(page.button("Snooze 1 hour")!);
+    expect(notes(page)).toContain(shortFix);
+  });
+
+  it("keeps the short fix on Update now when only another environment's session predates the permissions", async () => {
+    using _state = await setup();
+    signedIn(STUDIO, LEGACY_PERMISSIONS);
+    __setFactoryApiForTests(api({ deployNow: refusedWith(forbidden) }));
+    await using page = await render(
+      createElement(
+        FactoryBelt,
+        props({
+          environments: [withUpdate([]), withUpdate([], {}, STUDIO, "Studio")],
+          showEnvironment: true,
+        }),
+      ),
+    );
+    await page.click(page.button("Update now")!);
+    expect(notes(page)).toContain(shortFix);
+  });
+
   it("posts Update now with no dialog when nothing is in progress, and says when the update starts", async () => {
     using _state = await setup();
     const deployNow = vi.fn(async () => ({ commit: SHA, kicked: false, message: "next tick" }));

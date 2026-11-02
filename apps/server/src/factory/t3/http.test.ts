@@ -465,7 +465,10 @@ describe("every factory route", () => {
         for (const token of [tokens.operate, tokens.settingsWrite]) {
           const response = await call("GET", path, token);
           assert.strictEqual(response.status, 403, path);
-          assert.strictEqual((await json(response)).code, "insufficient_scope");
+          const body = await json(response);
+          assert.strictEqual(body.code, "insufficient_scope");
+          assert.strictEqual(body.requiredScope, "orchestration:read", path);
+          assert.isNotEmpty(body.message, path);
         }
       }
     }),
@@ -487,7 +490,9 @@ describe("every factory route", () => {
       ]) {
         const response = await call("POST", path, tokens.read);
         assert.strictEqual(response.status, 403, path);
-        assert.strictEqual((await json(response)).code, "insufficient_scope");
+        const body = await json(response);
+        assert.strictEqual(body.code, "insufficient_scope");
+        assert.isNotEmpty(body.message, path);
       }
       assert.strictEqual(ledgerBytes(dir), bytes);
       assert.strictEqual(wakes.count, 0);
