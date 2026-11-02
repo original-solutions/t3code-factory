@@ -1034,6 +1034,24 @@ describe("autodeploy.sh with a factory pass running", () => {
     expect(result.deploys).toEqual([]);
     expect(lines(result.output)).toHaveLength(1);
     expect(result.output).toContain("a factory run is in progress");
+    expect(result.output).not.toContain("still running");
+    expect(statusAuth).toHaveLength(1);
+  });
+
+  it("deploys although a pass is still running once the build has waited past the limit", async () => {
+    const sha = commitToOrigin("second");
+    const short = git(clone, "rev-parse", "--short", sha);
+    NodeFS.mkdirSync(dataDir(), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(dataDir(), "deploy-pending"), `1000000000 ${sha}\n`);
+    statusBodies = [PASSING];
+    const result = await runAutodeploy({ T3FAC_PASS_WAIT: "30" });
+    expect(result.status).toBe(0);
+    expect(result.deploys).toHaveLength(2);
+    expect(current()).toBe(`versions/0.0.1+fac.${short}`);
+    expect(result.output).toContain(`deploying ${short} although a factory pass is still running`);
+    expect(result.output).toContain("past deploy_wait_minutes 120");
+    expect(result.output.match(/deploying /g)).toHaveLength(1);
+    expect(NodeFS.existsSync(NodePath.join(dataDir(), "deploy-pending"))).toBe(false);
   });
 
   it("falls back to the busy wait when a run starts while it waits for the pass", async () => {
