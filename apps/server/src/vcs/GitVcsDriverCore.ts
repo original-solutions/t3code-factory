@@ -2,6 +2,7 @@ import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -948,6 +949,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const { worktreesDir } = yield* ServerConfig.ServerConfig;
   const isServerInternalPath = yield* makeIsServerInternalPath;
   const digest = yield* Digest.Digest;
+  const random = yield* SecureRandom.SecureRandom;
   const hostPlatform = yield* HostProcess.Platform;
   const serviceScope = yield* Effect.scope;
   const statusFetches = new Map<string, Fiber.Fiber<void, GitCommandError>>();
@@ -1298,19 +1300,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     // Every numeric suffix is taken: fall back to a random one so the rename still lands.
     while (true) {
-      const candidate = yield* crypto.randomBytes(4).pipe(
-        Effect.map((bytes) => `${desiredBranch}-${Hex.encode(bytes)}`),
-        Effect.mapError(
-          (cause) =>
-            new GitCommandError({
-              operation: "GitVcsDriver.renameBranch",
-              command: "crypto.randomBytes",
-              cwd,
-              detail: "Failed to generate a unique branch suffix.",
-              cause,
-            }),
-        ),
-      );
+      const candidate = yield* random
+        .randomBytes(4)
+        .pipe(Effect.map((bytes) => `${desiredBranch}-${Hex.encode(bytes)}`));
       if (!(yield* branchExists(cwd, candidate))) {
         return candidate;
       }
