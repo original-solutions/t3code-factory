@@ -2,7 +2,6 @@
 CLAUDE.md
 apps/desktop/scripts/electron-launcher.mjs
 apps/desktop/scripts/electron-launcher.test.mjs
-apps/desktop/src/app/DesktopApp.test.ts
 apps/desktop/src/app/DesktopApp.ts
 apps/desktop/src/app/DesktopAppIdentity.test.ts
 apps/desktop/src/app/DesktopClerk.test.ts
