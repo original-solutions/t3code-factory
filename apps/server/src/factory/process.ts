@@ -247,14 +247,17 @@ const run = Effect.fn("FactoryProcess.run")(function* (input: RunInput) {
   // Lowers the wrapper's priority, then lets it go on. Failing to lower it only costs the
   // server some CPU, so the command runs anyway.
   const lowerPriority = (child: NodeChildProcess.ChildProcess, niceness: number) =>
-    Effect.try(() => {
-      const pid = child.pid;
-      if (pid !== undefined && NodeOS.getPriority(pid) < niceness) {
-        NodeOS.setPriority(pid, niceness);
-      }
+    Effect.try({
+      try: () => {
+        const pid = child.pid;
+        if (pid !== undefined && NodeOS.getPriority(pid) < niceness) {
+          NodeOS.setPriority(pid, niceness);
+        }
+      },
+      catch: String,
     }).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning(`could not run a command at niceness ${niceness}: ${error.cause}`),
+      Effect.catch((message) =>
+        Effect.logWarning(`could not run a command at niceness ${niceness}: ${message}`),
       ),
       Effect.ensuring(Effect.sync(() => child.stdin?.end())),
     );

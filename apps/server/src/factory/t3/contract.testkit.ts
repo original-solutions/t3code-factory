@@ -4,6 +4,7 @@
  * git worktree, with the Claude replay transcript from provider-testing
  * standing in for the provider.
  */
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EventId,
@@ -282,6 +283,7 @@ export const layerGit = GitVcsDriver.layer.pipe(
   Layer.provide(VcsProcess.layer),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-factory-contract-config-" })),
   Layer.provide(NodeServices.layer),
+  Layer.provide(NodeCrypto.layer),
 );
 
 /**

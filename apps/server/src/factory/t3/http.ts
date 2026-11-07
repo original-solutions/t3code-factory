@@ -13,7 +13,6 @@ import {
   AuthSettingsWriteScope,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -74,7 +73,9 @@ const RECENT_FINISHED_MS = 7 * 86_400_000;
 const respond = (body: unknown, status = 200) => HttpServerResponse.jsonUnsafe(body, { status });
 
 /** A file read or write that failed with something other than a ledger error. */
-class FactoryFileError extends Data.TaggedError("FactoryFileError")<{ readonly cause: unknown }> {}
+class FactoryFileError extends Schema.TaggedError<FactoryFileError>()("FactoryFileError", {
+  cause: Schema.Defect(),
+}) {}
 
 /** Runs a synchronous ledger or file call; whatever it throws is the failure. */
 const guarded = <A>(call: () => A): Effect.Effect<A, LedgerError | FactoryFileError> =>

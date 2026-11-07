@@ -256,7 +256,7 @@ export async function revokeFactorySessions(
     const results = yield* Effect.forEach(factorySessions, (session) =>
       auth.revokeClient({ headers, payload: { sessionId: session.sessionId } }).pipe(
         Effect.map((result) => result.revoked),
-        Effect.catch(() => Effect.succeed(false)),
+        Effect.orElseSucceed(() => false),
       ),
     );
     const revoked = results.filter(Boolean).length;

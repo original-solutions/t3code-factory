@@ -11,6 +11,7 @@ import * as DesktopLegacyLocalStorage from "../app/DesktopLegacyLocalStorage.ts"
 import * as DesktopAppActivation from "../app/DesktopAppActivation.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopManagedPolicy from "../app/DesktopManagedPolicy.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
@@ -134,6 +135,7 @@ export const layerRecordingIpc = (channels: Array<string>) =>
  */
 export const layerIpcInstallDependencies = Layer.mergeAll(
   ElectronApp.layer,
+  DesktopManagedPolicy.layerTest(),
   Layer.succeed(HostProcess.Platform, "linux"),
   Layer.succeed(ElectronWindow.ElectronWindow, {
     sendAll: () => Effect.void,

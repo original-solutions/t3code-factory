@@ -255,6 +255,7 @@ export interface FactoryResumeResult {
 }
 
 /** A non-2xx answer, or a request that never got one (`status` 0). */
+// @effect-diagnostics-next-line extendsNativeError:off - thrown and caught in plain Promise code, with no Effect runtime.
 export class FactoryApiError extends Error {
   readonly status: number;
   readonly code: string | null;

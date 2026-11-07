@@ -13,7 +13,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -476,7 +476,7 @@ const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const sql = yield* SqlClient.SqlClient;
   const projects = yield* ProjectStore.ProjectStoreV2;
@@ -633,8 +633,8 @@ const make = Effect.gen(function* () {
 
   // T3 remembers a rejected command id for good, so each attempt needs its own.
   const archiveCommandId = (id: ThreadId) =>
-    crypto
-      .randomUUIDv4()
+    random
+      .uuidV4()
       .pipe(Effect.flatMap((uuid) => decodeCommandId(`factory-archive:${id}:${uuid}`)));
 
   const archiveState = (id: ThreadId) =>

@@ -17,28 +17,29 @@ const run = (input: RunInput) =>
     return yield* factoryProcess.run(input);
   }).pipe(Effect.provide(layer));
 
+// Plain functions, so `process.env` is not read inside Effect code.
+const applyEnv = (vars: Record<string, string | undefined>) => {
+  const saved = Object.keys(vars).map((k) => [k, globalThis.process.env[k]] as const);
+  restoreEnv(Object.entries(vars));
+  return saved;
+};
+const restoreEnv = (entries: ReadonlyArray<readonly [string, string | undefined]>) => {
+  for (const [k, v] of entries) {
+    if (v === undefined) delete globalThis.process.env[k];
+    else globalThis.process.env[k] = v;
+  }
+};
+const pathEnv = () => globalThis.process.env.PATH ?? "";
+
 // `undefined` deletes the variable for the body, so a test can run without one the session has.
 const withEnv = <A, E, R>(
   vars: Record<string, string | undefined>,
   body: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
   Effect.acquireUseRelease(
-    Effect.sync(() => {
-      const saved = Object.keys(vars).map((k) => [k, globalThis.process.env[k]] as const);
-      for (const [k, v] of Object.entries(vars)) {
-        if (v === undefined) delete globalThis.process.env[k];
-        else globalThis.process.env[k] = v;
-      }
-      return saved;
-    }),
+    Effect.sync(() => applyEnv(vars)),
     () => body,
-    (saved) =>
-      Effect.sync(() => {
-        for (const [k, v] of saved) {
-          if (v === undefined) delete globalThis.process.env[k];
-          else globalThis.process.env[k] = v;
-        }
-      }),
+    (saved) => Effect.sync(() => restoreEnv(saved)),
   );
 
 const isAlive = (pid: number): boolean => {
@@ -99,7 +100,7 @@ it.live("passes PATH, LC_* and the env argument through", () =>
     { LC_FACTORY_TEST: "lc", T3FAC_LAUNCH_PATH: undefined },
     Effect.gen(function* () {
       const path = yield* run({ command: `printf %s "$PATH"`, shell: true });
-      assert.strictEqual(path.tail, globalThis.process.env.PATH ?? "");
+      assert.strictEqual(path.tail, pathEnv());
       const lc = yield* run({ command: `printf %s "$LC_FACTORY_TEST"`, shell: true });
       assert.strictEqual(lc.tail, "lc");
       const extra = yield* run({

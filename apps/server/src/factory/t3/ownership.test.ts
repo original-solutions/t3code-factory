@@ -4,6 +4,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
@@ -27,7 +28,7 @@ const ownershipLayer = Layer.mergeAll(
     }),
   ),
   Layer.succeed(HostProcess.Environment, {}),
-).pipe(Layer.provideMerge(NodeServices.layer));
+).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layerSecureRandom)));
 
 /**
  * A child process that takes server ownership of `statePath` the way a server does, publishes its
@@ -35,6 +36,7 @@ const ownershipLayer = Layer.mergeAll(
  */
 const ownerScript = (statePath: string, home: string) =>
   [
+    `import * as NodeCrypto from "@effect/platform-node/NodeCrypto";`,
     `import * as NodeServices from "@effect/platform-node/NodeServices";`,
     `import * as HostProcess from "@t3tools/shared/HostProcess";`,
     `import * as Effect from "effect/Effect";`,
@@ -46,7 +48,7 @@ const ownerScript = (statePath: string, home: string) =>
     `  ProcessRunner.layer,`,
     `  Layer.succeed(HostProcess.HomeDirectory, ${JSON.stringify(home)}),`,
     `  Layer.succeed(HostProcess.Environment, {}),`,
-    `).pipe(Layer.provideMerge(NodeServices.layer));`,
+    `).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layerSecureRandom)));`,
     // A fiber waiting on Effect.never holds no handle, so the open stdin keeps the child, and its
     // lock, alive until it is killed; it ends with the test runner if the runner dies first.
     `process.stdin.on("end", () => process.exit()).resume();`,

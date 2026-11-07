@@ -4,11 +4,11 @@
  * form sends, so comments and unknown keys (`notify`, `keep_versions`, a retired `repos`) stay as
  * written. The result is checked with `parseMachineConfig`.
  */
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { isMap, isScalar, parseDocument, YAMLMap } from "yaml";
 
 import {
@@ -310,7 +310,9 @@ export type SaveResult =
   | { readonly kind: "invalid-body" };
 
 /** The file could not be read or written; the file is as it was or whole, never half written. */
-export class SaveError extends Data.TaggedError("SaveError")<{ readonly cause: unknown }> {}
+export class SaveError extends Schema.TaggedError<SaveError>()("SaveError", {
+  cause: Schema.Defect(),
+}) {}
 
 /**
  * Saves a request body into the machine config file: reads the file (none is an empty start),

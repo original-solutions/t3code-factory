@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - the database is a real file in a temp directory.
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -31,6 +32,7 @@ const layerSessions = () =>
         Layer.mock(ThreadManagement.ThreadManagementService)({}),
         Layer.mock(GitVcsDriver.GitVcsDriver)({}),
         NodeServices.layer,
+        NodeCrypto.layerSecureRandom,
       ),
     ),
     Layer.provideMerge(

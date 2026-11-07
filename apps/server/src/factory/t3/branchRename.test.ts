@@ -3,8 +3,10 @@ import * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import * as Crypto from "effect/Crypto";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../../config.ts";
 import { makeGitVcsDriverCore } from "../../vcs/GitVcsDriverCore.ts";
@@ -43,14 +45,11 @@ const numbered = (name: string, last: number) =>
 /** Random bytes that count up, so the n-th random suffix is n as eight hex digits. */
 const countingCrypto = () => {
   let draws = 0;
-  return Crypto.make({
-    randomBytes: (size) => {
-      draws += 1;
-      const bytes = new Uint8Array(size);
-      bytes[size - 1] = draws;
-      return bytes;
-    },
-    digest: (_algorithm, data) => Effect.succeed(data),
+  return SecureRandom.make((size) => {
+    draws += 1;
+    const bytes = new Uint8Array(size);
+    bytes[size - 1] = draws;
+    return bytes;
   });
 };
 
@@ -59,8 +58,13 @@ const renameMainTo = (cwd: string, newBranch: string) =>
   makeGitVcsDriverCore().pipe(
     Effect.flatMap((driver) => driver.renameBranch({ cwd, oldBranch: "main", newBranch })),
     Effect.map((renamed) => renamed.branch),
-    Effect.provideService(Crypto.Crypto, countingCrypto()),
-    Effect.provide(ServerConfig.layerTest(cwd, tempDir("server-config"))),
+    Effect.provide(
+      Layer.mergeAll(
+        NodeCrypto.layerDigest,
+        Layer.succeed(SecureRandom.SecureRandom, countingCrypto()),
+        ServerConfig.layerTest(cwd, tempDir("server-config")),
+      ),
+    ),
     Effect.scoped,
     Effect.provide(NodeServices.layer),
   );
