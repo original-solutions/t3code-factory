@@ -141,9 +141,11 @@ Out, until the experiment earns them: Linear, multiple identities, fleet API, se
 
 ## Running both factories side by side
 
-The rule is the one softfac already has: one factory per repo.
+The rule is the one softfac already has, one factory kind per repo, with one change: several machines running this fork may watch one repo.
 
-- The fork watches only repos that are removed from the Rust factory's `repos` list. Start with one low-stakes repo. Both factories use the same labels, assignee and comment markers, so sharing a repo would make them claim each other's issues.
+- **One claim comment wins each issue (#303).** Once `claim()` finds no assignee, the machine posts a comment ending `<!-- softfac:claim <machine> -->`, then lists the issue's comments. Among the claim comments, any author, created at or after the newest `factory:ready` label and no more than 10 minutes older than its own, the lowest id wins. The winner makes the one edit (assignee and labels) and its comment stays; a loser deletes its comment and edits nothing. Comments are never merged, so the comment, not the login, records which machine claimed first. Under view-then-edit, t3fac and trilogy-mac, both `tomkaczocha`, once both won the same issue. Each machine reads after its own post, so the later one always sees the earlier. The 10 minutes let an issue whose claimer died between comment and edit be claimed again. The same rule with no age cutoff decides a `factory:triage` issue the login holds with no run on this machine: only the winning machine, or any when there is no claim comment, resumes it. A run of this machine's whose issue is now `triage` or `building` while the run is in another state is finished, ledger only, when another machine's claim won after the run's claim. `factory.owner` still pins a repo to one machine, and a pinned repo gets no claim comment from any other.
+
+- The fork watches only repos that are removed from the Rust factory's `repos` list. Start with one low-stakes repo. Both factories use the same labels, assignee and comment markers, and Rust softfac does not read claim comments, so sharing a repo would make them claim each other's issues.
 - Separate everything else:
 
 |              | Rust softfac                                        | Fork                                                         |

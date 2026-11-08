@@ -28,26 +28,26 @@ factory:
   owner: t3fac # optional
 ```
 
-| Key                                   | Type            | Required | Default | Rule                                                                         |
-| ------------------------------------- | --------------- | -------- | ------- | ---------------------------------------------------------------------------- |
-| `factory`                             | mapping         | yes      |         |                                                                              |
-| `factory.instructors`                 | list of strings | yes      |         | Non-empty list; no empty strings. GitHub logins, matched case-insensitively. |
-| `factory.base`                        | string          | yes      |         | Non-empty. Must equal the repo's default branch, or the repo is skipped.     |
-| `factory.provision`                   | list of strings | yes      |         | May be empty. Shell commands.                                                |
-| `factory.gate`                        | list of strings | yes      |         | Non-empty. Shell commands.                                                   |
-| `factory.required_checks`             | list of strings | no       | `[]`    | GitHub check names.                                                          |
-| `factory.limits`                      | mapping         | yes      |         |                                                                              |
-| `factory.limits.gate_retries`         | integer ≥ 0     | yes      |         |                                                                              |
-| `factory.limits.minutes`              | integer ≥ 1     | no       | `180`   |                                                                              |
-| `factory.limits.regates`              | any             | no       |         | Accepted and ignored.                                                        |
-| `factory.limits.checks_minutes`       | integer ≥ 1     | no       | `30`    |                                                                              |
-| `factory.limits.interruption_resumes` | integer ≥ 0     | no       | `2`     |                                                                              |
-| `factory.autonomy`                    | string          | yes      |         | Only `pr`.                                                                   |
-| `factory.owner`                       | string          | no       |         | Non-empty. The one machine that may claim the repo's issues: see below.      |
+| Key                                   | Type            | Required | Default | Rule                                                                                                        |
+| ------------------------------------- | --------------- | -------- | ------- | ----------------------------------------------------------------------------------------------------------- |
+| `factory`                             | mapping         | yes      |         |                                                                                                             |
+| `factory.instructors`                 | list of strings | yes      |         | Non-empty list; no empty strings. GitHub logins, matched case-insensitively.                                |
+| `factory.base`                        | string          | yes      |         | Non-empty. Must equal the repo's default branch, or the repo is skipped.                                    |
+| `factory.provision`                   | list of strings | yes      |         | May be empty. Shell commands.                                                                               |
+| `factory.gate`                        | list of strings | yes      |         | Non-empty. Shell commands.                                                                                  |
+| `factory.required_checks`             | list of strings | no       | `[]`    | GitHub check names.                                                                                         |
+| `factory.limits`                      | mapping         | yes      |         |                                                                                                             |
+| `factory.limits.gate_retries`         | integer ≥ 0     | yes      |         |                                                                                                             |
+| `factory.limits.minutes`              | integer ≥ 1     | no       | `180`   |                                                                                                             |
+| `factory.limits.regates`              | any             | no       |         | Accepted and ignored.                                                                                       |
+| `factory.limits.checks_minutes`       | integer ≥ 1     | no       | `30`    |                                                                                                             |
+| `factory.limits.interruption_resumes` | integer ≥ 0     | no       | `2`     |                                                                                                             |
+| `factory.autonomy`                    | string          | yes      |         | Only `pr`.                                                                                                  |
+| `factory.owner`                       | string          | no       |         | Non-empty. Pins the repo to one machine. Absent, every watching machine competes for each issue: see below. |
 
 Keys the server does not read are ignored.
 
-`factory.owner` is the machine name from the `Machine:` line of a factory status comment, matched ignoring ASCII case. Absent, any machine that watches the repo claims its issues. Set, every other machine lists, claims, resumes and releases nothing there, and writes nothing to an issue it holds no run for. Each pass it prints `not owner: <repo>: factory.owner is <owner>, this machine is <name>; no issue is claimed` and writes `claim_skipped` with reason `not-owner`. Runs a machine already holds go on. A misspelt owner means no machine claims; moving the repo to another machine is a one-line commit on the default branch.
+`factory.owner` is the machine name from the `Machine:` line of a factory status comment, matched ignoring ASCII case. Absent, every machine that watches the repo competes for its issues. The machine whose claim comment is the earliest since the issue's newest `factory:ready` label wins it. Set, every other machine lists, claims, resumes and releases nothing there, and writes nothing to an issue it holds no run for. Each pass it prints `not owner: <repo>: factory.owner is <owner>, this machine is <name>; no issue is claimed` and writes `claim_skipped` with reason `not-owner`. Runs a machine already holds go on. A misspelt owner means no machine claims; moving the repo to another machine is a one-line commit on the default branch.
 
 ## Limits
 
@@ -70,7 +70,7 @@ With the machine config's `default_project` set, a T3 project whose GitHub-origi
 | `base`              | The repo's default branch on GitHub                                                                           |
 | `required_checks`   | `[]`                                                                                                          |
 | `autonomy`          | `pr`                                                                                                          |
-| `owner`             | None: any machine that watches the repo claims                                                                |
+| `owner`             | None: every machine that watches the repo competes, and one wins each issue                                   |
 | `provision`, `gate` | Inferred from the files committed at the root of `origin/HEAD`, read with `git` in the checkout on every pass |
 
 | Found on the default branch                   | provision                                         | gate                                                                                                                      |
