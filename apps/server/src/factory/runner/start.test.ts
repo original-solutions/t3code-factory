@@ -3160,6 +3160,29 @@ describe("start: claim comments of several machines", () => {
       }),
   );
 
+  it.effect("a failed claim that finds another machine's claim landed takes nothing", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker, calls } = fakeTracker({
+        issues: [detail("ready"), detail("triage", [USER])],
+        claims: [ghFailure()],
+        winner: elsewhere(-60_000),
+      });
+      const outcome = yield* startIn(dataDir, tracker);
+      assert.deepStrictEqual(outcome, {
+        kind: "skipped",
+        reason: "claimed by machine trilogy-mac",
+        claimedBy: "trilogy-mac",
+      });
+      assert.deepStrictEqual(calls.slice(-3), [
+        "claim 7 rawphp ready->triage",
+        "issue 7",
+        "claimWinner 7",
+      ]);
+      assert.strictEqual(NodeFS.existsSync(NodePath.join(dataDir, "runs")), false);
+    }),
+  );
+
   it.effect(
     "yieldToClaim finishes the runs claimed before another machine's winning claim, writing nothing to GitHub",
     () =>

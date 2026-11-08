@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import { assert, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -50,7 +51,11 @@ import {
 } from "./github.ts";
 
 type Answer =
-  | { readonly kind: "result"; readonly result: Partial<RunResult> }
+  | {
+      readonly kind: "result";
+      readonly result: Partial<RunResult>;
+      readonly delay?: Duration.Input;
+    }
   | { readonly kind: "spawn" };
 
 const reply = (stdout: string, stderr = ""): Answer => ({
@@ -86,7 +91,7 @@ const setup = (...answers: ReadonlyArray<Answer>) => {
             }),
           );
         }
-        return Effect.succeed({
+        const result = Effect.succeed({
           exitCode: 0,
           timedOut: false,
           tail: "",
@@ -94,6 +99,7 @@ const setup = (...answers: ReadonlyArray<Answer>) => {
           truncated: false,
           ...answer.result,
         } satisfies RunResult);
+        return answer.delay === undefined ? result : result.pipe(Effect.delay(answer.delay));
       },
     }),
   );
@@ -3803,6 +3809,9 @@ it.effect("claim still backs off when its own comment cannot be deleted", () =>
   }),
 );
 
+/** A claimer whose ready label is old enough that only the 10-minute rule drops a comment. */
+const EARLY = { machine: "mac-mini", since: "2026-10-04T09:00:00Z" } as const;
+
 it.effect("claim ignores a claim comment more than 10 minutes older than its own", () =>
   Effect.gen(function* () {
     const t = setup(
@@ -3814,8 +3823,87 @@ it.effect("claim ignores a claim comment more than 10 minutes older than its own
       ),
       reply(""),
     );
-    assert.deepStrictEqual(yield* t.ok(claim6(t)), { kind: "claimed" });
+    assert.deepStrictEqual(yield* t.ok(t.github.claim(6, "rawphp", "ready", "triage", EARLY)), {
+      kind: "claimed",
+    });
     assert.deepStrictEqual(t.calls().at(-1), claimEditCall);
+  }),
+);
+
+it.effect("claim still loses to a claim comment exactly 10 minutes older than its own", () =>
+  Effect.gen(function* () {
+    const t = setup(
+      reply('{"assignees":[]}'),
+      claimPosted(50),
+      claimList(claimRow(40, "trilogy-mac", "2026-10-04T09:55:00Z")),
+      reply(""),
+    );
+    assert.deepStrictEqual(yield* t.ok(t.github.claim(6, "rawphp", "ready", "triage", EARLY)), {
+      kind: "claimed-elsewhere",
+      machine: "trilogy-mac",
+    });
+  }),
+);
+
+it.effect("claim is not blocked by a comment that itself lost to an abandoned one", () =>
+  Effect.gen(function* () {
+    // trilogy-mac won at 09:54 and never edited; old-mac lost to it and could not delete its comment.
+    const t = setup(
+      reply('{"assignees":[]}'),
+      claimPosted(50),
+      claimList(
+        claimRow(40, "trilogy-mac", "2026-10-04T09:54:00Z"),
+        claimRow(45, "old-mac", "2026-10-04T09:58:00Z"),
+      ),
+      reply(""),
+    );
+    assert.deepStrictEqual(yield* t.ok(t.github.claim(6, "rawphp", "ready", "triage", EARLY)), {
+      kind: "claimed",
+    });
+    assert.deepStrictEqual(t.calls().at(-1), claimEditCall);
+  }),
+);
+
+it.effect("claim counts an earlier claim comment of its own machine as its win", () =>
+  Effect.gen(function* () {
+    const t = setup(
+      reply('{"assignees":[]}'),
+      claimPosted(50),
+      claimList(
+        claimRow(49, "Mac-Mini", "2026-10-04T10:04:00Z"),
+        claimRow(50, "mac-mini", CLAIMED_AT),
+      ),
+      reply(""),
+      reply(""),
+    );
+    assert.deepStrictEqual(yield* t.ok(claim6(t)), { kind: "claimed" });
+    // The new comment is a duplicate: it goes, the earlier one stays as the record.
+    assert.deepStrictEqual(t.calls().slice(3), [
+      ["api", "-X", "DELETE", `repos/${REPO}/issues/comments/50`],
+      claimEditCall,
+    ]);
+  }),
+);
+
+it.effect("claim gives up before the edit once its comment is 5 minutes old, deleting it", () =>
+  Effect.gen(function* () {
+    // The comment listing takes 6 minutes to answer.
+    const slowList: Answer = {
+      kind: "result",
+      result: { exitCode: 0, tail: JSON.stringify([claimRow(50, "mac-mini", CLAIMED_AT)]) },
+      delay: "6 minutes",
+    };
+    const t = setup(reply('{"assignees":[]}'), claimPosted(50), slowList, reply(""));
+    const fiber = yield* Effect.forkChild(t.err(claim6(t)), { startImmediately: true });
+    yield* TestClock.adjust("6 minutes");
+    const error = yield* Fiber.join(fiber);
+    assert.strictEqual(error._tag, "GitHubTimedOut");
+    assert.deepStrictEqual(t.calls(), [
+      claimViewCall,
+      claimPostCall(),
+      claimListCall,
+      ["api", "-X", "DELETE", `repos/${REPO}/issues/comments/50`],
+    ]);
   }),
 );
 
@@ -3860,26 +3948,38 @@ it.effect("claim between two machines on one login: the comment decides, not the
   }),
 );
 
-it.effect("claimWinner names the earliest claim since the newest ready label, at any age", () =>
-  Effect.gen(function* () {
-    const t = setup(
-      reply(labelledBy("tomkaczocha", "factory:ready")),
-      claimList(
-        claimRow(30, "old-mac", "2026-10-04T09:00:00Z"),
-        { id: 31, user: { login: "tom" }, created_at: AFTER, body: "not a claim" },
-        claimRow(40, "trilogy-mac", AFTER),
-        claimRow(41, "mac-mini", AFTER),
-      ),
-    );
-    assert.deepStrictEqual(yield* t.ok(t.github.claimWinner(6)), {
-      id: 40,
-      machine: "trilogy-mac",
-      createdAt: AFTER,
-    });
-    assert.deepStrictEqual(t.calls(), [historyCallFor(6), claimListCall]);
-    const none = setup(reply(labelledBy("tomkaczocha", "factory:ready")), claimList());
-    assert.strictEqual(yield* none.ok(none.github.claimWinner(6)), null);
-  }),
+it.effect(
+  "claimWinner names the claim holding the issue since the newest ready label, at any age",
+  () =>
+    Effect.gen(function* () {
+      const t = setup(
+        reply(labelledBy("tomkaczocha", "factory:ready")),
+        claimList(
+          claimRow(30, "old-mac", "2026-10-04T09:00:00Z"),
+          { id: 31, user: { login: "tom" }, created_at: AFTER, body: "not a claim" },
+          claimRow(40, "trilogy-mac", AFTER),
+          claimRow(41, "mac-mini", AFTER),
+        ),
+      );
+      assert.deepStrictEqual(yield* t.ok(t.github.claimWinner(6)), {
+        id: 40,
+        machine: "trilogy-mac",
+        createdAt: AFTER,
+      });
+      assert.deepStrictEqual(t.calls(), [historyCallFor(6), claimListCall]);
+      const none = setup(reply(labelledBy("tomkaczocha", "factory:ready")), claimList());
+      assert.strictEqual(yield* none.ok(none.github.claimWinner(6)), null);
+      // A winner that never made its edit gives way to the claim made 10 minutes on, as `claim` decided.
+      const past = setup(
+        reply(labelledBy("tomkaczocha", "factory:ready")),
+        claimList(claimRow(40, "trilogy-mac", AFTER), claimRow(60, "mac-mini", LATER)),
+      );
+      assert.deepStrictEqual(yield* past.ok(past.github.claimWinner(6)), {
+        id: 60,
+        machine: "mac-mini",
+        createdAt: LATER,
+      });
+    }),
 );
 
 it.effect("a claim comment by an instructor is never read as feedback", () =>
