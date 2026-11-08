@@ -45,6 +45,39 @@ export const MARKER = "<!-- softfac -->";
 /** Ends the single status comment instead of {@link MARKER}. */
 export const STATUS_MARKER = "<!-- softfac:status -->";
 
+/** Ends a claim comment: `claimMarker(machine)`. It starts with `<!-- softfac`, so it is never feedback. */
+const claimMarker = (machine: string): string => `<!-- softfac:claim ${machine} -->`;
+/** A claim comment's marker at the end of its body, with the machine it names. */
+const CLAIM_MARKER = /<!-- softfac:claim (\S+) -->\s*$/;
+/** How old a claim comment may be, next to the claimer's own, and still count when claiming. */
+const CLAIM_ABANDONED_MS = 10 * 60 * 1000;
+
+/** A comment ending with a claim marker, any author: its id, the machine it names, when GitHub made it. */
+export interface ClaimComment {
+  readonly id: number;
+  readonly machine: string;
+  /** GitHub's UTC form, e.g. `2026-10-04T10:13:16Z`. */
+  readonly createdAt: string;
+}
+
+/** The moment `ms` in GitHub's `YYYY-MM-DDTHH:MM:SSZ` form, so it compares as text with GitHub's times. */
+const utcSecondOf = (ms: number): string => `${new Date(ms).toISOString().slice(0, 19)}Z`;
+
+/**
+ * The claim comment that wins the issue: the one with the lowest id among those created at or
+ * after `since` (the newest `factory:ready` label event; null counts every one) and, when
+ * `notBefore` is given, at or after it. Null when none is left.
+ */
+const claimWinner = (
+  comments: ReadonlyArray<ClaimComment>,
+  since: string | null,
+  notBefore: string | null = null,
+): ClaimComment | null =>
+  comments
+    .filter((c) => since === null || c.createdAt >= since)
+    .filter((c) => notBefore === null || c.createdAt >= notBefore)
+    .reduce<ClaimComment | null>((best, c) => (best === null || c.id < best.id ? c : best), null);
+
 /** Who took a pull request out of draft last: the newest ready-for-review event's actor. */
 export const READY_BY_QUERY =
   "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { timelineItems(itemTypes: [READY_FOR_REVIEW_EVENT], last: 1) { nodes { ... on ReadyForReviewEvent { actor { login } } } } } } }";
@@ -628,6 +661,8 @@ const textIsInstructors = (
 };
 
 const AssigneesView = Schema.Struct({ assignees: Schema.Array(Login) });
+/** What creating an issue comment answers, of it. */
+const PostedComment = Schema.Struct({ id: Schema.Number, created_at: Schema.String });
 const ClaimedRows = Schema.Array(
   Schema.Struct({
     number: Schema.Number,
@@ -800,7 +835,17 @@ export interface IssueDetail {
 export type ClaimOutcome =
   | { readonly kind: "claimed" }
   /** The issue already had assignees, so nothing was edited. */
-  | { readonly kind: "skipped-assigned"; readonly assignees: ReadonlyArray<string> };
+  | { readonly kind: "skipped-assigned"; readonly assignees: ReadonlyArray<string> }
+  /** Another machine's claim comment won, so nothing was edited and this one's was deleted. */
+  | { readonly kind: "claimed-elsewhere"; readonly machine: string };
+
+/** Who is claiming: the machine its claim comment names, and the label time that began this claim. */
+export interface Claimer {
+  /** The status comment's `Machine:` name: `StartContext.machine`. */
+  readonly machine: string;
+  /** The newest `factory:ready` label event, GitHub's UTC form; null when unknown. */
+  readonly since: string | null;
+}
 
 /** A `factory:triage` or `factory:building` issue that nobody is assigned to, with its state. */
 export interface UnassignedClaim {
@@ -2343,19 +2388,43 @@ export const makeGitHub = (options: GitHubOptions) => {
     return me.login;
   });
 
+  /** The issue's claim comments, any author, as `listed` from its comments. */
+  const claimComments = Effect.fn("GitHub.claimComments")(function* (
+    number: number,
+  ): GitHubGen<Array<ClaimComment>> {
+    const list = ["api", `repos/${repo}/issues/${number}/comments`, "--paginate"];
+    const comments = yield* ghPages(list, CommentRows, "JSON arrays of comments");
+    return comments.flatMap((c) => {
+      const machine = CLAIM_MARKER.exec(c.body ?? "")?.[1];
+      const createdAt = c.created_at ?? "";
+      return machine === undefined || !isUtcSecond(createdAt)
+        ? []
+        : [{ id: c.id, machine, createdAt }];
+    });
+  });
+
   /**
-   * Assigns the issue to `user` and swaps `from` for `to` in one `gh issue edit`, unless it has an
-   * assignee. View then edit still races: two machines can both win, and `factory.owner` is what
-   * keeps a second one from claiming. An error may follow labels GitHub applied; a failure GitHub
-   * never received retries the view too, so a stale edit cannot land.
+   * Unless the issue has an assignee: posts a claim comment, then the earliest claim comment since
+   * the ready label, ignoring any 10 minutes older than its own, wins (`claimWinner`). The winner
+   * assigns `user` and swaps `from` for `to` in one edit; a loser deletes its comment, edits nothing.
+   * Comments are never merged, so the comment, not the login, says which machine claimed first.
    */
   const claim = Effect.fn("GitHub.claim")(function* (
     number: number,
     user: string,
     from: State,
     to: State,
+    claimer: Claimer,
   ): GitHubGen<ClaimOutcome> {
     const view = [...repoArgs(["issue", "view", String(number)]), "--json", "assignees"];
+    const post = [
+      "api",
+      "-X",
+      "POST",
+      `repos/${repo}/issues/${number}/comments`,
+      "-f",
+      `body=${withMarker(`Claimed by machine ${claimer.machine}.`, claimMarker(claimer.machine))}`,
+    ];
     const edit = [
       ...repoArgs(["issue", "edit", String(number)]),
       "--add-assignee",
@@ -2365,6 +2434,8 @@ export const makeGitHub = (options: GitHubOptions) => {
       "--add-label",
       stateLabel(to),
     ];
+    // Posted once: a retry after an edit GitHub never received does not post again.
+    let mine: ClaimComment | null = null;
     return yield* retryTransient(
       Effect.gen(function* () {
         const stdout = yield* ghOnce(view);
@@ -2374,6 +2445,32 @@ export const makeGitHub = (options: GitHubOptions) => {
             kind: "skipped-assigned",
             assignees: current.assignees.map((a) => a.login),
           } satisfies ClaimOutcome;
+        }
+        if (mine === null) {
+          const made = yield* decode(
+            PostedComment,
+            post,
+            "an object with the comment's `id` and `created_at`",
+            yield* ghOnce(post),
+          );
+          if (!isUtcSecond(made.created_at)) {
+            return yield* parseError(post, `a creation time as YYYY-MM-DDTHH:MM:SSZ`);
+          }
+          mine = { id: made.id, machine: claimer.machine, createdAt: made.created_at };
+        }
+        const own = mine;
+        const listed = (yield* claimComments(number)).filter((c) => c.id !== own.id);
+        const notBefore = utcSecondOf(Date.parse(own.createdAt) - CLAIM_ABANDONED_MS);
+        const winner = claimWinner([own, ...listed], claimer.since, notBefore) ?? own;
+        if (winner.id !== own.id) {
+          yield* gh(["api", "-X", "DELETE", `repos/${repo}/issues/comments/${own.id}`]).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning(
+                `${repo}#${number}: cannot delete the claim comment ${own.id} that lost to machine ${winner.machine}: ${error.message}`,
+              ),
+            ),
+          );
+          return { kind: "claimed-elsewhere", machine: winner.machine } satisfies ClaimOutcome;
         }
         yield* ghOnce(edit);
         return { kind: "claimed" } satisfies ClaimOutcome;
@@ -2455,6 +2552,18 @@ export const makeGitHub = (options: GitHubOptions) => {
     );
 
   /**
+   * The claim comment that won the issue's current claim, with no cutoff for age: the earliest
+   * since its newest `factory:ready` label event (`claimWinner`). Null when it has none, as for a
+   * claim made before claim comments. One GraphQL call and one comment listing.
+   */
+  const claimWinnerOf = Effect.fn("GitHub.claimWinnerOf")(function* (
+    number: number,
+  ): GitHubGen<ClaimComment | null> {
+    const since = yield* labeledAt(number, "ready");
+    return claimWinner(yield* claimComments(number), since);
+  });
+
+  /**
    * The newest comment the factory posted on the issue, or null. A comment counts when it ends with
    * the factory marker (the status comment has its own marker and does not count). The text is
    * returned without the marker, CRLF as LF and trimmed, with its creation time. Anyone can paste
@@ -2481,6 +2590,7 @@ export const makeGitHub = (options: GitHubOptions) => {
     issue,
     login,
     claim,
+    claimWinner: claimWinnerOf,
     unassignedClaims,
     labeledAt,
     newestFactoryComment,
