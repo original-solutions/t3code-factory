@@ -348,20 +348,21 @@ describe("sync.sh", () => {
     expect(git(origin, "log", "-1", "--format=%P", branch).split(" ")).toHaveLength(2);
   });
 
-  it("dispatches Factory CI and desktop on the landed commit inside the workflow", () => {
+  it("dispatches Factory CI, desktop and server on the landed commit inside the workflow", () => {
     makeFork(`${OLD} ${oldSha}`);
     const { status, stdout, calls, dispatchedOn } = run({ GITHUB_ACTIONS: "true" });
     expect(status).toBe(0);
     expect(stdout.trim().split("\n").at(-1)).toBe(
-      `sync: ${NEWEST} merged into main through https://example.test/pr/1; dispatched factory-ci.yml, factory-desktop.yml`,
+      `sync: ${NEWEST} merged into main through https://example.test/pr/1; dispatched factory-ci.yml, factory-desktop.yml, factory-server.yml`,
     );
     // Each dispatch sees main already landed on the sync merge.
     const landed = git(origin, "rev-parse", `sync/${NEWEST}`);
-    expect(dispatchedOn).toEqual([landed, landed]);
+    expect(dispatchedOn).toEqual([landed, landed, landed]);
     expect(calls.slice(2)).toEqual([
       expect.stringMatching(/^gh pr create /),
       "gh workflow run factory-ci.yml --ref main",
       "gh workflow run factory-desktop.yml --ref main",
+      "gh workflow run factory-server.yml --ref main",
     ]);
     expect(git(origin, "rev-parse", "main")).toBe(git(origin, "rev-parse", `sync/${NEWEST}`));
   });
@@ -412,7 +413,9 @@ describe("sync.sh", () => {
         makeFork(`${OLD} ${oldSha}`);
         const { status, stdout, calls } = run({ GITHUB_ACTIONS: "true", ...env });
         const workflows = [
-          ...(pushedWith === "GITHUB_TOKEN" ? ["factory-ci.yml", "factory-desktop.yml"] : []),
+          ...(pushedWith === "GITHUB_TOKEN"
+            ? ["factory-ci.yml", "factory-desktop.yml", "factory-server.yml"]
+            : []),
           "factory-mobile.yml",
         ];
         expect(status).toBe(0);
@@ -444,6 +447,7 @@ describe("sync.sh", () => {
     expect(calls.filter((call) => call.startsWith("gh workflow "))).toEqual([
       "gh workflow run factory-ci.yml --ref main",
       "gh workflow run factory-desktop.yml --ref main",
+      "gh workflow run factory-server.yml --ref main",
     ]);
     expect(calls.some((call) => call.startsWith("gh issue "))).toBe(false);
     expect(git(origin, "rev-parse", "main")).toBe(git(origin, "rev-parse", `sync/${NEWEST}`));

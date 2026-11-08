@@ -241,14 +241,15 @@ fails_checks() {
 
 # Dispatches the workflows a push to main would have started and the landing
 # push did not, on the landed main, and sets $dispatched to their files. <before>
-# is main before the landing. A push with a sync secret starts Factory CI and
-# desktop, but GitHub matches Factory mobile's paths filter against only the
-# first 300 changed files, which a sync can pass, so mobile is dispatched after
-# any push; its concurrency group keeps one build when the push started it too.
+# is main before the landing. A push with a sync secret starts Factory CI,
+# desktop and server, but GitHub matches Factory mobile's paths filter against
+# only the first 300 changed files, which a sync can pass, so mobile is
+# dispatched after any push; its concurrency group keeps one build when the push
+# started it too.
 # Every one is tried; each that fails gets its own line, then publish exits 1.
 dispatch() {
   local before=$1 workflow failed=0 workflows=()
-  [[ $push_with != GITHUB_TOKEN ]] || workflows=(factory-ci.yml factory-desktop.yml)
+  [[ $push_with != GITHUB_TOKEN ]] || workflows=(factory-ci.yml factory-desktop.yml factory-server.yml)
   if [[ -n $(git diff --name-only "$before..$candidate" -- apps/mobile packages) ]]; then
     workflows+=(factory-mobile.yml)
   fi
