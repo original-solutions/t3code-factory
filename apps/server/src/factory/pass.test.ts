@@ -402,6 +402,32 @@ class Fake implements PassWorld {
     return this.answerStart("start", repo, issue);
   }
 
+  /** The `factory:triage` and `factory:building` issues per repo; a repo not here lists none and records no call. */
+  claimed: Record<string, Record<number, State> | "error"> = {};
+  /** What `yieldToClaim` answers per `"<repo>#<issue>"`; null (this machine's claim won) otherwise. */
+  yields: Record<string, { machine: string; finished: Array<RunId> }> = {};
+
+  claimedIssues(repo: Repo) {
+    const found = this.claimed[repo.watched.repo];
+    if (found === undefined) return Effect.succeed(new Map<number, State>());
+    this.calls.push(`claimed ${repo.watched.repo}`);
+    if (found === "error") return Effect.fail(trackerFailure());
+    return Effect.succeed(
+      new Map(Object.entries(found).map(([issue, state]) => [Number(issue), state] as const)),
+    );
+  }
+
+  yieldToClaim(repo: Repo, issue: number) {
+    const key = `${repo.watched.repo}#${issue}`;
+    this.calls.push(`yield ${key}`);
+    const answer = this.yields[key] ?? null;
+    if (answer !== null) {
+      const gone = new Set(answer.finished.map(runIdToString));
+      this.runs = this.runs.filter((run) => !gone.has(runIdToString(run.id)));
+    }
+    return Effect.succeed(answer);
+  }
+
   resume(repo: Repo, issue: number) {
     return this.answerStart("resume", repo, issue);
   }
@@ -2231,6 +2257,113 @@ describe("claims with no run and no assignee", () => {
         lines.join("\n"),
       );
       assert.ok(!fake.events.some((e) => e.event === "claim_repaired"));
+    }),
+  );
+});
+
+describe("several machines on one repo", () => {
+  const claimedBy = (machine: string): StartOutcome => ({
+    kind: "skipped",
+    reason: `claimed by machine ${machine}`,
+    claimedBy: machine,
+  });
+
+  it.effect("a ready issue another machine's claim comment won is said so, and takes no slot", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [7, 8];
+      fake.pushStart(`${REPO}#7`, claimedBy("trilogy-mac"));
+      fake.pushStart(`${REPO}#8`, started(8));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
+      assert.equal(runLine(lines, `${REPO}#7 `), `${REPO}#7 ready: claimed by machine trilogy-mac`);
+      assert.deepEqual(starts(fake), [`start ${REPO}#7`, `start ${REPO}#8`]);
+      assert.equal(report.claimed, 1);
+    }),
+  );
+
+  it.effect("a triage issue with no run that another machine won is left, naming it", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.triage[REPO] = [7];
+      fake.pushStart(`${REPO}#7`, claimedBy("trilogy-mac"));
+      const { lines } = yield* pass(fake, [REPO], 1);
+      assert.equal(
+        runLine(lines, `${REPO}#7 `),
+        `${REPO}#7 triage: claimed by machine trilogy-mac`,
+      );
+      assert.deepEqual(fake.items, []);
+    }),
+  );
+
+  it.effect("a known triage run whose issue another machine won raises no stalled item", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(7, "triage");
+      fake.pushStart(`${REPO}#7`, claimedBy("trilogy-mac"));
+      const { lines } = yield* pass(fake, [REPO], 1);
+      assert.ok(runLine(lines, `${REPO}#7 `).includes("claimed by machine trilogy-mac"));
+      assert.deepEqual(fake.items, []);
+    }),
+  );
+
+  it.effect(
+    "a pr-open run whose issue another machine now builds is finished and no longer worked",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.runIn(7, "pr-open");
+        fake.claimed[REPO] = { 7: "building" };
+        fake.yields[`${REPO}#7`] = { machine: "trilogy-mac", finished: [rid(7)] };
+        const { lines } = yield* pass(fake, [REPO], 1);
+        assert.equal(
+          runLine(lines, `${REPO}#7 `),
+          `${REPO}#7 building: claimed by machine trilogy-mac, finished run ${runIdToString(rid(7))}`,
+        );
+        assert.ok(fake.calls.includes(`yield ${REPO}#7`));
+        // Not regated: the run is over.
+        assert.ok(!fake.calls.some((c) => c.startsWith(`gate ${REPO}#7`)), fake.calls.join("\n"));
+        assert.ok(!fake.calls.includes(`last_pass ${REPO}#7`));
+      }),
+  );
+
+  it.effect("a run whose issue's label is the run's own state reads no claim comments", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(7, BUILDING);
+      fake.claimed[REPO] = { 7: "building" };
+      yield* pass(fake, [REPO], 1);
+      assert.ok(fake.calls.includes(`claimed ${REPO}`));
+      assert.ok(!fake.calls.includes(`yield ${REPO}#7`));
+    }),
+  );
+
+  it.effect("a repo pinned with factory.owner is not checked for claims elsewhere", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.projects[REPO] = { ...project(), owner: "t3fac" };
+      fake.runIn(7, "pr-open");
+      fake.claimed[REPO] = { 7: "building" };
+      yield* pass(fake, [REPO], 1);
+      assert.ok(!fake.calls.includes(`claimed ${REPO}`));
+      assert.ok(!fake.calls.includes(`yield ${REPO}#7`));
+    }),
+  );
+
+  it.effect("claimed issues that cannot be listed are an error and the runs go on", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(7, BUILDING);
+      fake.claimed[REPO] = "error";
+      const { report, lines } = yield* pass(fake, [REPO], 1);
+      assert.ok(
+        lines.some((l) => l.includes("cannot list the claimed issues")),
+        lines.join("\n"),
+      );
+      assert.equal(report.errors, 1);
+      assert.ok(
+        fake.calls.some((c) => c.startsWith(`advance ${REPO}#7`)),
+        fake.calls.join("\n"),
+      );
     }),
   );
 });
