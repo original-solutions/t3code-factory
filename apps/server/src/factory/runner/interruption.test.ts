@@ -425,6 +425,7 @@ const rigFor = (
       world.issue = { ...world.issue, state: to, assignees: [user], labels: [`factory:${to}`] };
       return Effect.succeed({ kind: "claimed" });
     },
+    claimWinner: () => Effect.succeed(null),
     newestFactoryComment: () => Effect.succeed(null),
     assign: (n, user) => {
       gh.push(`assign ${n} ${user}`);
