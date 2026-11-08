@@ -1,0 +1,180 @@
+name: Factory server
+
+# Builds the t3fac server archive for Linux (x64 and arm64) on every push to
+# main with factory/scripts/build.sh, the same build and smoke test a host runs,
+# and publishes it on the rolling `server-nightly` prerelease. A new host
+# installs the newest build without building it (factory/site/guide/install.md):
+#
+#   https://github.com/original-solutions/t3code-factory/releases/download/server-nightly/latest-linux-x64.txt
+#
+# holds `<sha256>  t3fac-<version>-linux-x64.tar.gz`, the line sha256sum -c
+# checks, and names the archive beside it. install.sh reads the version from
+# the archive's name, so there is no unversioned alias. The release keeps the
+# newest two builds per arch, so a host that read the previous latest file can
+# still download what it names.
+#
+# `server-nightly` is not a semver tag, so the desktop app's update feed, which
+# follows the `v<version>` prereleases factory-desktop.yml publishes, skips it.
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Only the newest commit on main is worth publishing. A re-run gets a group of
+# its own, so re-running an old run never cancels the build of a newer commit.
+concurrency:
+  group: factory-server${{ github.run_attempt > 1 && format('-rerun-{0}', github.run_id) || '' }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (linux ${{ matrix.arch }})
+    # 22.04, the oldest Ubuntu the hosts run: t3-resource-monitor links the
+    # build host's glibc, and libatomic is copied from its Ubuntu package.
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      # This job only reads, and the publish job uses gh, not git, so drop
+      # checkout's credentials before dependency install and build scripts run.
+      # factory-desktop.yml says why this is not persist-credentials: false.
+      - name: Drop checkout credentials
+        run: |
+          git config --local --name-only --get-regexp '^includeIf\.gitdir:' | while read -r key; do
+            git config --local --unset-all "$key"
+          done
+          rm -f "$RUNNER_TEMP"/git-credentials-*.config
+
+      # scripts/build-cli-archive.ts copies libatomic.so.1 into the archive and
+      # points the binary at it with patchelf.
+      - name: Install build packages
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q patchelf libatomic1
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+
+      - id: build
+        name: Build and smoke test
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          factory/scripts/build.sh
+          shopt -s nullglob
+          archives=(release/t3fac-*-linux-"$ARCH".tar.gz)
+          if [[ ${#archives[@]} -ne 1 ]]; then
+            echo "::error::Expected one t3fac-*-linux-$ARCH.tar.gz in release/."
+            ls -la release
+            exit 1
+          fi
+          name=$(basename "${archives[0]}")
+          (cd release && sha256sum "$name" > "$name.sha256" && cp "$name.sha256" "latest-linux-$ARCH.txt")
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-linux-${{ matrix.arch }}
+          path: |
+            release/${{ steps.build.outputs.name }}
+            release/${{ steps.build.outputs.name }}.sha256
+            release/latest-linux-${{ matrix.arch }}.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  # Publishes every arch that built, so a failed arm64 build does not hold back
+  # x64. The job fails when no arch built.
+  publish:
+    name: Publish server-nightly
+    needs: build
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download builds
+        uses: actions/download-artifact@v4
+        with:
+          pattern: server-linux-*
+          path: builds
+          merge-multiple: true
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          cd builds
+          latest=(latest-linux-*.txt)
+          if [[ ${#latest[@]} -eq 0 ]]; then
+            echo "::error::No arch built; nothing to publish."
+            exit 1
+          fi
+          sha256sum -c ./*.sha256
+
+          # A re-run of an older run would otherwise publish stale code as the
+          # newest build, and new hosts would install it.
+          head="$(gh api "repos/$GH_REPO/commits/main" --jq .sha)"
+          if [[ "$head" != "$GITHUB_SHA" ]]; then
+            echo "::warning::main is at $head now, not $GITHUB_SHA; not publishing."
+            exit 0
+          fi
+
+          tag=server-nightly
+          notes="Rolling Linux server build of the newest commit on main, now $GITHUB_SHA. latest-linux-<arch>.txt names the archive and its sha256. Install with factory/scripts/install.sh; see factory/site/guide/install.md."
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh api -X PATCH "repos/$GH_REPO/git/refs/tags/$tag" -f sha="$GITHUB_SHA" -F force=true > /dev/null
+            gh release edit "$tag" --notes "$notes"
+          else
+            gh release create "$tag" --prerelease --latest=false --target "$GITHUB_SHA" \
+              --title "T3 Code Factory server (nightly)" --notes "$notes"
+          fi
+
+          for latest_file in "${latest[@]}"; do
+            arch=${latest_file#latest-linux-}
+            arch=${arch%.txt}
+            name=$(awk '{print $2}' "$latest_file")
+            # The archive first and the latest file last, so the latest file
+            # never names an archive that is not there yet.
+            gh release upload "$tag" "$name" "$name.sha256" --clobber
+            gh release upload "$tag" "$latest_file" --clobber
+            # Keep this build and the one before it.
+            gh release view "$tag" --json assets \
+              --jq ".assets | map(select(.name | test(\"^t3fac-.*-linux-$arch\\\\.tar\\\\.gz$\"))) | sort_by(.createdAt) | reverse | .[2:] | .[].name" |
+              while read -r old; do
+                gh release delete-asset "$tag" "$old" --yes
+                gh release delete-asset "$tag" "$old.sha256" --yes || true
+              done
+            echo "Published $name"
+          done
