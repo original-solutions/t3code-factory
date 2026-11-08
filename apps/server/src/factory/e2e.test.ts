@@ -262,6 +262,20 @@ const makeGitHub = (input: {
         return ok("{}");
       }
       const repoPath = `repos/${REPO}`;
+      // The claim comment `claim` posts, answered with its id and creation time.
+      if (
+        first === "-X" &&
+        second === "POST" &&
+        rest[2] === `${repoPath}/issues/${ISSUE}/comments`
+      ) {
+        const body = afterAll(rest, "-f")
+          .find((value) => value.startsWith("body="))
+          ?.slice("body=".length);
+        if (body === undefined) return undefined;
+        comment(LOGIN, body);
+        const made = comments.at(-1)!;
+        return ok(json({ id: made.id, created_at: made.createdAt, body }));
+      }
       if (first === repoPath) return ok(json({ default_branch: "main" }));
       if (first === `${repoPath}/git/ref/heads/main`) {
         return ok(json({ object: { sha: input.baseSha, type: "commit" } }));
@@ -714,9 +728,11 @@ const assertWritten = (result: Effect.Success<ReturnType<typeof scenario>>, atte
   assert.include(results, "| Command | Exit | Time |");
   assert.isTrue(results.endsWith(`\n\n${MARKER}`), results);
 
-  // The issue holds one comment, the status comment, edited in place and ending at `pr-open`.
-  assert.strictEqual(github.comments.length, 1);
-  const status = github.comments[0]!.body;
+  // The issue holds the machine's claim comment, then the status comment, edited in place and
+  // ending at `pr-open`.
+  assert.strictEqual(github.comments.length, 2);
+  assert.match(github.comments[0]!.body, /<!-- softfac:claim \S+ -->$/);
+  const status = github.comments[1]!.body;
   assert.include(status, "**Factory status:** pr-open");
   assert.include(status, `- Session: ${result.threadId}`);
   assert.include(status, `- PR: #${PR}`);

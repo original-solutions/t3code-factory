@@ -16,6 +16,8 @@ export const interruptible = (ctx: BuildingContext): InterruptContext => ({
   tracker: {
     approval: notExpected("tracker.approval"),
     claim: notExpected("tracker.claim"),
+    // No claim comment: what an issue claimed before claim comments reads as.
+    claimWinner: () => Effect.succeed(null),
     newestFactoryComment: notExpected("tracker.newestFactoryComment"),
     branchTip: notExpected("tracker.branchTip"),
     textEditedSince: notExpected("tracker.textEditedSince"),

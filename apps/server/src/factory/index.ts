@@ -102,7 +102,15 @@ import {
 } from "./runner/gating.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
 import { runProject } from "./runner/run.ts";
-import { isOurs, newestSays, resume, start, utcSecond, type StartContext } from "./runner/start.ts";
+import {
+  isOurs,
+  newestSays,
+  resume,
+  start,
+  utcSecond,
+  yieldToClaim,
+  type StartContext,
+} from "./runner/start.ts";
 import { takeStopRequest } from "./runner/stop.ts";
 import { pruneBranches, unfinishedRunBranches } from "./t3/branchPrune.ts";
 import * as Events from "./t3/events.ts";
@@ -743,6 +751,11 @@ export const liveWorld = (
       ),
     start: (repo: Repo, issue: number) => start(startContext(repo), issue),
     resume: (repo: Repo, issue: number) => resume(startContext(repo), issue),
+    claimedIssues: (repo: Repo) =>
+      withProcess(githubFor(repo.watched).claimedIssues()).pipe(
+        Effect.mapError(asPassError("tracker")),
+      ),
+    yieldToClaim: (repo: Repo, issue: number) => yieldToClaim(startContext(repo), issue),
     takeStopRequest: (run) => takeStopRequest(dataDir, run, clock),
     timeLimit: (repo, run, base) =>
       timeLimit(buildingContext(repo, runProject(repo.project, base)), run),
