@@ -188,6 +188,8 @@ export type StartOutcome =
       readonly moved?: "closed" | "ready";
       /** Another machine's claim comment won the issue: the machine it names. */
       readonly claimedBy?: string;
+      /** The claim took over 5 minutes and gave way, so the issue stays `factory:ready`. */
+      readonly gaveWay?: true;
     }
   /** The issue was `ready` but not approved, so it went back to `factory:proposed` with one fixed comment, and no run was made. */
   | { readonly kind: "refused"; readonly reason: string }
@@ -226,8 +228,18 @@ export type StartError =
 /** An issue as the pass's lines and the skip reasons name it. */
 export const mention = (issue: number) => `#${issue}`;
 
+/** What the pass says of a claim that gave way (`gave-way` in `tracker/github.ts`). */
+export const CLAIM_GAVE_WAY =
+  "not claimed: the claim took over 5 minutes and gave way, a later pass claims it";
+
 /** What the pass says of an issue another machine's claim comment won. */
 export const claimedByLine = (machine: string) => `claimed by machine ${machine}`;
+
+/** The logins whose claim comments count beside the repo's members: this one's and the instructors. */
+const claimTrusted = (ctx: StartContext): ReadonlyArray<string> => [
+  ctx.trackerUser,
+  ...ctx.project.instructors,
+];
 
 const claimedElsewhere = (machine: string): StartOutcome => ({
   kind: "skipped",
@@ -340,8 +352,11 @@ const goOn = Effect.fn("RunnerStart.goOn")(function* (
   if (detail.state === "triage" && isOurs(detail.assignees, ctx.trackerUser)) {
     // A login several machines share is "ours" on each of them: only the machine whose claim
     // comment won goes on, or any machine when there is none (a claim from before comments).
-    const yielded = yield* yieldToClaim(ctx, issue, "start");
-    if (yielded !== null) return claimedElsewhere(yielded.machine);
+    // `factory.owner` lets one machine alone work the repo, so no comment decides there.
+    if (ctx.project.owner === null) {
+      const yielded = yield* yieldToClaim(ctx, issue, "start");
+      if (yielded !== null) return claimedElsewhere(yielded.machine);
+    }
     return yield* resumeStart(ctx, issue, detail);
   }
   if (detail.state === "stuck" && (yield* stuckCutShort(ctx, issue))) {
@@ -383,13 +398,20 @@ const startFresh = Effect.fn("RunnerStart.startFresh")(function* (
   // resume. An instructor applied the label again, which is what began this attempt.
   yield* finishOlderRuns(ctx, issue, run.attempt, labeledBy === "" ? null : labeledBy);
   const claimed = yield* ctx.tracker
-    .claim(issue, ctx.trackerUser, "ready", "triage", { machine: ctx.machine, since: labeledAt })
+    .claim(issue, ctx.trackerUser, "ready", "triage", {
+      machine: ctx.machine,
+      since: labeledAt,
+      trusted: claimTrusted(ctx),
+    })
     .pipe(
       // The edit may have landed all the same. See `repairClaim`.
       Effect.catch((error) => repairClaim(ctx, issue, error)),
     );
   if (claimed.kind === "skipped-assigned") return skipped(issue, claimed.assignees);
   if (claimed.kind === "claimed-elsewhere") return claimedElsewhere(claimed.machine);
+  if (claimed.kind === "gave-way") {
+    return { kind: "skipped", reason: CLAIM_GAVE_WAY, gaveWay: true };
+  }
   const out = yield* ledger(() => Ledger.create(ctx.dataDir, run, { clock: ctx.clock }));
   try {
     yield* recordApproval(out, labeledAt, labeledBy === "" ? null : labeledBy, "start");
@@ -425,7 +447,7 @@ const repairClaim = Effect.fn("RunnerStart.repairClaim")(function* (
     return yield* error;
   }
   // A login several machines share is "ours" when another machine's claim landed: the comment says.
-  const holder = yield* ctx.tracker.claimWinner(issue).pipe(Effect.option);
+  const holder = yield* ctx.tracker.claimWinner(issue, claimTrusted(ctx)).pipe(Effect.option);
   if (holder._tag === "None") return yield* error;
   if (holder.value !== null && !sameMachine(holder.value.machine, ctx.machine)) {
     return { kind: "claimed-elsewhere", machine: holder.value.machine };
@@ -1103,7 +1125,7 @@ export const yieldToClaim = Effect.fn("RunnerStart.yieldToClaim")(function* (
   { readonly machine: string; readonly finished: ReadonlyArray<RunId> } | null,
   StartError
 > {
-  const winner = yield* ctx.tracker.claimWinner(issue);
+  const winner = yield* ctx.tracker.claimWinner(issue, claimTrusted(ctx));
   if (winner === null || sameMachine(winner.machine, ctx.machine)) return null;
   const finished = yield* finishRunsBefore(ctx, issue, winner, step);
   return { machine: winner.machine, finished };

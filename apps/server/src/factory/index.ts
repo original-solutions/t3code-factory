@@ -751,18 +751,10 @@ export const liveWorld = (
       ),
     start: (repo: Repo, issue: number) => start(startContext(repo), issue),
     resume: (repo: Repo, issue: number) => resume(startContext(repo), issue),
-    claimedIssues: (repo: Repo) => {
-      const gh = githubFor(repo.watched);
-      return withProcess(
-        Effect.gen(function* () {
-          const states = new Map<number, State>();
-          for (const state of ["triage", "building"] as const) {
-            for (const item of (yield* gh.listIssues(state)).items) states.set(item.number, state);
-          }
-          return states;
-        }),
-      ).pipe(Effect.mapError(asPassError("tracker")));
-    },
+    claimedIssues: (repo: Repo) =>
+      withProcess(githubFor(repo.watched).claimedIssues()).pipe(
+        Effect.mapError(asPassError("tracker")),
+      ),
     yieldToClaim: (repo: Repo, issue: number) => yieldToClaim(startContext(repo), issue),
     takeStopRequest: (run) => takeStopRequest(dataDir, run, clock),
     timeLimit: (repo, run, base) =>

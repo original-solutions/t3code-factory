@@ -14,6 +14,7 @@ import {
   stateLabel,
   type State,
 } from "../domain/lifecycle.ts";
+import { asciiLower } from "../ledger/runId.ts";
 import { FactoryProcess } from "../process.ts";
 import { isCommitId } from "../text.ts";
 import {
@@ -62,10 +63,10 @@ export interface ClaimComment {
 }
 
 /** Whether two machine names are the same machine, ignoring ASCII case as `factory.owner` does. */
-export const sameMachine = (a: string, b: string): boolean => {
-  const lower = (text: string) => text.replaceAll(/[A-Z]/g, (c) => c.toLowerCase());
-  return lower(a) === lower(b);
-};
+export const sameMachine = (a: string, b: string): boolean => asciiLower(a) === asciiLower(b);
+
+/** The comment authors GitHub reports as able to work the repo, whose claim comments count. */
+const CLAIM_ASSOCIATIONS: ReadonlySet<string> = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 
 /**
  * The claim comments since `since` (null counts all) that won their own claim, in id order: no
@@ -488,6 +489,7 @@ const CommentRows = Schema.Array(
     user: Schema.optional(Schema.NullOr(Login)),
     body: OptionalText,
     created_at: OptionalText,
+    author_association: OptionalText,
   }),
 );
 
@@ -842,6 +844,8 @@ export interface IssueDetail {
 /** What `claim` did. */
 export type ClaimOutcome =
   | { readonly kind: "claimed" }
+  /** The comment holding the claim was over 5 minutes old before the edit: it went, and nothing was edited. */
+  | { readonly kind: "gave-way" }
   /** The issue already had assignees, so nothing was edited. */
   | { readonly kind: "skipped-assigned"; readonly assignees: ReadonlyArray<string> }
   /** Another machine's claim comment won, so nothing was edited and this one's was deleted. */
@@ -853,6 +857,8 @@ export interface Claimer {
   readonly machine: string;
   /** The newest `factory:ready` label event, GitHub's UTC form; null when unknown. */
   readonly since: string | null;
+  /** Logins whose claim comments count beside the repo's members: this one's and the instructors. */
+  readonly trusted: ReadonlyArray<string>;
 }
 
 /** A `factory:triage` or `factory:building` issue that nobody is assigned to, with its state. */
@@ -1317,6 +1323,24 @@ export const makeGitHub = (options: GitHubOptions) => {
       })),
       cut: raw.length > LIST_LIMIT,
     };
+  });
+
+  /**
+   * The open `factory:triage` and `factory:building` issues, each with its state (an issue with
+   * both reads as building), and the states whose listing passed {@link LIST_LIMIT}.
+   */
+  const claimedIssues = Effect.fn("GitHub.claimedIssues")(function* (): GitHubGen<{
+    readonly states: ReadonlyMap<number, State>;
+    readonly cut: ReadonlyArray<State>;
+  }> {
+    const states = new Map<number, State>();
+    const cut: Array<State> = [];
+    for (const state of ["triage", "building"] as const) {
+      const listing = yield* listIssues(state);
+      if (listing.cut) cut.push(state);
+      for (const item of listing.items) states.set(item.number, state);
+    }
+    return { states, cut };
   });
 
   const issue = Effect.fn("GitHub.issue")(function* (number: number): GitHubGen<IssueDetail> {
@@ -2396,16 +2420,25 @@ export const makeGitHub = (options: GitHubOptions) => {
     return me.login;
   });
 
-  /** The issue's claim comments, any author, as `listed` from its comments. */
+  /**
+   * The issue's claim comments by an author who can work the repo: one GitHub reports as its owner,
+   * a member or a collaborator, or one of `trusted`. Anyone else's would let an outsider hold issues.
+   */
   const claimComments = Effect.fn("GitHub.claimComments")(function* (
     number: number,
+    trusted: ReadonlyArray<string>,
   ): GitHubGen<Array<ClaimComment>> {
     const list = ["api", `repos/${repo}/issues/${number}/comments`, "--paginate"];
     const comments = yield* ghPages(list, CommentRows, "JSON arrays of comments");
+    const logins = new Set(trusted.map(asciiLower));
     return comments.flatMap((c) => {
       const machine = CLAIM_MARKER.exec(c.body ?? "")?.[1];
       const createdAt = c.created_at ?? "";
-      return machine === undefined || !isUtcSecond(createdAt)
+      const author = c.user?.login;
+      const counts =
+        CLAIM_ASSOCIATIONS.has(c.author_association ?? "") ||
+        (author !== undefined && logins.has(asciiLower(author)));
+      return machine === undefined || !isUtcSecond(createdAt) || !counts
         ? []
         : [{ id: c.id, machine, createdAt }];
     });
@@ -2415,7 +2448,7 @@ export const makeGitHub = (options: GitHubOptions) => {
    * Unless the issue has an assignee: posts a claim comment, which wins unless a winning claim
    * comment came within 10 minutes before it (`claimWinners`); one of this machine's counts as its
    * own. The winner assigns `user` and swaps `from` for `to` in one edit; a loser deletes its
-   * comment and edits nothing. The comment, not the login, says which machine claimed first.
+   * comment and edits nothing. The comment (`claimComments`), not the login, says who came first.
    */
   const claim = Effect.fn("GitHub.claim")(function* (
     number: number,
@@ -2478,7 +2511,9 @@ export const makeGitHub = (options: GitHubOptions) => {
           postedMs = yield* Clock.currentTimeMillis;
         }
         const own = mine;
-        const listed = (yield* claimComments(number)).filter((c) => c.id !== own.id);
+        const listed = (yield* claimComments(number, claimer.trusted)).filter(
+          (c) => c.id !== own.id,
+        );
         // The winner this comment answers to: itself, or the newest winner before it.
         const winner =
           claimWinners([own, ...listed], claimer.since)
@@ -2499,9 +2534,9 @@ export const makeGitHub = (options: GitHubOptions) => {
           postedMs +
           (Date.parse(own.createdAt) - Date.parse(winner.createdAt));
         if (elapsed > CLAIM_ABANDONED_MS / 2) {
-          // The comment that holds the claim goes, so the next try posts a fresh winner.
+          // The comment that holds the claim goes, so a later pass posts a fresh winner.
           yield* deleteComment(winner.id, "of a claim that gave way");
-          return yield* new GitHubTimedOut({ args: edit, seconds: Math.round(elapsed / 1000) });
+          return { kind: "gave-way" } satisfies ClaimOutcome;
         }
         yield* ghOnce(edit);
         return { kind: "claimed" } satisfies ClaimOutcome;
@@ -2585,13 +2620,15 @@ export const makeGitHub = (options: GitHubOptions) => {
   /**
    * The claim comment holding the issue's current claim, whatever its age: the newest winner since
    * its newest `factory:ready` label event (`claimWinners`), so it agrees with what `claim` decided.
-   * Null when it has none, as for a claim made before claim comments. One GraphQL call and one comment listing.
+   * Null when it has none, as for a claim made before claim comments. Only the comments `claim`
+   * counts, with `trusted` as it passed. One GraphQL call and one comment listing.
    */
   const claimWinnerOf = Effect.fn("GitHub.claimWinnerOf")(function* (
     number: number,
+    trusted: ReadonlyArray<string>,
   ): GitHubGen<ClaimComment | null> {
     const since = yield* labeledAt(number, "ready");
-    return claimWinners(yield* claimComments(number), since).at(-1) ?? null;
+    return claimWinners(yield* claimComments(number, trusted), since).at(-1) ?? null;
   });
 
   /**
@@ -2622,6 +2659,7 @@ export const makeGitHub = (options: GitHubOptions) => {
     login,
     claim,
     claimWinner: claimWinnerOf,
+    claimedIssues,
     unassignedClaims,
     labeledAt,
     newestFactoryComment,

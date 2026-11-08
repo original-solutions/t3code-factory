@@ -54,6 +54,7 @@ import {
 } from "./messages.ts";
 import { readProgress } from "./progress.ts";
 import {
+  CLAIM_GAVE_WAY,
   GateRunningError,
   resume,
   start,
@@ -153,11 +154,11 @@ const fakeTracker = (script: {
       claimers.push(claimer);
       return answer(claims, { kind: "claimed" });
     },
-    claimWinner: (n) => {
+    claimWinner: (n, trusted) => {
       // Recorded only when there is one, so a test with none keeps its calls.
       const winner = script.winner ?? null;
       if (winner === null) return Effect.succeed(null);
-      calls.push(`claimWinner ${n}`);
+      calls.push(`claimWinner ${n} ${trusted.join(",")}`);
       return "_tag" in winner ? Effect.fail(winner) : Effect.succeed(winner);
     },
     setState: (n, state) => {
@@ -3076,7 +3077,9 @@ describe("start: claim comments of several machines", () => {
       const dataDir = tempDir();
       const { tracker, claimers } = fakeTracker({});
       yield* startIn(dataDir, tracker);
-      assert.deepStrictEqual(claimers, [{ machine: "mac-mini", since: LABELED }]);
+      assert.deepStrictEqual(claimers, [
+        { machine: "mac-mini", since: LABELED, trusted: [USER, "tomkaczocha"] },
+      ]);
     }),
   );
 
@@ -3117,7 +3120,7 @@ describe("start: claim comments of several machines", () => {
         reason: "claimed by machine trilogy-mac",
         claimedBy: "trilogy-mac",
       });
-      assert.deepStrictEqual(calls, ["issue 7", "claimWinner 7"]);
+      assert.deepStrictEqual(calls, ["issue 7", "claimWinner 7 rawphp,tomkaczocha"]);
       assert.deepStrictEqual(t3.calls, []);
       assert.strictEqual(NodeFS.existsSync(NodePath.join(dataDir, "runs")), false);
     }),
@@ -3177,7 +3180,7 @@ describe("start: claim comments of several machines", () => {
       assert.deepStrictEqual(calls.slice(-3), [
         "claim 7 rawphp ready->triage",
         "issue 7",
-        "claimWinner 7",
+        "claimWinner 7 rawphp,tomkaczocha",
       ]);
       assert.strictEqual(NodeFS.existsSync(NodePath.join(dataDir, "runs")), false);
     }),
@@ -3195,7 +3198,7 @@ describe("start: claim comments of several machines", () => {
           7,
         );
         assert.deepStrictEqual(yielded, { machine: "trilogy-mac", finished: [older] });
-        assert.deepStrictEqual(calls, ["claimWinner 7"]);
+        assert.deepStrictEqual(calls, ["claimWinner 7 rawphp,tomkaczocha"]);
         const finished = readRun(dataDir, older).entries.at(-1)!;
         assert.strictEqual(finished.event, "finished");
         assert.strictEqual((finished.data as { outcome: string }).outcome, "pr-open");
@@ -3219,6 +3222,93 @@ describe("start: claim comments of several machines", () => {
         null,
       );
       assert.notStrictEqual(readRun(dataDir, run7).entries.at(-1)!.event, "finished");
+    }),
+  );
+
+  it.effect("yieldToClaim finishes a run with no claim time as claimed before the winner", () =>
+    Effect.gen(function* () {
+      // Approved, then cut short before the claim: no `claimed` line.
+      const before = tempDir();
+      seedRun(before, startedLines().slice(0, 1));
+      const { tracker } = fakeTracker({ winner: elsewhere(60_000) });
+      const ctx = ctxFor(before, tracker, fakeSessions(before, {}).sessions);
+      assert.deepStrictEqual(yield* yieldToClaim(ctx, 7), {
+        machine: "trilogy-mac",
+        finished: [run7],
+      });
+      assert.deepStrictEqual(
+        readRun(before, run7).entries.at(-1)!.cause,
+        makeCause("pass", "claimed-elsewhere"),
+      );
+    }),
+  );
+
+  it.effect("a triage issue whose claim comments cannot be read is not resumed", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker, calls } = fakeTracker({
+        issues: [detail("triage", [USER])],
+        winner: ghFailure(),
+      });
+      const t3 = fakeSessions(dataDir, {});
+      const error = yield* Effect.flip(resume(ctxFor(dataDir, tracker, t3.sessions), 7));
+      assert.strictEqual(error._tag, "GitHubFailed");
+      assert.deepStrictEqual(calls, ["issue 7", "claimWinner 7 rawphp,tomkaczocha"]);
+      assert.deepStrictEqual(t3.calls, []);
+      assert.strictEqual(NodeFS.existsSync(NodePath.join(dataDir, "runs")), false);
+    }),
+  );
+
+  it.effect("a failed claim whose claim comments cannot be read fails with the claim's error", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker, calls } = fakeTracker({
+        issues: [detail("ready"), detail("triage", [USER])],
+        claims: [ghFailure()],
+        winner: new GitHubFailed({ args: ["api", "comments"], status: 1, stderr: "listing" }),
+      });
+      const error = yield* Effect.flip(startIn(dataDir, tracker));
+      assert.strictEqual(error._tag, "GitHubFailed");
+      assert.strictEqual(error._tag === "GitHubFailed" && error.stderr, "boom");
+      assert.deepStrictEqual(calls.slice(-2), ["issue 7", "claimWinner 7 rawphp,tomkaczocha"]);
+      assert.strictEqual(NodeFS.existsSync(NodePath.join(dataDir, "runs")), false);
+    }),
+  );
+
+  it.effect(
+    "a repo pinned with factory.owner resumes its triage issue without reading claims",
+    () =>
+      Effect.gen(function* () {
+        const dataDir = tempDir();
+        seedRun(dataDir, startedLines().slice(0, 3));
+        const { tracker, calls } = fakeTracker({
+          issues: [detail("triage", [USER])],
+          winner: elsewhere(60_000),
+        });
+        const ctx = ctxFor(dataDir, tracker, fakeSessions(dataDir, {}).sessions, {
+          project: { ...project(), owner: "mac-mini" },
+        });
+        assert.deepStrictEqual(yield* resume(ctx, 7), {
+          kind: "started",
+          run: run7,
+          threadId: "thread-1",
+        });
+        assert.notInclude(calls, "claimWinner 7 rawphp,tomkaczocha");
+      }),
+  );
+
+  it.effect("a claim that gave way makes no run and says so", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker } = fakeTracker({ claims: [{ kind: "gave-way" }] });
+      const t3 = fakeSessions(dataDir, {});
+      assert.deepStrictEqual(yield* startIn(dataDir, tracker, t3.sessions), {
+        kind: "skipped",
+        reason: CLAIM_GAVE_WAY,
+        gaveWay: true,
+      });
+      assert.deepStrictEqual(t3.calls, ["findProject /work/softfac"]);
+      assert.strictEqual(NodeFS.existsSync(NodePath.join(dataDir, "runs")), false);
     }),
   );
 });

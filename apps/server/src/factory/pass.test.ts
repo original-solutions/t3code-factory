@@ -58,7 +58,12 @@ import {
 } from "./runner/building.ts";
 import type { FeedbackStep } from "./runner/feedback.ts";
 import type { LastPass } from "./runner/gating.ts";
-import { GateRunningError, type StartError, type StartOutcome } from "./runner/start.ts";
+import {
+  CLAIM_GAVE_WAY,
+  GateRunningError,
+  type StartError,
+  type StartOutcome,
+} from "./runner/start.ts";
 import type { StopRequestOutcome } from "./runner/stop.ts";
 import type { PruneReport } from "./t3/branchPrune.ts";
 import {
@@ -404,23 +409,29 @@ class Fake implements PassWorld {
 
   /** The `factory:triage` and `factory:building` issues per repo; a repo not here lists none and records no call. */
   claimed: Record<string, Record<number, State> | "error"> = {};
+  /** The states whose claimed listing was cut, per repo. */
+  claimedCut: Record<string, Array<State>> = {};
   /** What `yieldToClaim` answers per `"<repo>#<issue>"`; null (this machine's claim won) otherwise. */
-  yields: Record<string, { machine: string; finished: Array<RunId> }> = {};
+  yields: Record<string, { machine: string; finished: Array<RunId> } | StartError> = {};
 
   claimedIssues(repo: Repo) {
     const found = this.claimed[repo.watched.repo];
-    if (found === undefined) return Effect.succeed(new Map<number, State>());
+    if (found === undefined) return Effect.succeed({ states: new Map<number, State>(), cut: [] });
     this.calls.push(`claimed ${repo.watched.repo}`);
     if (found === "error") return Effect.fail(trackerFailure());
-    return Effect.succeed(
-      new Map(Object.entries(found).map(([issue, state]) => [Number(issue), state] as const)),
-    );
+    return Effect.succeed({
+      states: new Map(
+        Object.entries(found).map(([issue, state]) => [Number(issue), state] as const),
+      ),
+      cut: this.claimedCut[repo.watched.repo] ?? [],
+    });
   }
 
   yieldToClaim(repo: Repo, issue: number) {
     const key = `${repo.watched.repo}#${issue}`;
     this.calls.push(`yield ${key}`);
     const answer = this.yields[key] ?? null;
+    if (answer !== null && "_tag" in answer) return Effect.fail(answer);
     if (answer !== null) {
       const gone = new Set(answer.finished.map(runIdToString));
       this.runs = this.runs.filter((run) => !gone.has(runIdToString(run.id)));
@@ -2346,6 +2357,76 @@ describe("several machines on one repo", () => {
       yield* pass(fake, [REPO], 1);
       assert.ok(!fake.calls.includes(`claimed ${REPO}`));
       assert.ok(!fake.calls.includes(`yield ${REPO}#7`));
+    }),
+  );
+
+  it.effect("a run whose gate is running is not checked for a claim elsewhere", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(7, "pr-open");
+      fake.claimed[REPO] = { 7: "building" };
+      fake.gateLocks = [runIdToString(rid(7))];
+      yield* pass(fake, [REPO], 1);
+      assert.ok(fake.calls.includes(`claimed ${REPO}`));
+      assert.ok(!fake.calls.includes(`yield ${REPO}#7`), fake.calls.join("\n"));
+    }),
+  );
+
+  it.effect(
+    "a claim check that finds the gate running, or fails, finishes nothing and the runs go on",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.runIn(7, "needs-info");
+        fake.runIn(8, "needs-info");
+        fake.claimed[REPO] = { 7: "building", 8: "building" };
+        fake.yields[`${REPO}#7`] = new GateRunningError({ run: rid(7) });
+        fake.yields[`${REPO}#8`] = githubFailure();
+        const { report, lines } = yield* pass(fake, [REPO], 1);
+        assert.ok(
+          lines.some((l) => l.startsWith(`${REPO}#7 building: gate running`)),
+          lines.join("\n"),
+        );
+        assert.ok(
+          lines.includes(
+            `error: ${REPO}#8 claim check: \`gh issue list\` exited with status 1: boom`,
+          ),
+          lines.join("\n"),
+        );
+        assert.equal(report.errors, 1);
+        for (const issue of [7, 8]) {
+          assert.ok(
+            fake.calls.some((c) => c.startsWith(`advance ${REPO}#${issue}`)),
+            fake.calls.join("\n"),
+          );
+        }
+      }),
+  );
+
+  it.effect("a cut claimed listing is said, as the other listings say it", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(7, BUILDING);
+      fake.claimed[REPO] = { 7: "building" };
+      fake.claimedCut[REPO] = ["building"];
+      const { lines } = yield* pass(fake, [REPO], 1);
+      assert.ok(
+        lines.includes(
+          `${REPO}: more than 200 open factory:building issues, so the oldest were not read`,
+        ),
+        lines.join("\n"),
+      );
+    }),
+  );
+
+  it.effect("a ready issue whose claim gave way is said so", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [7];
+      fake.pushStart(`${REPO}#7`, { kind: "skipped", reason: CLAIM_GAVE_WAY, gaveWay: true });
+      const { report, lines } = yield* pass(fake, [REPO], 1);
+      assert.equal(runLine(lines, `${REPO}#7 `), `${REPO}#7 ready: ${CLAIM_GAVE_WAY}`);
+      assert.equal(report.claimed, 0);
     }),
   );
 

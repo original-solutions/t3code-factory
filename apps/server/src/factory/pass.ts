@@ -47,7 +47,13 @@ import type {
 } from "./runner/building.ts";
 import type { FeedbackError, FeedbackStep } from "./runner/feedback.ts";
 import { unchangedSince, type GateStepError, type LastPass } from "./runner/gating.ts";
-import { claimedByLine, mention, type StartError, type StartOutcome } from "./runner/start.ts";
+import {
+  CLAIM_GAVE_WAY,
+  claimedByLine,
+  mention,
+  type StartError,
+  type StartOutcome,
+} from "./runner/start.ts";
 import type { Model, SessionsError, ThreadOnBrokenWorktree } from "./t3/sessions.ts";
 import type { StopRequestOutcome } from "./runner/stop.ts";
 import type { PruneReport } from "./t3/branchPrune.ts";
@@ -188,8 +194,16 @@ export interface PassWorld {
   readonly start: (repo: Repo, issue: number) => Effect.Effect<StartOutcome, StartError>;
   /** The claim gone on with, never made: `resume` in `runner/start.ts`. */
   readonly resume: (repo: Repo, issue: number) => Effect.Effect<StartOutcome, StartError>;
-  /** The open issues labelled `factory:triage` or `factory:building`, with that state. */
-  readonly claimedIssues: (repo: Repo) => Effect.Effect<ReadonlyMap<number, State>, PassError>;
+  /**
+   * The open issues labelled `factory:triage` or `factory:building`, with that state, and the
+   * states whose listing was cut: `claimedIssues` in `tracker/github.ts`.
+   */
+  readonly claimedIssues: (
+    repo: Repo,
+  ) => Effect.Effect<
+    { readonly states: ReadonlyMap<number, State>; readonly cut: ReadonlyArray<State> },
+    PassError
+  >;
   /**
    * Finishes this machine's runs of the issue that another machine's claim comment beat, and
    * names that machine: `yieldToClaim` in `runner/start.ts`. Null when this machine's claim won.
@@ -1293,8 +1307,9 @@ const yieldedRuns = Effect.fn("Pass.yieldedRuns")(function* (
       );
       continue;
     }
+    for (const state of listed.success.cut) pass.sayIfCut(name, state, true);
     for (const issue of issues.toSorted((a, b) => a - b)) {
-      const label = listed.success.get(issue);
+      const label = listed.success.states.get(issue);
       const runs = ours(issue);
       if (label === undefined || runs.every((info) => (info.state ?? "triage") === label)) continue;
       // The gate has the run; the next pass looks again.
@@ -2235,9 +2250,11 @@ const noteStart = Effect.fn("Pass.noteStart")(function* (
     }
     case "skipped":
       notes.parts.push(
-        outcome.success.claimedBy === undefined
-          ? words.notTaken
-          : claimedByLine(outcome.success.claimedBy),
+        outcome.success.claimedBy !== undefined
+          ? claimedByLine(outcome.success.claimedBy)
+          : outcome.success.gaveWay === true
+            ? CLAIM_GAVE_WAY
+            : words.notTaken,
       );
       return null;
     case "refused":
