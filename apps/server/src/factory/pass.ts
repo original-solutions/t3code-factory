@@ -47,7 +47,7 @@ import type {
 } from "./runner/building.ts";
 import type { FeedbackError, FeedbackStep } from "./runner/feedback.ts";
 import { unchangedSince, type GateStepError, type LastPass } from "./runner/gating.ts";
-import { mention, type StartError, type StartOutcome } from "./runner/start.ts";
+import { claimedByLine, mention, type StartError, type StartOutcome } from "./runner/start.ts";
 import type { Model, SessionsError, ThreadOnBrokenWorktree } from "./t3/sessions.ts";
 import type { StopRequestOutcome } from "./runner/stop.ts";
 import type { PruneReport } from "./t3/branchPrune.ts";
@@ -188,6 +188,19 @@ export interface PassWorld {
   readonly start: (repo: Repo, issue: number) => Effect.Effect<StartOutcome, StartError>;
   /** The claim gone on with, never made: `resume` in `runner/start.ts`. */
   readonly resume: (repo: Repo, issue: number) => Effect.Effect<StartOutcome, StartError>;
+  /** The open issues labelled `factory:triage` or `factory:building`, with that state. */
+  readonly claimedIssues: (repo: Repo) => Effect.Effect<ReadonlyMap<number, State>, PassError>;
+  /**
+   * Finishes this machine's runs of the issue that another machine's claim comment beat, and
+   * names that machine: `yieldToClaim` in `runner/start.ts`. Null when this machine's claim won.
+   */
+  readonly yieldToClaim: (
+    repo: Repo,
+    issue: number,
+  ) => Effect.Effect<
+    { readonly machine: string; readonly finished: ReadonlyArray<RunId> } | null,
+    StartError
+  >;
   /**
    * Takes the stop request an operator left for the run (`factory/scripts/stop-run.sh`) into its
    * ledger: `runner/stop.ts` `takeStopRequest`.
@@ -732,6 +745,7 @@ export const runPass = Effect.fn("Pass.runPass")(function* (
   const infos = yield* runs(world, pass);
   if (infos !== null) {
     const known = new Known(infos);
+    yield* yieldedRuns(world, repos, known, pass);
     yield* workRuns(world, repos, known, pass);
     // The runs this machine holds go on above; a repo another machine owns gets nothing new.
     const owned = yield* ownedRepos(world, repos, pass);
@@ -1252,6 +1266,57 @@ const runs = Effect.fn("Pass.runs")(function* (world: PassWorld, pass: Pass) {
 });
 
 /**
+ * Finishes this machine's runs that another machine's newer claim beat (`yieldToClaim`), before
+ * the runs are worked. Only on a repo with no `factory.owner`, and only for an issue now
+ * `factory:triage` or `factory:building` while a run of it is in another state, so a pass reads
+ * no claim comments for a run whose label is where the run expects it.
+ */
+const yieldedRuns = Effect.fn("Pass.yieldedRuns")(function* (
+  world: PassWorld,
+  repos: ReadonlyArray<Loaded>,
+  known: Known,
+  pass: Pass,
+) {
+  for (const loaded of repos) {
+    if (loaded.kind !== "ready" || loaded.repo.project.owner !== null) continue;
+    const repo = loaded.repo;
+    const name = repo.watched.repo;
+    const ours = (issue: number) =>
+      known.of(name, issue).filter((info) => info.confirmed && !info.unreadable);
+    const issues = [...known.issues(name)].filter((issue) => ours(issue).length > 0);
+    if (issues.length === 0) continue;
+    const listed = yield* Effect.result(world.claimedIssues(repo));
+    if (listed._tag === "Failure") {
+      yield* pass.fail(
+        null,
+        passError("tracker", `${name}: cannot list the claimed issues: `, listed.failure.message),
+      );
+      continue;
+    }
+    for (const issue of issues.toSorted((a, b) => a - b)) {
+      const label = listed.success.get(issue);
+      const runs = ours(issue);
+      if (label === undefined || runs.every((info) => (info.state ?? "triage") === label)) continue;
+      // The gate has the run; the next pass looks again.
+      if (runs.some((info) => world.gateRunning(info.id))) continue;
+      const notes = pass.notes(name, issue, label);
+      const yielded = yield* Effect.result(world.yieldToClaim(repo, issue));
+      if (yielded._tag === "Failure") {
+        if (yielded.failure._tag === "GateRunningError") notes.parts.push(GATE_RUNNING);
+        else pass.failed(notes, "claim check", "pass", yielded.failure);
+      } else if (yielded.success !== null && yielded.success.finished.length > 0) {
+        const finished = yielded.success.finished.map(runIdToString).join(", ");
+        notes.parts.push(
+          `${claimedByLine(yielded.success.machine)}, finished ${plural(yielded.success.finished.length, "run")} ${finished}`,
+        );
+        yield* known.refresh(world, pass, name, issue);
+      }
+      yield* pass.flush(notes, null);
+    }
+  }
+});
+
+/**
  * Works each confirmed run: a stop request is taken into its ledger, then the time limit applies.
  * `resume` continues `triage` runs; `advance` watches building runs and starts the gate on
  * `ready-for-gate`, and finishes `needs-info` and `stuck` runs; `prOpenRuns` gates `pr-open`
@@ -1599,7 +1664,10 @@ const resumeRun = Effect.fn("Pass.resumeRun")(function* (
     case "skipped":
     case "refused": {
       const moved = outcome.success.kind === "skipped" ? outcome.success.moved : undefined;
+      const claimedBy = outcome.success.kind === "skipped" ? outcome.success.claimedBy : undefined;
       if (moved === "ready") notes.parts.push(READY_AGAIN);
+      // `resume` finished the runs that machine's claim beat, so none holds a slot.
+      else if (claimedBy !== undefined) notes.parts.push(claimedByLine(claimedBy));
       else {
         const run = runIdToString(info.id);
         yield* stalled(pass, notes, run, outcome.success.reason, moved === "closed");
@@ -2166,7 +2234,11 @@ const noteStart = Effect.fn("Pass.noteStart")(function* (
       return null;
     }
     case "skipped":
-      notes.parts.push(words.notTaken);
+      notes.parts.push(
+        outcome.success.claimedBy === undefined
+          ? words.notTaken
+          : claimedByLine(outcome.success.claimedBy),
+      );
       return null;
     case "refused":
       notes.parts.push(words.notTaken);
