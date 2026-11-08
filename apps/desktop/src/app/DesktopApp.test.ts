@@ -22,6 +22,11 @@ vi.mock("../ipc/DesktopIpcHandlers.ts", () => ({
 }));
 vi.mock("../updates/DesktopRemoteUpdates.ts", () => ({ listen: Effect.void }));
 vi.mock("./DesktopStartupRecovery.ts", () => ({ listen: Effect.void }));
+// Packaged fork builds open on the factory server instead; bootstrapHook.test.ts covers that path.
+vi.mock("../factory/factoryServer.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../factory/factoryServer.ts")>()),
+  openOnFactoryServer: Effect.succeed(false),
+}));
 
 import * as DesktopApp from "./DesktopApp.ts";
 import * as DesktopAppActivation from "./DesktopAppActivation.ts";
