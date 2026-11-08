@@ -3885,6 +3885,28 @@ it.effect("claim counts an earlier claim comment of its own machine as its win",
   }),
 );
 
+it.effect("claim gives way when its own leftover comment holding the claim is 6 minutes old", () =>
+  Effect.gen(function* () {
+    const t = setup(
+      reply('{"assignees":[]}'),
+      claimPosted(50),
+      claimList(
+        claimRow(49, "mac-mini", "2026-10-04T09:59:00Z"),
+        claimRow(50, "mac-mini", CLAIMED_AT),
+      ),
+      reply(""),
+      reply(""),
+    );
+    const error = yield* t.err(t.github.claim(6, "rawphp", "ready", "triage", EARLY));
+    assert.strictEqual(error._tag, "GitHubTimedOut");
+    // Both go, the new duplicate and the leftover, and nothing is edited.
+    assert.deepStrictEqual(t.calls().slice(3), [
+      ["api", "-X", "DELETE", `repos/${REPO}/issues/comments/50`],
+      ["api", "-X", "DELETE", `repos/${REPO}/issues/comments/49`],
+    ]);
+  }),
+);
+
 it.effect("claim gives up before the edit once its comment is 5 minutes old, deleting it", () =>
   Effect.gen(function* () {
     // The comment listing takes 6 minutes to answer.
