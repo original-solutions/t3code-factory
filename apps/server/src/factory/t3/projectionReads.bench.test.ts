@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - the database is a real file in a temp directory.
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { AuthOrchestrationReadScope } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -22,6 +23,7 @@ import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
+import * as ManagedPolicy from "../../policy/ManagedPolicy.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import { Attention } from "../attention.ts";
@@ -108,6 +110,7 @@ const layerBench = () =>
           Layer.mock(ThreadManagement.ThreadManagementService)({}),
           Layer.mock(GitVcsDriver.GitVcsDriver)({}),
           NodeServices.layer,
+          NodeCrypto.layerSecureRandom,
         ),
       ),
     ),
@@ -122,16 +125,17 @@ const layerBench = () =>
 
 /** Auth over the database the benchmark seeds, as in production. */
 const layerEnvironmentAuth = EnvironmentAuth.layer.pipe(
+  Layer.provide(ManagedPolicy.layerTest()),
   Layer.provide(ServerSecretStore.layer),
   Layer.provide(ServerEnvironment.layerIdentity),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-factory-bench-" })),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const layerRoutes = FactoryRoutes.pipe(
   Layer.provideMerge(
     HttpPlatform.layer.pipe(
-      Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       Layer.provideMerge(Etag.layerWeak),
     ),
   ),
@@ -187,7 +191,7 @@ const statusCall = (
         headers: { authorization: `Bearer ${token}` },
       });
     return {
-      call: Effect.tryPromise(async () => {
+      call: Effect.promise(async () => {
         const response = await handler(request(), context);
         const body = (await response.json()) as { threads?: { running: number | null } };
         assert.strictEqual(response.status, 200);

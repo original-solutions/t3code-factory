@@ -5,6 +5,7 @@
  * runtime, orchestration, git worktree and gate are real. Expected labels and ledger lines come
  * from softfac's lifecycle.md and runner tests, not from the code under test.
  */
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
@@ -634,7 +635,11 @@ const scenario = (spec: Spec) =>
         }),
       ).pipe(Effect.provide(Contract.layerRuntime({ repo, worktreesDir, transcript })));
     }),
-  ).pipe(Effect.provide(Layer.merge(Contract.layerGit, NodeServices.layer)));
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(Contract.layerGit, NodeServices.layer, NodeCrypto.layerSecureRandom),
+    ),
+  );
 
 /** One ledger line as the expected lists below write it. */
 const describe = (entry: Entry): string => {

@@ -268,10 +268,9 @@ export function WatchedRepos({
                 </span>
               ))}
               <span className="block">
-                The factory could not tell whether these checkouts are watched: a .dw/config.yml
-                that could not be read or parsed, an origin that could not be identified, or a git
-                that would not run. Nothing is dropped for them; their attention items stay, and the
-                next pass reads them again.
+                The factory could not tell whether these are watched: a .dw/config.yml it could not
+                read or parse, an unknown origin, or git failing to run. Their attention items stay;
+                the next pass rereads them.
               </span>
             </>
           }

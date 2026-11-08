@@ -183,24 +183,27 @@ const expectFailed = (error: GateError): WorkspaceFailedError => {
   return error;
 };
 
+const applyEnv = (vars: Record<string, string>) => {
+  const saved = Object.keys(vars).map((k) => [k, globalThis.process.env[k]] as const);
+  for (const [k, v] of Object.entries(vars)) globalThis.process.env[k] = v;
+  return saved;
+};
+const restoreEnv = (saved: ReadonlyArray<readonly [string, string | undefined]>) => {
+  for (const [k, v] of saved) {
+    if (v === undefined) delete globalThis.process.env[k];
+    else globalThis.process.env[k] = v;
+  }
+};
+const pathEnv = () => globalThis.process.env.PATH ?? "";
+
 const withEnv = <A, E, R>(
   vars: Record<string, string>,
   body: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
   Effect.acquireUseRelease(
-    Effect.sync(() => {
-      const saved = Object.keys(vars).map((k) => [k, globalThis.process.env[k]] as const);
-      for (const [k, v] of Object.entries(vars)) globalThis.process.env[k] = v;
-      return saved;
-    }),
+    Effect.sync(() => applyEnv(vars)),
     () => body,
-    (saved) =>
-      Effect.sync(() => {
-        for (const [k, v] of saved) {
-          if (v === undefined) delete globalThis.process.env[k];
-          else globalThis.process.env[k] = v;
-        }
-      }),
+    (saved) => Effect.sync(() => restoreEnv(saved)),
   );
 
 /** The id of a `git log` field of the checkout's HEAD. */
@@ -550,7 +553,7 @@ it.live("the default attributes and ignore files in the user's config dir change
     ]);
     const base = remote.pushOn("main", "main", [["README", "base\n"]]);
     const plainEnv = {
-      PATH: globalThis.process.env.PATH ?? "",
+      PATH: pathEnv(),
       HOME: home,
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_CONFIG_GLOBAL: "/dev/null",

@@ -3,6 +3,7 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AuthAccessReadScope,
@@ -33,6 +34,7 @@ import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ServerHttp from "../../http.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
+import * as ManagedPolicy from "../../policy/ManagedPolicy.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 import { Attention, type AttentionItem } from "../attention.ts";
 import type { WatchedListing, WatchedProject } from "../config.ts";
@@ -79,17 +81,18 @@ const testOnlyRoute = route(
 );
 
 const layerEnvironmentAuth = EnvironmentAuth.layer.pipe(
+  Layer.provide(ManagedPolicy.layerTest()),
   Layer.provide(SqlitePersistence.layerMemory),
   Layer.provide(ServerSecretStore.layer),
   Layer.provide(ServerEnvironment.layerIdentity),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-factory-http-test-" })),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const layerRoutes = Layer.mergeAll(FactoryRoutes, testOnlyRoute).pipe(
   Layer.provideMerge(
     HttpPlatform.layer.pipe(
-      Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       Layer.provideMerge(Etag.layerWeak),
     ),
   ),
@@ -369,7 +372,7 @@ const serving = <A>(
         }),
       ),
       ({ handler }) =>
-        Effect.tryPromise(() =>
+        Effect.promise(() =>
           use(
             (method, path, token, body) =>
               handler(

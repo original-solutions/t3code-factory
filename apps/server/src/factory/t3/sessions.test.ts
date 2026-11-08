@@ -15,6 +15,7 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -338,6 +339,7 @@ const layerSessions = (
           Layer.mock(ThreadManagement.ThreadManagementService)(management),
           Layer.mock(GitVcsDriver.GitVcsDriver)(git),
           NodeServices.layer,
+          NodeCrypto.layerSecureRandom,
           fileSystem,
         ),
       ),
@@ -636,6 +638,7 @@ describe("FactorySessions.findProject", () => {
               Layer.mock(GitVcsDriver.GitVcsDriver)({}),
               ServerSettings.layerTest(),
               NodeServices.layer,
+              NodeCrypto.layerSecureRandom,
             ),
           ),
         ),

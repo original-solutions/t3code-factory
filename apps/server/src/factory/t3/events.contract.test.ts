@@ -5,6 +5,7 @@
  * completing, and only for runs that change after the stream started?
  */
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ThreadId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -124,5 +125,7 @@ it.live(
           yield* runStatusesUntilTerminal(ThreadId.make(launchedB.threadId));
         }).pipe(Effect.provide(layerRuntime({ repo, worktreesDir })));
       }),
-    ).pipe(Effect.provide(Layer.merge(layerGit, NodeServices.layer))),
+    ).pipe(
+      Effect.provide(Layer.mergeAll(layerGit, NodeServices.layer, NodeCrypto.layerSecureRandom)),
+    ),
 );

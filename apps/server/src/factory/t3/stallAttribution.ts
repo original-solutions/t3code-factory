@@ -95,15 +95,16 @@ const attributionLayer = (options: StallAttributionOptions) =>
       const registry = makeSpanRegistry(
         options.detector?.now === undefined ? {} : { now: options.detector.now },
       );
-      const sink = yield* Effect.try(
-        () =>
+      const sink = yield* Effect.try({
+        try: () =>
           new RotatingFileSink({
             filePath,
             maxBytes: STALL_LOG_MAX_BYTES,
             maxFiles: 1,
             throwOnError: true,
           }),
-      ).pipe(
+        catch: String,
+      }).pipe(
         Effect.catch(() =>
           Effect.logWarning("factory event loop stall log unavailable", { filePath }).pipe(
             Effect.as(undefined),

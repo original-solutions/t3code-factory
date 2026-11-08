@@ -15,6 +15,7 @@ export const timeoutMessage = (timeoutMs: number): string =>
   `The factory did not answer within ${Math.round(timeoutMs / 1000)} seconds.`;
 
 /** A call that was not sent (`relay`) or got no answer in time (`timeout`). */
+// @effect-diagnostics-next-line extendsNativeError:off - thrown and caught in plain Promise code, with no Effect runtime.
 export class FactoryHttpError extends Error {
   readonly kind: "relay" | "timeout";
   constructor(kind: "relay" | "timeout", message: string) {
