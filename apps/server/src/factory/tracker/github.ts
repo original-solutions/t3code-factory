@@ -1,3 +1,4 @@
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
@@ -61,22 +62,29 @@ export interface ClaimComment {
 }
 
 /** Whether two machine names are the same machine, ignoring ASCII case as `factory.owner` does. */
-export const sameMachine = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
+export const sameMachine = (a: string, b: string): boolean => {
+  const lower = (text: string) => text.replaceAll(/[A-Z]/g, (c) => c.toLowerCase());
+  return lower(a) === lower(b);
+};
 
 /**
- * The claim comment that wins the issue: the one with the lowest id among those created at or
- * after `since` (the newest `factory:ready` label event; null counts every one) and, when
- * `notBeforeMs` (epoch milliseconds) is given, at or after it. Null when none is left.
+ * The claim comments since `since` (null counts all) that won their own claim, in id order: no
+ * earlier winner within `CLAIM_ABANDONED_MS` before them. A loser left behind blocks nobody, and a
+ * winner that never edited stops counting 10 minutes on. The newest holds the issue.
  */
-const claimWinner = (
+const claimWinners = (
   comments: ReadonlyArray<ClaimComment>,
   since: string | null,
-  notBeforeMs: number | null = null,
-): ClaimComment | null =>
-  comments
+): Array<ClaimComment> => {
+  const winners: Array<ClaimComment> = [];
+  for (const c of comments
     .filter((c) => since === null || c.createdAt >= since)
-    .filter((c) => notBeforeMs === null || Date.parse(c.createdAt) >= notBeforeMs)
-    .reduce<ClaimComment | null>((best, c) => (best === null || c.id < best.id ? c : best), null);
+    .toSorted((a, b) => a.id - b.id)) {
+    const at = Date.parse(c.createdAt);
+    if (!winners.some((w) => Date.parse(w.createdAt) >= at - CLAIM_ABANDONED_MS)) winners.push(c);
+  }
+  return winners;
+};
 
 /** Who took a pull request out of draft last: the newest ready-for-review event's actor. */
 export const READY_BY_QUERY =
@@ -2404,10 +2412,10 @@ export const makeGitHub = (options: GitHubOptions) => {
   });
 
   /**
-   * Unless the issue has an assignee: posts a claim comment, then the earliest claim comment since
-   * the ready label, ignoring any 10 minutes older than its own, wins (`claimWinner`). The winner
-   * assigns `user` and swaps `from` for `to` in one edit; a loser deletes its comment, edits nothing.
-   * Comments are never merged, so the comment, not the login, says which machine claimed first.
+   * Unless the issue has an assignee: posts a claim comment, which wins unless a winning claim
+   * comment came within 10 minutes before it (`claimWinners`); one of this machine's counts as its
+   * own. The winner assigns `user` and swaps `from` for `to` in one edit; a loser deletes its
+   * comment and edits nothing. The comment, not the login, says which machine claimed first.
    */
   const claim = Effect.fn("GitHub.claim")(function* (
     number: number,
@@ -2436,6 +2444,16 @@ export const makeGitHub = (options: GitHubOptions) => {
     ];
     // Posted once: a retry after an edit GitHub never received does not post again.
     let mine: ClaimComment | null = null;
+    let postedMs = 0;
+    const deleteOwn = (winner: string | null) =>
+      gh(["api", "-X", "DELETE", `repos/${repo}/issues/comments/${mine!.id}`]).pipe(
+        Effect.asVoid,
+        Effect.catch((error) =>
+          Effect.logWarning(
+            `${repo}#${number}: cannot delete the claim comment ${mine!.id}${winner === null ? "" : ` that lost to machine ${winner}`}: ${error.message}`,
+          ),
+        ),
+      );
     return yield* retryTransient(
       Effect.gen(function* () {
         const stdout = yield* ghOnce(view);
@@ -2457,20 +2475,28 @@ export const makeGitHub = (options: GitHubOptions) => {
             return yield* parseError(post, `a creation time as YYYY-MM-DDTHH:MM:SSZ`);
           }
           mine = { id: made.id, machine: claimer.machine, createdAt: made.created_at };
+          postedMs = yield* Clock.currentTimeMillis;
         }
         const own = mine;
         const listed = (yield* claimComments(number)).filter((c) => c.id !== own.id);
-        const notBefore = Date.parse(own.createdAt) - CLAIM_ABANDONED_MS;
-        const winner = claimWinner([own, ...listed], claimer.since, notBefore) ?? own;
+        // The winner this comment answers to: itself, or the newest winner before it.
+        const winner =
+          claimWinners([own, ...listed], claimer.since)
+            .filter((w) => w.id <= own.id)
+            .at(-1) ?? own;
         if (winner.id !== own.id) {
-          yield* gh(["api", "-X", "DELETE", `repos/${repo}/issues/comments/${own.id}`]).pipe(
-            Effect.catch((error) =>
-              Effect.logWarning(
-                `${repo}#${number}: cannot delete the claim comment ${own.id} that lost to machine ${winner.machine}: ${error.message}`,
-              ),
-            ),
-          );
-          return { kind: "claimed-elsewhere", machine: winner.machine } satisfies ClaimOutcome;
+          yield* deleteOwn(winner.machine);
+          // A comment this machine left on an earlier try is its own claim.
+          if (!sameMachine(winner.machine, claimer.machine)) {
+            return { kind: "claimed-elsewhere", machine: winner.machine } satisfies ClaimOutcome;
+          }
+        }
+        // A claim slower than half the cutoff gives way: past it another machine may take the
+        // issue, so the edit could land beside that machine's.
+        const elapsed = (yield* Clock.currentTimeMillis) - postedMs;
+        if (elapsed > CLAIM_ABANDONED_MS / 2) {
+          if (winner.id === own.id) yield* deleteOwn(null);
+          return yield* new GitHubTimedOut({ args: edit, seconds: Math.round(elapsed / 1000) });
         }
         yield* ghOnce(edit);
         return { kind: "claimed" } satisfies ClaimOutcome;
@@ -2552,15 +2578,15 @@ export const makeGitHub = (options: GitHubOptions) => {
     );
 
   /**
-   * The claim comment that won the issue's current claim, with no cutoff for age: the earliest
-   * since its newest `factory:ready` label event (`claimWinner`). Null when it has none, as for a
-   * claim made before claim comments. One GraphQL call and one comment listing.
+   * The claim comment holding the issue's current claim, whatever its age: the newest winner since
+   * its newest `factory:ready` label event (`claimWinners`), so it agrees with what `claim` decided.
+   * Null when it has none, as for a claim made before claim comments. One GraphQL call and one comment listing.
    */
   const claimWinnerOf = Effect.fn("GitHub.claimWinnerOf")(function* (
     number: number,
   ): GitHubGen<ClaimComment | null> {
     const since = yield* labeledAt(number, "ready");
-    return claimWinner(yield* claimComments(number), since);
+    return claimWinners(yield* claimComments(number), since).at(-1) ?? null;
   });
 
   /**

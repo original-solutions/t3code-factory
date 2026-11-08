@@ -1666,7 +1666,7 @@ const resumeRun = Effect.fn("Pass.resumeRun")(function* (
       const moved = outcome.success.kind === "skipped" ? outcome.success.moved : undefined;
       const claimedBy = outcome.success.kind === "skipped" ? outcome.success.claimedBy : undefined;
       if (moved === "ready") notes.parts.push(READY_AGAIN);
-      // `resume` finished the runs that machine's claim beat, so none holds a slot.
+      // `resume` finished this machine's runs claimed before that machine's claim.
       else if (claimedBy !== undefined) notes.parts.push(claimedByLine(claimedBy));
       else {
         const run = runIdToString(info.id);

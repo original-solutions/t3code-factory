@@ -340,11 +340,8 @@ const goOn = Effect.fn("RunnerStart.goOn")(function* (
   if (detail.state === "triage" && isOurs(detail.assignees, ctx.trackerUser)) {
     // A login several machines share is "ours" on each of them: only the machine whose claim
     // comment won goes on, or any machine when there is none (a claim from before comments).
-    const winner = yield* ctx.tracker.claimWinner(issue);
-    if (winner !== null && !sameMachine(winner.machine, ctx.machine)) {
-      yield* finishRunsBefore(ctx, issue, winner, "start");
-      return claimedElsewhere(winner.machine);
-    }
+    const yielded = yield* yieldToClaim(ctx, issue, "start");
+    if (yielded !== null) return claimedElsewhere(yielded.machine);
     return yield* resumeStart(ctx, issue, detail);
   }
   if (detail.state === "stuck" && (yield* stuckCutShort(ctx, issue))) {
@@ -412,7 +409,10 @@ const repairClaim = Effect.fn("RunnerStart.repairClaim")(function* (
   ctx: StartContext,
   issue: number,
   error: GitHubError,
-): Effect.fn.Return<{ readonly kind: "claimed" }, GitHubError> {
+): Effect.fn.Return<
+  { readonly kind: "claimed" } | { readonly kind: "claimed-elsewhere"; readonly machine: string },
+  GitHubError
+> {
   const now = yield* ctx.tracker.issue(issue).pipe(Effect.option);
   if (now._tag === "None") return yield* error;
   const seen = now.value;
@@ -423,6 +423,12 @@ const repairClaim = Effect.fn("RunnerStart.repairClaim")(function* (
   // Still `factory:ready` with no assignee: nothing was applied.
   if (seen.closed || !swapped || !(ours || nobody) || (seen.state === "ready" && nobody)) {
     return yield* error;
+  }
+  // A login several machines share is "ours" when another machine's claim landed: the comment says.
+  const holder = yield* ctx.tracker.claimWinner(issue).pipe(Effect.option);
+  if (holder._tag === "None") return yield* error;
+  if (holder.value !== null && !sameMachine(holder.value.machine, ctx.machine)) {
+    return { kind: "claimed-elsewhere", machine: holder.value.machine };
   }
   const ok = <A>(call: Effect.Effect<A, GitHubError>) =>
     call.pipe(
@@ -1085,19 +1091,20 @@ const finishRunsBefore = Effect.fn("RunnerStart.finishRunsBefore")(function* (
 });
 
 /**
- * For a run whose issue's label moved off the state the run is in: when another machine's claim
- * comment won the issue's current claim, after this machine's runs of it were claimed, those runs
- * are finished (`finishRunsBefore`). Null when this machine's claim won, or there is none.
+ * When another machine's claim comment holds the issue's current claim, finishes this machine's
+ * runs of it claimed before that comment (`finishRunsBefore`) and names the machine. Null when this
+ * machine's claim holds it, or there is no claim comment.
  */
 export const yieldToClaim = Effect.fn("RunnerStart.yieldToClaim")(function* (
   ctx: StartContext,
   issue: number,
+  step: CauseStep = "pass",
 ): Effect.fn.Return<
   { readonly machine: string; readonly finished: ReadonlyArray<RunId> } | null,
   StartError
 > {
   const winner = yield* ctx.tracker.claimWinner(issue);
   if (winner === null || sameMachine(winner.machine, ctx.machine)) return null;
-  const finished = yield* finishRunsBefore(ctx, issue, winner, "pass");
+  const finished = yield* finishRunsBefore(ctx, issue, winner, step);
   return { machine: winner.machine, finished };
 });
