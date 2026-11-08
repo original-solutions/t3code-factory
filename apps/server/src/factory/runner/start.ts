@@ -36,7 +36,9 @@ import {
   isNotFound,
   isPlainRefName,
   isSafeBranchName,
+  sameMachine,
   type BoundGitHub,
+  type ClaimComment,
   type OpenPullRequest,
   type GitHubError,
   type IssueDetail,
@@ -91,6 +93,7 @@ export type Tracker = Pick<
   | "issue"
   | "approval"
   | "claim"
+  | "claimWinner"
   | "setState"
   | "assign"
   | "unassign"
@@ -179,7 +182,13 @@ export type StartOutcome =
    * The issue was not ours to take. Nothing was written anywhere. `moved` says a person closed
    * the issue, or put it back to `factory:ready` with nobody assigned, which the claim step takes.
    */
-  | { readonly kind: "skipped"; readonly reason: string; readonly moved?: "closed" | "ready" }
+  | {
+      readonly kind: "skipped";
+      readonly reason: string;
+      readonly moved?: "closed" | "ready";
+      /** Another machine's claim comment won the issue: the machine it names. */
+      readonly claimedBy?: string;
+    }
   /** The issue was `ready` but not approved, so it went back to `factory:proposed` with one fixed comment, and no run was made. */
   | { readonly kind: "refused"; readonly reason: string }
   /** The issue went to `stuck`. */
@@ -216,6 +225,15 @@ export type StartError =
 
 /** An issue as the pass's lines and the skip reasons name it. */
 export const mention = (issue: number) => `#${issue}`;
+
+/** What the pass says of an issue another machine's claim comment won. */
+export const claimedByLine = (machine: string) => `claimed by machine ${machine}`;
+
+const claimedElsewhere = (machine: string): StartOutcome => ({
+  kind: "skipped",
+  reason: claimedByLine(machine),
+  claimedBy: machine,
+});
 
 const skipped = (issue: number, assignees: ReadonlyArray<string>): StartOutcome => ({
   kind: "skipped",
@@ -320,6 +338,13 @@ const goOn = Effect.fn("RunnerStart.goOn")(function* (
   detail: IssueDetail,
 ): Effect.fn.Return<StartOutcome, StartError> {
   if (detail.state === "triage" && isOurs(detail.assignees, ctx.trackerUser)) {
+    // A login several machines share is "ours" on each of them: only the machine whose claim
+    // comment won goes on, or any machine when there is none (a claim from before comments).
+    const winner = yield* ctx.tracker.claimWinner(issue);
+    if (winner !== null && !sameMachine(winner.machine, ctx.machine)) {
+      yield* finishRunsBefore(ctx, issue, winner, "start");
+      return claimedElsewhere(winner.machine);
+    }
     return yield* resumeStart(ctx, issue, detail);
   }
   if (detail.state === "stuck" && (yield* stuckCutShort(ctx, issue))) {
@@ -360,11 +385,14 @@ const startFresh = Effect.fn("RunnerStart.startFresh")(function* (
   // Before the claim, so a crash after it cannot leave an older run stranded in front of a
   // resume. An instructor applied the label again, which is what began this attempt.
   yield* finishOlderRuns(ctx, issue, run.attempt, labeledBy === "" ? null : labeledBy);
-  const claimed = yield* ctx.tracker.claim(issue, ctx.trackerUser, "ready", "triage").pipe(
-    // The edit may have landed all the same. See `repairClaim`.
-    Effect.catch((error) => repairClaim(ctx, issue, error)),
-  );
+  const claimed = yield* ctx.tracker
+    .claim(issue, ctx.trackerUser, "ready", "triage", { machine: ctx.machine, since: labeledAt })
+    .pipe(
+      // The edit may have landed all the same. See `repairClaim`.
+      Effect.catch((error) => repairClaim(ctx, issue, error)),
+    );
   if (claimed.kind === "skipped-assigned") return skipped(issue, claimed.assignees);
+  if (claimed.kind === "claimed-elsewhere") return claimedElsewhere(claimed.machine);
   const out = yield* ledger(() => Ledger.create(ctx.dataDir, run, { clock: ctx.clock }));
   try {
     yield* recordApproval(out, labeledAt, labeledBy === "" ? null : labeledBy, "start");
@@ -1003,8 +1031,7 @@ const finishOlderRuns = Effect.fn("RunnerStart.finishOlderRuns")(function* (
 ) {
   const older = yield* unfinishedRuns(ctx, issue, below, () => true);
   for (const { id, seen } of older) {
-    const outcome: Outcome =
-      seen.state === "needs-info" ? "needs-info" : seen.state === "pr-open" ? "pr-open" : "stuck";
+    const outcome = outcomeOf(seen.state);
     // A person relabelled the issue, so a new attempt began: `appliedBy` is the instructor
     // whose `factory:ready` label began it, when this start is the one that was approved.
     const cause: Cause = makeCause(
@@ -1019,4 +1046,58 @@ const finishOlderRuns = Effect.fn("RunnerStart.finishOlderRuns")(function* (
       out.close();
     }
   }
+});
+
+/** How `finishOlderRuns` and `finishRunsBefore` end a run left in `state`. */
+const outcomeOf = (state: Seen["state"]): Outcome =>
+  state === "needs-info" ? "needs-info" : state === "pr-open" ? "pr-open" : "stuck";
+
+/**
+ * Finishes the issue's unfinished runs claimed before `winner`, another machine's claim comment,
+ * as `finishOlderRuns` does: the ledger only, nothing on GitHub. A run with no claim time counts
+ * as claimed before. The runs it finished, oldest first.
+ */
+const finishRunsBefore = Effect.fn("RunnerStart.finishRunsBefore")(function* (
+  ctx: StartContext,
+  issue: number,
+  winner: ClaimComment,
+  step: CauseStep,
+) {
+  const at = Date.parse(winner.createdAt);
+  const next = nextAttempt(ctx.dataDir, ctx.repo, String(issue));
+  const older = yield* unfinishedRuns(
+    ctx,
+    issue,
+    next,
+    (seen) => seen.claimedMs === null || seen.claimedMs < at,
+  );
+  for (const { id, seen } of older) {
+    const out = yield* ledger(() => Ledger.open(ctx.dataDir, id, { clock: ctx.clock }));
+    try {
+      yield* ledger(() =>
+        out.finish(outcomeOf(seen.state), null, null, makeCause(step, "claimed-elsewhere")),
+      );
+    } finally {
+      out.close();
+    }
+  }
+  return older.map(({ id }) => id);
+});
+
+/**
+ * For a run whose issue's label moved off the state the run is in: when another machine's claim
+ * comment won the issue's current claim, after this machine's runs of it were claimed, those runs
+ * are finished (`finishRunsBefore`). Null when this machine's claim won, or there is none.
+ */
+export const yieldToClaim = Effect.fn("RunnerStart.yieldToClaim")(function* (
+  ctx: StartContext,
+  issue: number,
+): Effect.fn.Return<
+  { readonly machine: string; readonly finished: ReadonlyArray<RunId> } | null,
+  StartError
+> {
+  const winner = yield* ctx.tracker.claimWinner(issue);
+  if (winner === null || sameMachine(winner.machine, ctx.machine)) return null;
+  const finished = yield* finishRunsBefore(ctx, issue, winner, "pass");
+  return { machine: winner.machine, finished };
 });

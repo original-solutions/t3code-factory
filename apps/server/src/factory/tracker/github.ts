@@ -60,22 +60,22 @@ export interface ClaimComment {
   readonly createdAt: string;
 }
 
-/** The moment `ms` in GitHub's `YYYY-MM-DDTHH:MM:SSZ` form, so it compares as text with GitHub's times. */
-const utcSecondOf = (ms: number): string => `${new Date(ms).toISOString().slice(0, 19)}Z`;
+/** Whether two machine names are the same machine, ignoring ASCII case as `factory.owner` does. */
+export const sameMachine = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
 
 /**
  * The claim comment that wins the issue: the one with the lowest id among those created at or
  * after `since` (the newest `factory:ready` label event; null counts every one) and, when
- * `notBefore` is given, at or after it. Null when none is left.
+ * `notBeforeMs` (epoch milliseconds) is given, at or after it. Null when none is left.
  */
 const claimWinner = (
   comments: ReadonlyArray<ClaimComment>,
   since: string | null,
-  notBefore: string | null = null,
+  notBeforeMs: number | null = null,
 ): ClaimComment | null =>
   comments
     .filter((c) => since === null || c.createdAt >= since)
-    .filter((c) => notBefore === null || c.createdAt >= notBefore)
+    .filter((c) => notBeforeMs === null || Date.parse(c.createdAt) >= notBeforeMs)
     .reduce<ClaimComment | null>((best, c) => (best === null || c.id < best.id ? c : best), null);
 
 /** Who took a pull request out of draft last: the newest ready-for-review event's actor. */
@@ -2460,7 +2460,7 @@ export const makeGitHub = (options: GitHubOptions) => {
         }
         const own = mine;
         const listed = (yield* claimComments(number)).filter((c) => c.id !== own.id);
-        const notBefore = utcSecondOf(Date.parse(own.createdAt) - CLAIM_ABANDONED_MS);
+        const notBefore = Date.parse(own.createdAt) - CLAIM_ABANDONED_MS;
         const winner = claimWinner([own, ...listed], claimer.since, notBefore) ?? own;
         if (winner.id !== own.id) {
           yield* gh(["api", "-X", "DELETE", `repos/${repo}/issues/comments/${own.id}`]).pipe(
