@@ -2445,12 +2445,12 @@ export const makeGitHub = (options: GitHubOptions) => {
     // Posted once: a retry after an edit GitHub never received does not post again.
     let mine: ClaimComment | null = null;
     let postedMs = 0;
-    const deleteOwn = (winner: string | null) =>
-      gh(["api", "-X", "DELETE", `repos/${repo}/issues/comments/${mine!.id}`]).pipe(
+    const deleteComment = (id: number, why: string) =>
+      gh(["api", "-X", "DELETE", `repos/${repo}/issues/comments/${id}`]).pipe(
         Effect.asVoid,
         Effect.catch((error) =>
           Effect.logWarning(
-            `${repo}#${number}: cannot delete the claim comment ${mine!.id}${winner === null ? "" : ` that lost to machine ${winner}`}: ${error.message}`,
+            `${repo}#${number}: cannot delete the claim comment ${id} ${why}: ${error.message}`,
           ),
         ),
       );
@@ -2485,17 +2485,22 @@ export const makeGitHub = (options: GitHubOptions) => {
             .filter((w) => w.id <= own.id)
             .at(-1) ?? own;
         if (winner.id !== own.id) {
-          yield* deleteOwn(winner.machine);
+          yield* deleteComment(own.id, `that lost to machine ${winner.machine}`);
           // A comment this machine left on an earlier try is its own claim.
           if (!sameMachine(winner.machine, claimer.machine)) {
             return { kind: "claimed-elsewhere", machine: winner.machine } satisfies ClaimOutcome;
           }
         }
-        // A claim slower than half the cutoff gives way: past it another machine may take the
-        // issue, so the edit could land beside that machine's.
-        const elapsed = (yield* Clock.currentTimeMillis) - postedMs;
+        // A claim whose winning comment is older than half the cutoff gives way: past it another
+        // machine may take the issue, so the edit could land beside that machine's. An adopted
+        // leftover is older than this post by the gap GitHub's clock shows.
+        const elapsed =
+          (yield* Clock.currentTimeMillis) -
+          postedMs +
+          (Date.parse(own.createdAt) - Date.parse(winner.createdAt));
         if (elapsed > CLAIM_ABANDONED_MS / 2) {
-          if (winner.id === own.id) yield* deleteOwn(null);
+          // The comment that holds the claim goes, so the next try posts a fresh winner.
+          yield* deleteComment(winner.id, "of a claim that gave way");
           return yield* new GitHubTimedOut({ args: edit, seconds: Math.round(elapsed / 1000) });
         }
         yield* ghOnce(edit);
