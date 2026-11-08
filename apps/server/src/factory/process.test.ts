@@ -17,7 +17,7 @@ const run = (input: RunInput) =>
     return yield* factoryProcess.run(input);
   }).pipe(Effect.provide(layer));
 
-// Plain functions, so `process.env` is not read inside Effect code.
+// The factory process reads the real environment, so the tests set it there.
 const applyEnv = (vars: Record<string, string | undefined>) => {
   const saved = Object.keys(vars).map((k) => [k, globalThis.process.env[k]] as const);
   restoreEnv(Object.entries(vars));
