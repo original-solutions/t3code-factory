@@ -1,6 +1,6 @@
 # Install and run
 
-The factory runs in a T3 server started by a macOS LaunchAgent, or by a systemd user unit [on Linux](#on-linux). The desktop app is optional: it is a window onto that server. The server is built from a clone of this repo on the machine that runs it; the app comes signed from the repo's releases.
+The factory runs in a T3 server started by a macOS LaunchAgent, or by a systemd user unit [on Linux](#on-linux). The desktop app is optional: it is a window onto that server. The server is built from a clone of this repo on the machine that runs it, or on Linux [downloaded prebuilt](#install-a-published-build); the app comes signed from the repo's releases.
 
 ## Before you start
 
@@ -91,6 +91,23 @@ The same scripts install and update the server on an x64 or arm64 Linux machine.
 The Linux build also needs `patchelf` on the `PATH`, which bundles `libatomic` into the binary: `sudo apt install patchelf`, or without root, `apt-get download patchelf` and copy `usr/bin/patchelf` out of the package with `dpkg -x` into `~/.local/bin`.
 
 For the server to run while you are logged out, and to start at boot, turn on lingering once: `loginctl enable-linger $USER`. The install overwrites `t3fac.service` from its template, so put machine settings in `~/.config/t3fac/env`, not in the unit. **Update now** on the Factory page starts `t3fac-autodeploy.service` at once.
+
+### Install a published build
+
+A new Linux host can skip the build. The `Factory server` workflow builds every push to `main` on Ubuntu 22.04, x64 and arm64, with the same `build.sh` and smoke test, and publishes the archive on the rolling [`server-nightly`](https://github.com/original-solutions/t3code-factory/releases/tag/server-nightly) prerelease. The `server-nightly` tag points at the commit that was built. `latest-linux-<arch>.txt` beside the archive names the newest archive and its sha256. The release keeps the two newest builds for each arch. Download the archive, check it, and install it with `install.sh` from a checkout of the same commit:
+
+```sh
+arch=x64   # or arm64
+base=https://github.com/original-solutions/t3code-factory/releases/download/server-nightly
+git clone -q --depth 1 --branch server-nightly https://github.com/original-solutions/t3code-factory ~/.local/share/t3fac/src
+mkdir -p ~/.local/share/t3fac/downloads && cd ~/.local/share/t3fac/downloads
+curl -fsSLO "$base/latest-linux-$arch.txt"
+curl -fsSLO "$base/$(awk '{print $2}' "latest-linux-$arch.txt")"
+sha256sum -c "latest-linux-$arch.txt"
+~/.local/share/t3fac/src/factory/scripts/install.sh "$PWD/$(awk '{print $2}' "latest-linux-$arch.txt")"
+```
+
+Keep the archive's name: `install.sh` reads the version from it. This needs neither Rust nor `patchelf`; the archive carries its own `libatomic`. [Follow main](#follow-main) still builds each new commit on the host.
 
 ## Install the desktop app
 
