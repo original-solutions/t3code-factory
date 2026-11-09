@@ -312,7 +312,8 @@ describe("ghCredentialProcess in the server graph", () => {
   it.effect(
     "retries upstream's own gh credential lookup through the server's source-control host",
     () => {
-      const inner = fakeInner([fail(timeout()), ok]);
+      // Upstream's `gh config get http_unix_socket` runs first; empty means no socket.
+      const inner = fakeInner([okWith(""), fail(timeout()), ok]);
       const authorizations: Array<string | undefined> = [];
       return Effect.gen(function* () {
         const instance = yield* gitHubDriver.make;
@@ -321,9 +322,10 @@ describe("ghCredentialProcess in the server graph", () => {
           headers: {},
         });
         assert.strictEqual(response?.status, 200);
-        assert.strictEqual(inner.calls.length, 2);
-        assert.strictEqual(inner.calls[0]!.operation, credentialInput.operation);
-        assert.strictEqual(inner.calls[1]!.timeoutMs, 30_000);
+        const lookups = inner.calls.filter((call) => call.operation === credentialInput.operation);
+        assert.strictEqual(inner.calls.length, 3);
+        assert.strictEqual(lookups.length, 2);
+        assert.strictEqual(lookups[1]!.timeoutMs, 30_000);
         assert.deepStrictEqual(authorizations, [`Bearer ${TOKEN}`]);
       }).pipe(
         Effect.provide(
